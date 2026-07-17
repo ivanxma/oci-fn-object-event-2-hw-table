@@ -61,7 +61,7 @@ def _object_name(event: dict[str, Any], source: dict[str, str]) -> str:
     return str(details.get("objectName") or source["resource_name"])
 
 
-def _write_event_audit(db: Database, event: dict[str, Any]) -> None:
+def _write_event_audit(db: Database, event: dict[str, Any]) -> int:
     """Persist the received CloudEvent for the Event TX Object Storage Event view."""
     data = event.get("data") or {}
     details = data.get("additionalDetails") or {}
@@ -92,6 +92,7 @@ def _write_event_audit(db: Database, event: dict[str, Any]) -> None:
                 details.get("namespace") or data.get("namespace"), _event_time(event),
             ),
         )
+        return int(cursor.lastrowid)
 
 
 def _download_object(event: dict[str, Any], source: dict[str, str], destination: Path) -> None:
@@ -149,8 +150,9 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
             raise ValueError("Expected an Object Storage CloudEvent JSON object.")
         db = Database()
         ensure_control_tables(db)
-        _write_event_audit(db, event)
+        object_event_id = _write_event_audit(db, event)
         source = event_source(event)
+        source["object_event_id"] = object_event_id
         action = _event_action(event)
         result = _run_delete(db, event, source) if action == "DELETE" else _run_load(db, event, source, create=action == "CREATE")
         return response.Response(ctx, response_data=json.dumps({"status": "success", **result}), headers={"Content-Type": "application/json"}, status_code=200)

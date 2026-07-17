@@ -17,8 +17,10 @@ tests/     Function-focused tests and fixtures
 ## Event flow
 
 1. OCI Events invokes `function/func.py` for an Object Storage event.
-2. The Function records the raw event in `fndb.object_event`, which is visible
-   through the UI's **Event TX → Object Storage Event** tab.
+2. The Function records the raw event in `fndb.object_event`, then persists its
+   `object_event_id` on the corresponding transaction audit entry. This makes
+   the UI's **Event TX → Object Storage Event** status and error drill-down
+   deterministic for newly received events.
 3. It resolves `fndb.object_storage_mappings` by compartment, bucket, and
    resource-name pattern.
 4. For create/update, it assigns a batch number scoped to the mapped target
@@ -28,6 +30,12 @@ tests/     Function-focused tests and fixtures
 5. For delete, it finds the mapped batch and truncates that partition.
 6. It records success and failure rows in `fndb.event_tx_log` and
    `fndb.event_errors`.
+
+If a load fails after its batch is allocated, its batch record changes from
+`LOADING` to `ERROR`, allowing a later update event to retry it. A configurable
+`LOAD_LEASE_SECONDS` (default `120`) also treats an abandoned `LOADING` record
+as retryable while still rejecting genuinely concurrent loads for the same
+source object.
 
 The target table must already exist, use `LIST` partitioning by an invisible
 `batch_num` column, and include `batch_num` in every unique key. The Function
@@ -57,6 +65,20 @@ flask --app myapp.app run --host 127.0.0.1 --port 8080
 Use **Resource Mappings** to register a target. Use **Event TX** to review
 per-table transactions and raw Object Storage events. Database passwords remain
 only in the UI's server-side active connection state.
+
+### Event TX views
+
+- **Object Storage Event** adds a lifecycle column to raw OCI events:
+  `SUCCESS` is green, `ERROR` is red, and `RECEIVED` is blue. A red
+  **ERROR · View log** link opens and highlights the corresponding
+  `event_errors` record. Historical entries retain a bucket/resource/action
+  fallback until their next event is processed with the direct link.
+- **Registered Table** server-pages transaction history (10 rows by default;
+  change **Show** and select **Refresh**). Its toolbar keeps Refresh on the
+  left and a single CSV-download icon on the right.
+- The ▤ button beside **Target table** opens a paged dialog of the selected
+  target table's visible rows. The dialog fetches only the requested page, so
+  large target tables are not loaded into the browser or application at once.
 
 ### Deploy the UI with HTTPS
 

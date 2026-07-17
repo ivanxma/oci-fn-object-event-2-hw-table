@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import io
 
-from flask import Blueprint, Response, flash, request
+from flask import Blueprint, Response, flash, jsonify, request
 from mysql.connector import Error as MySQLError
 
 from ..services.event_tx_service import EventTransactionService
@@ -36,6 +36,18 @@ def _page(value: str | None) -> int:
     return page
 
 
+def _error_id(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        error_id = int(value)
+    except ValueError as error:
+        raise ValueError("Error log identifier must be a whole number.") from error
+    if error_id < 1:
+        raise ValueError("Error log identifier must be positive.")
+    return error_id
+
+
 def _safe_csv_value(value):
     """Avoid spreadsheet formula evaluation when a CSV is opened locally."""
     value = "" if value is None else str(value)
@@ -59,12 +71,26 @@ def list_event_transactions():
             if not database or not table:
                 raise ValueError("Select both a target database and table.")
             database, table = validate_identifier(database, "target database"), validate_identifier(table, "target table")
-            events = service.recent_events(database, table)
+            registered_page = _page(request.args.get("registered_page"))
+            registered_page_size = _limit(request.args.get("registered_page_size"))
+            events, registered_total = service.registered_events_page(
+                database, table, page=registered_page, page_size=registered_page_size
+            )
+            registered_page_count = max(1, (registered_total + registered_page_size - 1) // registered_page_size)
+            if registered_page > registered_page_count:
+                registered_page = registered_page_count
+                events, registered_total = service.registered_events_page(
+                    database, table, page=registered_page, page_size=registered_page_size
+                )
         else:
-            events = []
+            events, registered_total, registered_page, registered_page_size, registered_page_count = [], 0, 1, _limit(request.args.get("registered_page_size")), 1
         recent_events = service.recent_events_all(limit)
         audit_logs = service.audit_logs(limit)
         error_logs = service.error_logs(limit)
+        selected_error_id = _error_id(request.args.get("error_id"))
+        selected_error = service.error_log(selected_error_id) if selected_error_id else None
+        if selected_error and all(item["id"] != selected_error["id"] for item in error_logs):
+            error_logs.insert(0, selected_error)
         object_event_tables = service.object_event_tables()
         object_databases = {item["database_name"] for item in object_event_tables}
         selected_object_database = request.args.get("object_database", "")
@@ -97,7 +123,8 @@ def list_event_transactions():
             object_event_sort, object_event_direction, object_event_page_count = "", "desc", 1
     except (MySQLError, ValueError):
         flash("Could not read Event TX records from fndb. Confirm this MySQL user can read the control tables.", "error")
-        tables, event_log_exists, database, table, events, recent_events, audit_logs, error_logs, limit, active_tab = [], False, "", "", [], [], [], [], 10, "recent"
+        tables, event_log_exists, database, table, events, recent_events, audit_logs, error_logs, limit, active_tab, selected_error_id, selected_error = [], False, "", "", [], [], [], [], 10, "recent", None, None
+        registered_total, registered_page, registered_page_size, registered_page_count = 0, 1, 10, 1
         object_event_tables, selected_object_database, object_event_columns, object_event_rows = [], "", [], []
         object_event_total, object_event_sort, object_event_direction, object_page, object_page_size, object_event_page_count = 0, "", "desc", 1, 25, 1
     return render_dashboard(
@@ -108,9 +135,15 @@ def list_event_transactions():
         selected_database=database,
         selected_table=table,
         events=events,
+        registered_total=registered_total,
+        registered_page=registered_page,
+        registered_page_size=registered_page_size,
+        registered_page_count=registered_page_count,
         recent_events=recent_events,
         audit_logs=audit_logs,
         error_logs=error_logs,
+        selected_error_id=selected_error_id,
+        selected_error=selected_error,
         recent_limit=limit,
         active_tab=active_tab,
         object_event_tables=object_event_tables,
@@ -143,7 +176,8 @@ def download_object_events():
     except (MySQLError, ValueError):
         flash("Could not export object storage events. Confirm this MySQL user can read the object_event table.", "error")
         return render_dashboard("event_transactions.html", active_page="event_tx", registered_tables=[], event_log_exists=False,
-                                selected_database="", selected_table="", events=[], recent_events=[], audit_logs=[], error_logs=[], recent_limit=10,
+                                selected_database="", selected_table="", events=[], recent_events=[], audit_logs=[], error_logs=[], selected_error_id=None, selected_error=None, recent_limit=10,
+                                registered_total=0, registered_page=1, registered_page_size=10, registered_page_count=1,
                                 active_tab="object-events", object_event_tables=[], selected_object_database="",
                                 object_event_columns=[], object_event_rows=[], object_event_total=0, object_event_sort="",
                                 object_event_direction="desc", object_event_page=1, object_event_page_size=25,
@@ -176,3 +210,26 @@ def download_registered_events():
     writer.writerow(columns)
     writer.writerows([[_safe_csv_value(row.get(column)) for column in columns] for row in rows])
     return Response(buffer.getvalue(), mimetype="text/csv", headers={"Content-Disposition": f'attachment; filename="{database}_{table}_event_tx.csv"'})
+
+
+@event_tx_bp.get("/registered/table-content")
+@login_required
+def registered_table_content():
+    """JSON page for the Registered Table content dialog."""
+    try:
+        database = validate_identifier(request.args.get("database", ""), "target database")
+        table = validate_identifier(request.args.get("table", ""), "target table")
+        page = _page(request.args.get("page"))
+        page_size = _limit(request.args.get("page_size"))
+        columns, rows, total = EventTransactionService(mysql_for_request()).target_table_page(
+            database, table, page=page, page_size=page_size
+        )
+        page_count = max(1, (total + page_size - 1) // page_size)
+        if page > page_count:
+            page = page_count
+            columns, rows, total = EventTransactionService(mysql_for_request()).target_table_page(
+                database, table, page=page, page_size=page_size
+            )
+        return jsonify(columns=columns, rows=rows, total=total, page=page, page_size=page_size, page_count=page_count)
+    except (MySQLError, ValueError) as error:
+        return jsonify(error=str(error)), 400

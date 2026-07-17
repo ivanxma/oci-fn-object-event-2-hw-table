@@ -119,7 +119,7 @@
       applyLayout(table);
       const wrap = table.closest('.table-wrap');
       const toolbarIcons = wrap?.closest('.table-page-view')?.querySelector('.table-toolbar-icons');
-      if (wrap && !(toolbarIcons || wrap.previousElementSibling)?.classList.contains('table-grid-actions')) {
+      if (wrap && table.dataset.managedTableTools !== 'true' && !(toolbarIcons || wrap.previousElementSibling)?.classList.contains('table-grid-actions')) {
         const actions = document.createElement('div'); actions.className = 'table-grid-actions';
         actions.innerHTML = `<button class="secondary-button compact icon-button" type="button" title="Reset column layout" aria-label="Reset column layout">${resetIcon}</button><button class="secondary-button compact icon-button" type="button" title="Download CSV" aria-label="Download CSV">${icon}</button>`;
         actions.querySelectorAll('button')[0].addEventListener('click', () => { localStorage.removeItem(table.dataset.layoutKey); window.location.reload(); });

@@ -19,6 +19,7 @@ import mysql.connector
 
 
 IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+LOAD_LEASE_SECONDS = int(os.environ.get("LOAD_LEASE_SECONDS", "120"))
 
 
 def control_database() -> str:
@@ -134,6 +135,7 @@ def ensure_control_tables(db: Database) -> None:
         cursor.execute(
             f"""CREATE TABLE IF NOT EXISTS {control_table('event_tx_log')} (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                object_event_id BIGINT UNSIGNED NULL,
                 mapping_id BIGINT UNSIGNED NULL,
                 target_database VARCHAR(64) NULL,
                 target_table VARCHAR(64) NULL,
@@ -145,9 +147,19 @@ def ensure_control_tables(db: Database) -> None:
                 object_version VARCHAR(255) NULL,
                 message TEXT NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                KEY ix_event_object_event (object_event_id),
                 KEY ix_event_target_time (target_database, target_table, created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
         )
+        cursor.execute(
+            """SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = %s AND table_name = 'event_tx_log'
+                   AND column_name = 'object_event_id'""",
+            (control_database(),),
+        )
+        if cursor.fetchone() is None:
+            cursor.execute(f"ALTER TABLE {control_table('event_tx_log')} ADD COLUMN object_event_id BIGINT UNSIGNED NULL AFTER id")
+            cursor.execute(f"ALTER TABLE {control_table('event_tx_log')} ADD KEY ix_event_object_event (object_event_id)")
         cursor.execute(
             f"""CREATE TABLE IF NOT EXISTS {control_table('event_errors')} (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -226,7 +238,8 @@ def target_definition(db: Database, mapping: dict[str, Any]) -> list[str]:
     for column in columns:
         if column["column_name"].lower() == "batch_num" or column["generation_expression"]:
             continue
-        if "INVISIBLE" in (column["extra"] or "").upper():
+        extra = (column["extra"] or "").upper()
+        if "INVISIBLE" in extra or "AUTO_INCREMENT" in extra:
             continue
         load_columns.append(column["column_name"])
     if not load_columns:
@@ -244,7 +257,18 @@ def allocate_or_get_batch(db: Database, mapping: dict[str, Any], source: dict[st
         record = cursor.fetchone()
         if record:
             if record["lifecycle_state"] == "LOADING":
-                raise ValueError("This source object already has a load in progress.")
+                cursor.execute(
+                    "SELECT TIMESTAMPDIFF(SECOND, %s, UTC_TIMESTAMP()) AS age_seconds",
+                    (record["updated_at"],),
+                )
+                age_seconds = int(cursor.fetchone()["age_seconds"] or 0)
+                if age_seconds < LOAD_LEASE_SECONDS:
+                    raise ValueError("This source object already has a load in progress.")
+                cursor.execute(
+                    f"UPDATE {control_table('source_object_batches')} SET lifecycle_state = 'ERROR' WHERE id = %s",
+                    (record["id"],),
+                )
+                record["lifecycle_state"] = "ERROR"
             if create and record["lifecycle_state"] == "ACTIVE":
                 raise ValueError("This object already has an active batch; use the update scenario for a replacement.")
             cursor.execute(
@@ -331,8 +355,15 @@ def csv_batches(csv_path: Path, columns: list[str], batch_rows: int) -> Iterator
     with csv_path.open(newline="", encoding="utf-8") as source:
         reader = csv.DictReader(source)
         headers = reader.fieldnames or []
-        missing = [column for column in columns if column not in headers]
-        unknown = [column for column in headers if column not in columns]
+        header_by_folded_name: dict[str, str] = {}
+        for header in headers:
+            folded = header.casefold()
+            if folded in header_by_folded_name:
+                raise ValueError(f"CSV has duplicate column names when compared case-insensitively: {header_by_folded_name[folded]}, {header}.")
+            header_by_folded_name[folded] = header
+        expected_by_folded_name = {column.casefold(): column for column in columns}
+        missing = [column for column in columns if column.casefold() not in header_by_folded_name]
+        unknown = [header for header in headers if header.casefold() not in expected_by_folded_name]
         if missing or unknown:
             details = []
             if missing:
@@ -342,7 +373,7 @@ def csv_batches(csv_path: Path, columns: list[str], batch_rows: int) -> Iterator
             raise ValueError(f"CSV columns do not match target table ({'; '.join(details)}).")
         batch: list[tuple[str, ...]] = []
         for row in reader:
-            batch.append(tuple((row.get(column) or "").strip() for column in columns))
+            batch.append(tuple((row.get(header_by_folded_name[column.casefold()]) or "").strip() for column in columns))
             if len(batch) >= batch_rows:
                 yield batch
                 batch = []
@@ -386,19 +417,19 @@ def validate_and_exchange(db: Database, mapping: dict[str, Any], stage: str, bat
         cursor.execute(f"ALTER TABLE {target} EXCHANGE PARTITION {quote_identifier(partition_name(batch_num), 'partition name')} WITH TABLE {stage_quoted} WITHOUT VALIDATION")
 
 
-def log_event(db: Database, source: dict[str, str], action: str, status: str, mapping: dict[str, Any] | None = None, batch_num: int | None = None, message: str | None = None) -> int:
+def log_event(db: Database, source: dict[str, Any], action: str, status: str, mapping: dict[str, Any] | None = None, batch_num: int | None = None, message: str | None = None) -> int:
     with db.connection() as connection:
         cursor = connection.cursor()
         cursor.execute(
             f"""INSERT INTO {control_table('event_tx_log')}
-               (mapping_id, target_database, target_table, batch_num, event_action, event_status, bucket_name, resource_name, object_version, message)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (mapping.get("id") if mapping else None, mapping.get("target_database") if mapping else None, mapping.get("target_table") if mapping else None, batch_num, action, status, source["bucket_name"], source["resource_name"], source["object_version"], message),
+               (object_event_id, mapping_id, target_database, target_table, batch_num, event_action, event_status, bucket_name, resource_name, object_version, message)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (source.get("object_event_id"), mapping.get("id") if mapping else None, mapping.get("target_database") if mapping else None, mapping.get("target_table") if mapping else None, batch_num, action, status, source["bucket_name"], source["resource_name"], source["object_version"], message),
         )
         return cursor.lastrowid
 
 
-def log_error(db: Database, source: dict[str, str], action: str, error: Exception, mapping: dict[str, Any] | None = None, batch_num: int | None = None) -> None:
+def log_error(db: Database, source: dict[str, Any], action: str, error: Exception, mapping: dict[str, Any] | None = None, batch_num: int | None = None) -> None:
     try:
         event_log_id = log_event(db, source, action, "ERROR", mapping, batch_num, str(error))
         with db.connection() as connection:
@@ -415,6 +446,15 @@ def log_error(db: Database, source: dict[str, str], action: str, error: Exceptio
 def mark_active(db: Database, record_id: int) -> None:
     with db.connection() as connection:
         connection.cursor().execute(f"UPDATE {control_table('source_object_batches')} SET lifecycle_state = 'ACTIVE' WHERE id = %s", (record_id,))
+
+
+def mark_error(db: Database, record_id: int) -> None:
+    """Release a failed batch record so a later update event can retry it."""
+    with db.connection() as connection:
+        connection.cursor().execute(
+            f"UPDATE {control_table('source_object_batches')} SET lifecycle_state = 'ERROR' WHERE id = %s",
+            (record_id,),
+        )
 
 
 def run_load(event_path: Path, csv_path: Path, *, create: bool, batch_rows: int, workers: int) -> dict[str, Any]:
@@ -436,6 +476,11 @@ def run_load(event_path: Path, csv_path: Path, *, create: bool, batch_rows: int,
         log_event(db, source, action, "SUCCESS", mapping, record["batch_num"], f"Loaded {rows} row(s).")
         return {"event": action.lower(), "batch_num": record["batch_num"], "target": f"{mapping['target_database']}.{mapping['target_table']}", "rows": rows}
     except Exception as error:
+        if record is not None:
+            try:
+                mark_error(db, record["id"])
+            except Exception:
+                pass
         log_error(db, source, action, error, mapping, record.get("batch_num") if record else None)
         raise
     finally:
