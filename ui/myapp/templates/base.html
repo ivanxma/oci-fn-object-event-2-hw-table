@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}CSV Import Console{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="{{ url_for('imports.home') }}"><span class="brand-mark">M</span><span>MySQL <b>CSV Import</b></span></a>
+    <nav class="primary-nav" aria-label="Primary navigation">
+      <a class="{{ 'active' if active_page == 'import' else '' }}" href="{{ url_for('imports.home') }}">Data Import</a>
+      <a class="{{ 'active' if active_page == 'mappings' else '' }}" href="{{ url_for('mappings.list_mappings') }}">Resource Mappings</a>
+      <a class="{{ 'active' if active_page == 'event_tx' else '' }}" href="{{ url_for('event_tx.list_event_transactions') }}">Event TX</a>
+      <a class="{{ 'active' if active_page == 'profiles' else '' }}" href="{{ url_for('profiles.manage') }}">Connection Profiles</a>
+    </nav>
+    <details class="user-menu">
+      <summary aria-label="Open user settings"><span class="avatar">{{ current_username[:1]|upper or '?' }}</span><span class="user-menu-label">{{ current_username or 'User' }}</span><span class="caret">⌄</span></summary>
+      <div class="user-popover">
+        <strong>{{ current_username }}</strong>
+        <span class="profile-status">Profile: {{ selected_profile.name }}</span>
+        <span class="profile-status">{{ selected_profile.mode|upper }} connection</span>
+        <hr>
+        <form action="{{ url_for('auth.logout') }}" method="post"><button class="menu-action">Sign out</button></form>
+      </div>
+    </details>
+  </header>
+  <main class="app-main">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}<div class="message {{ category }}" role="status">{{ message }}</div>{% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+  <script>
+  (() => {
+    const icon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3"/></svg>';
+    const resetIcon = '↺';
+    const dialog = document.getElementById('table-value-dialog') || (() => {
+      const element = document.createElement('dialog');
+      element.id = 'table-value-dialog'; element.className = 'value-dialog';
+      element.innerHTML = '<form method="dialog"><div class="value-dialog-heading"><h2 id="table-value-title">Table value</h2><button class="secondary-button compact icon-button" type="submit" aria-label="Close value dialog" title="Close">×</button></div><pre id="table-value-content"></pre></form>';
+      document.body.append(element); return element;
+    })();
+    const showValue = (cell, column) => {
+      document.getElementById('table-value-title').textContent = column || 'Table value';
+      document.getElementById('table-value-content').textContent = cell.innerText;
+      dialog.showModal();
+    };
+    const csvValue = (value) => (/^[=+\-@]/.test(value) ? `'${value}` : value);
+    const downloadTable = (table) => {
+      const rows = [...table.rows].map((row) => [...row.cells].map((cell) => `"${csvValue((cell.innerText || '').replaceAll('"', '""'))}"`).join(',')).join('\r\n');
+      const blob = new Blob([rows], { type: 'text/csv;charset=utf-8' });
+      const link = document.createElement('a'); link.href = URL.createObjectURL(blob);
+      link.download = `${document.title.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}_table.csv`;
+      link.click(); URL.revokeObjectURL(link.href);
+    };
+    const moveColumn = (table, from, to) => {
+      if (from === to) return;
+      [...table.rows].forEach((row) => row.insertBefore(row.cells[from], row.cells[to] || null));
+    };
+    const layout = (table) => [...table.tHead.rows[0].cells].map((cell) => ({ key: cell.dataset.gridColumn, width: cell.style.width || '' }));
+    const saveLayout = (table) => localStorage.setItem(table.dataset.layoutKey, JSON.stringify(layout(table)));
+    const applyLayout = (table) => {
+      try {
+        const stored = JSON.parse(localStorage.getItem(table.dataset.layoutKey) || '[]');
+        const headerRow = table.tHead.rows[0];
+        stored.forEach(({ key, width }) => {
+          const header = [...headerRow.cells].find((cell) => cell.dataset.gridColumn === key);
+          if (!header) return;
+          const index = [...headerRow.cells].indexOf(header);
+          moveColumn(table, index, headerRow.cells.length - 1);
+          header.style.width = width;
+        });
+      } catch (_) { localStorage.removeItem(table.dataset.layoutKey); }
+    };
+    const sortRows = (table, column, direction) => {
+      const rows = [...table.tBodies].flatMap((body) => [...body.rows]).filter((row) => row.cells.length === table.tHead.rows[0].cells.length);
+      rows.sort((left, right) => (left.cells[column].innerText || '').localeCompare(right.cells[column].innerText || '', undefined, { numeric: true, sensitivity: 'base' }) * direction);
+      rows.forEach((row) => row.parentElement.append(row));
+    };
+    document.querySelectorAll('table:not(.object-event-table)').forEach((table, tableIndex) => {
+      if (!table.tHead || !table.tBodies.length) return;
+      table.classList.add('unified-data-table', 'resizable-table');
+      table.dataset.layoutKey = `table-layout:${location.pathname}:${tableIndex}`;
+      const headers = [...table.tHead.rows[0].cells];
+      headers.forEach((header, index) => {
+        header.dataset.gridColumn = String(index); header.draggable = true; header.tabIndex = 0;
+        if (!header.querySelector('.column-resizer')) { const grip = document.createElement('span'); grip.className = 'column-resizer'; grip.setAttribute('aria-hidden', 'true'); header.append(grip); }
+        const grip = header.querySelector('.column-resizer');
+        grip.addEventListener('mousedown', (event) => {
+          event.preventDefault(); event.stopPropagation(); const startX = event.pageX; const startWidth = header.getBoundingClientRect().width;
+          const resize = (move) => { header.style.width = `${Math.max(90, startWidth + move.pageX - startX)}px`; };
+          const stop = () => { document.removeEventListener('mousemove', resize); document.removeEventListener('mouseup', stop); saveLayout(table); };
+          document.addEventListener('mousemove', resize); document.addEventListener('mouseup', stop);
+        });
+        header.addEventListener('dragstart', (event) => { event.dataTransfer.setData('text/plain', String([...header.parentElement.cells].indexOf(header))); header.classList.add('dragging'); });
+        header.addEventListener('dragend', () => header.classList.remove('dragging'));
+        header.addEventListener('dragover', (event) => event.preventDefault());
+        header.addEventListener('drop', (event) => { event.preventDefault(); moveColumn(table, Number(event.dataTransfer.getData('text/plain')), [...header.parentElement.cells].indexOf(header)); saveLayout(table); });
+        if (!header.querySelector('.sort-link')) header.addEventListener('click', (event) => {
+          if (event.target.closest('.column-resizer')) return;
+          const current = header.dataset.sortDirection === 'asc' ? 'desc' : 'asc';
+          headers.forEach((item) => { item.dataset.sortDirection = ''; item.querySelector('.client-sort-indicator')?.remove(); });
+          header.dataset.sortDirection = current; sortRows(table, [...header.parentElement.cells].indexOf(header), current === 'asc' ? 1 : -1);
+          const indicator = document.createElement('span'); indicator.className = 'client-sort-indicator'; indicator.textContent = current === 'asc' ? ' ▲' : ' ▼'; header.append(indicator);
+        });
+      });
+      [...table.tBodies].forEach((body) => body.addEventListener('click', (event) => {
+        const cell = event.target.closest('td');
+        if (!cell || event.target.closest('a,button,input,select,textarea,label,form')) return;
+        showValue(cell, table.tHead.rows[0].cells[cell.cellIndex]?.innerText.replace(/[▲▼]/g, '').trim());
+      }));
+      [...table.tBodies].forEach((body) => body.addEventListener('keydown', (event) => {
+        const cell = event.target.closest('td');
+        if (cell && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); showValue(cell, table.tHead.rows[0].cells[cell.cellIndex]?.innerText.replace(/[▲▼]/g, '').trim()); }
+      }));
+      [...table.tBodies].flatMap((body) => [...body.rows]).forEach((row) => [...row.cells].forEach((cell) => { if (!cell.querySelector('a,button,input,select,textarea,label,form')) { cell.tabIndex = 0; cell.classList.add('table-value-cell'); cell.title = 'Click to view full value'; } }));
+      applyLayout(table);
+      const wrap = table.closest('.table-wrap');
+      const toolbarIcons = wrap?.closest('.table-page-view')?.querySelector('.table-toolbar-icons');
+      if (wrap && !(toolbarIcons || wrap.previousElementSibling)?.classList.contains('table-grid-actions')) {
+        const actions = document.createElement('div'); actions.className = 'table-grid-actions';
+        actions.innerHTML = `<button class="secondary-button compact icon-button" type="button" title="Reset column layout" aria-label="Reset column layout">${resetIcon}</button><button class="secondary-button compact icon-button" type="button" title="Download CSV" aria-label="Download CSV">${icon}</button>`;
+        actions.querySelectorAll('button')[0].addEventListener('click', () => { localStorage.removeItem(table.dataset.layoutKey); window.location.reload(); });
+        actions.querySelectorAll('button')[1].addEventListener('click', () => downloadTable(table));
+        if (toolbarIcons) toolbarIcons.append(actions); else wrap.before(actions);
+      }
+    });
+  })();
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

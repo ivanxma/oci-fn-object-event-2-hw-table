@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-heading review-heading"><div><p class="eyebrow">DATA IMPORT · REVIEW</p><h1>Review table definition</h1><p>Target <strong>{{ job.database }}.{{ job.table }}</strong>. Confirm the schema and preview the source before loading data.</p></div><a class="secondary-button" href="{{ url_for('imports.home') }}">← Start over</a></section>
+<form action="{{ url_for('imports.prepare', job_id=job_id) }}" method="post">
+  <section class="content-card review-card">
+    <div class="tab-view" data-tabs>
+      <div class="tab-list" role="tablist" aria-label="CSV review views">
+        <button class="tab active" type="button" role="tab" aria-selected="true" aria-controls="schema-panel" id="schema-tab">Column definition <span>{{ columns|length }}</span></button>
+        <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="sample-panel" id="sample-tab">Sample data <span>{{ job.preview|length }}</span></button>
+      </div>
+      <section class="tab-panel active" role="tabpanel" id="schema-panel" aria-labelledby="schema-tab">
+        <div class="panel-heading"><div><h2>Column definition</h2><p>Change a target column name or MySQL type. Select existing CSV fields to form a primary key.</p></div><div class="schema-options"><label class="checkbox-field"><input id="partition-by-batch" type="checkbox" name="partition_by_batch"><span>OCI event-ready table: add invisible <code>batch_num</code> to the primary key and partition by LIST</span><small>Required for OCI create, update, and delete event processing. Imports use reserved batch 0.</small></label><label class="checkbox-field row-id"><input id="add-row-id" type="checkbox" name="add_row_id"><span>Add <code>ROW_ID</code> auto-increment primary key</span></label></div></div>
+        <div class="table-wrap"><table class="definition-table"><thead><tr><th>CSV column</th><th>Target column</th><th>MySQL type</th><th>Allow NULL</th><th>Primary key</th></tr></thead><tbody>{% for column in columns %}<tr><td><code>{{ column.source_name }}</code></td><td><input aria-label="Target column for {{ column.source_name }}" name="column_name_{{ loop.index0 }}" value="{{ column.name }}" required></td><td><input aria-label="MySQL type for {{ column.source_name }}" name="column_type_{{ loop.index0 }}" value="{{ column.type }}" required></td><td><label class="checkbox-field"><input id="nullable-{{ loop.index0 }}" type="checkbox" name="nullable_{{ loop.index0 }}" checked><span>Nullable</span></label></td><td><label class="checkbox-field"><input type="checkbox" name="primary_key_index" value="{{ loop.index0 }}" data-nullable-id="nullable-{{ loop.index0 }}"><span>Key</span></label></td></tr>{% endfor %}</tbody></table></div>
+      </section>
+      <section class="tab-panel" role="tabpanel" id="sample-panel" aria-labelledby="sample-tab" hidden>
+        <div class="panel-heading"><div><h2>Sample data</h2><p>First {{ job.preview|length }} row(s) read from the uploaded CSV. No data has been imported yet.</p></div></div>
+        <div class="table-wrap"><table><thead><tr>{% for header in job.headers %}<th>{{ header }}</th>{% endfor %}</tr></thead><tbody>{% for row in job.preview %}<tr>{% for header in job.headers %}<td>{{ row[header] }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+      </section>
+    </div>
+  </section>
+  <section class="review-footer"><div><strong>Ready to import?</strong><span>Review the exact SQL statements before the table is created or CSV rows are loaded.</span></div><button class="primary-button">Create table and load data <span>→</span></button></section>
+</form>
+<script>
+document.querySelectorAll('input[name="primary_key_index"]').forEach((keyInput) => {
+  const nullable = document.getElementById(keyInput.dataset.nullableId);
+  const syncNullable = () => {
+    if (keyInput.checked) {
+      nullable.checked = false;
+      nullable.disabled = true;
+    } else {
+      nullable.disabled = false;
+    }
+  };
+  keyInput.addEventListener('change', syncNullable);
+  syncNullable();
+});
+const partitionByBatch = document.getElementById('partition-by-batch');
+const rowId = document.getElementById('add-row-id');
+const syncPartitionKey = () => {
+  const hasSelectedKey = [...document.querySelectorAll('input[name="primary_key_index"]')].some((input) => input.checked);
+  rowId.disabled = partitionByBatch.checked && !hasSelectedKey;
+  if (rowId.disabled) rowId.checked = true;
+};
+partitionByBatch.addEventListener('change', syncPartitionKey);
+document.querySelectorAll('input[name="primary_key_index"]').forEach((input) => input.addEventListener('change', syncPartitionKey));
+syncPartitionKey();
+document.querySelectorAll('[data-tabs]').forEach((view) => {
+  const tabs = view.querySelectorAll('[role="tab"]');
+  const panels = view.querySelectorAll('[role="tabpanel"]');
+  tabs.forEach((tab) => tab.addEventListener('click', () => {
+    tabs.forEach((item) => { const active = item === tab; item.classList.toggle('active', active); item.setAttribute('aria-selected', String(active)); });
+    panels.forEach((panel) => { const active = panel.id === tab.getAttribute('aria-controls'); panel.classList.toggle('active', active); panel.hidden = !active; });
+  }));
+});
+</script>
+{% endblock %}

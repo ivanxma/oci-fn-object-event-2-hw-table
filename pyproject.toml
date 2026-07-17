@@ -1,0 +1,12 @@
+[project]
+name = "oci-object-event-2-table"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+  "fdk>=0.1,<1",
+  "mysql-connector-python>=9.7,<10",
+  "oci>=2.140,<3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

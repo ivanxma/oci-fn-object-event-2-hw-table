@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">DATA IMPORT</p><h1>Import a CSV file</h1><p>Choose a file and target database. You can refine every inferred field before any data is loaded.</p></div><div class="connection-chip"><span class="connection-dot"></span><div><small>CONNECTED PROFILE</small><strong>{{ selected_profile.name }}</strong></div></div></section>
+<section class="content-card import-card"><div class="step-label"><span>1</span><div><h2>Choose source and destination</h2><p>CSV data is kept temporarily on this server only while the review is active.</p></div></div><form action="{{ url_for('imports.inspect') }}" method="post" enctype="multipart/form-data" class="form-grid import-form"><label class="wide">CSV file <span>*</span><input id="csv-file" type="file" name="csv_file" accept=".csv,text/csv" required><small>Delimited CSV with a header row. Maximum file size: 25 MB.</small></label><label>Target database <span>*</span><select id="existing-database" name="existing_database" required>{% for database in databases %}<option value="{{ database }}" {% if database == selected_profile.database %}selected{% endif %}>{{ database }}</option>{% endfor %}</select><small>Select an existing database, or choose Create database below.</small></label><label id="new-database-field" hidden>New database name <span>*</span><input id="new-database" name="new_database" disabled pattern="[A-Za-z][A-Za-z0-9_]{0,63}" placeholder="Database name"><small>Letters, numbers, and underscores only.</small></label><label>Table name <span>*</span><input id="table-name" name="table" required pattern="[A-Za-z][A-Za-z0-9_]{0,63}" placeholder="Derived from filename"><small>Filled from the CSV filename; you can edit it.</small></label><label class="checkbox-field database-toggle"><input id="create-database" type="checkbox" name="create_database"><span>Create database</span></label><div class="form-actions"><button class="primary-button">Inspect CSV <span>→</span></button></div></form></section>
+<section class="workflow-hint"><div><span>1</span><strong>Choose CSV</strong><small>Upload a source file</small></div><div><span>2</span><strong>Review schema</strong><small>Edit columns and keys</small></div><div><span>3</span><strong>Load data</strong><small>Run LOAD DATA LOCAL INFILE</small></div></section>
+{% endblock %}
+{% block scripts %}
+<script>
+const fileInput = document.querySelector('#csv-file');
+const tableInput = document.querySelector('#table-name');
+const createDatabase = document.querySelector('#create-database');
+const existingDatabase = document.querySelector('#existing-database');
+const newDatabaseField = document.querySelector('#new-database-field');
+const newDatabase = document.querySelector('#new-database');
+
+fileInput.addEventListener('change', () => {
+  const filename = fileInput.files[0]?.name || '';
+  let table = filename.replace(/\.csv$/i, '').replace(/_\d+$/, '').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').toLowerCase();
+  if (!table || /^\d/.test(table)) table = `table_${table}`;
+  tableInput.value = table.slice(0, 64);
+});
+
+createDatabase.addEventListener('change', () => {
+  const creating = createDatabase.checked;
+  existingDatabase.disabled = creating;
+  existingDatabase.required = !creating;
+  newDatabaseField.hidden = !creating;
+  newDatabase.disabled = !creating;
+  newDatabase.required = creating;
+});
+</script>
+{% endblock %}

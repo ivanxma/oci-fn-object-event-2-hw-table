@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in · MySQL CSV Import</title><link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"></head>
+<body class="login-page">
+  <main class="login-layout">
+    <section class="login-intro"><span class="brand-mark large">M</span><p class="eyebrow">MYSQL DATA OPERATIONS</p><h1>Import CSV data with confidence.</h1><p>Connect securely, review the inferred schema, then load data directly into MySQL.</p><ul><li>Server-side connection sessions</li><li>Direct and SSH-tunnel profiles</li><li>Reviewable table definitions</li></ul></section>
+    <section class="login-card"><p class="eyebrow">WELCOME BACK</p><h2>Sign in to a connection</h2><p class="muted">Select a saved profile and provide its MySQL credentials.</p>{% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="message {{ category }}" role="status">{{ message }}</div>{% endfor %}{% endwith %}<form method="post"><label>Connection profile <span>*</span><select name="profile" required>{% for profile in profiles %}<option value="{{ profile.name }}">{{ profile.name }}</option>{% endfor %}</select></label><label>MySQL username <span>*</span><input name="username" autocomplete="username" required></label><label>MySQL password <span>*</span><input type="password" name="password" autocomplete="current-password" required></label><button class="primary-button">Connect to MySQL <span>→</span></button></form><p class="login-footer">New connection? <a href="{{ url_for('profiles.create') }}">Create a profile</a></p></section>
+  </main>
+</body>
+</html>

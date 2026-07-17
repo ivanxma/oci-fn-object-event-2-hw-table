@@ -1,0 +1,13 @@
+[project]
+name = "myapp-csv-import-console"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+  "Flask>=3.0,<4",
+  "mysql-connector-python>=9.7,<10",
+  "sshtunnel>=0.4,<1",
+  "paramiko>=3.4,<4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

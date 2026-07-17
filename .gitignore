@@ -1,0 +1,10 @@
+# Deployment secrets and generated state
+deploy/env.sh
+ui/instance/
+ui/.env/
+ui/.venv/
+ui/.ui-runtime.env
+function-report.html
+__pycache__/
+*.py[cod]
+.DS_Store

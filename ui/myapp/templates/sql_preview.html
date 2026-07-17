@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-heading review-heading"><div><p class="eyebrow">DATA IMPORT · SQL REVIEW</p><h1>Review SQL statements</h1><p>No database changes have been made. Confirm these statements to import into <strong>{{ job.database }}.{{ job.table }}</strong>.</p></div><a class="secondary-button" href="{{ url_for('imports.review', job_id=job_id) }}">← Edit definition</a></section>
+<section class="content-card sql-card">
+  <div class="tab-view" data-tabs>
+    <div class="tab-list" role="tablist" aria-label="Import SQL statements">
+      {% if create_database_statement %}<button class="tab active" type="button" role="tab" aria-selected="true" aria-controls="create-database-panel" id="create-database-tab">Create database</button>{% endif %}
+      <button class="tab {% if not create_database_statement %}active{% endif %}" type="button" role="tab" aria-selected="{{ 'false' if create_database_statement else 'true' }}" aria-controls="create-table-panel" id="create-table-tab">Create table</button>
+      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="load-data-panel" id="load-data-tab">Load CSV data</button>
+    </div>
+    {% if create_database_statement %}<section class="tab-panel active" role="tabpanel" id="create-database-panel" aria-labelledby="create-database-tab"><div class="sql-step"><span>1</span><div><h2>Create database if needed</h2><p>This runs only because Create database was selected.</p></div></div><pre class="sql-code"><code>{{ create_database_statement }}</code></pre></section>{% endif %}
+    <section class="tab-panel {% if not create_database_statement %}active{% endif %}" role="tabpanel" id="create-table-panel" aria-labelledby="create-table-tab" {% if create_database_statement %}hidden{% endif %}><div class="sql-step"><span>{% if create_database_statement %}2{% else %}1{% endif %}</span><div><h2>Create table if needed</h2><p>This statement is executed before CSV data is loaded.</p></div></div><pre class="sql-code"><code>{{ ddl }}</code></pre></section>
+    <section class="tab-panel" role="tabpanel" id="load-data-panel" aria-labelledby="load-data-tab" hidden><div class="sql-step"><span>{% if create_database_statement %}3{% else %}2{% endif %}</span><div><h2>Load CSV data</h2><p>The file path is bound safely by Connector/Python at execution time and is not exposed here.</p></div></div><pre class="sql-code"><code>{{ load_statement }}</code></pre></section>
+  </div>
+</section>
+<form action="{{ url_for('imports.load', job_id=job_id) }}" method="post" class="review-footer"><div><strong>Run these statements?</strong><span>This will attempt the table creation and then execute <code>LOAD DATA LOCAL INFILE</code>.</span></div><button class="primary-button">Confirm and run SQL <span>→</span></button></form>
+{% endblock %}
+{% block scripts %}
+<script>
+document.querySelectorAll('[data-tabs]').forEach((view) => {
+  const tabs = view.querySelectorAll('[role="tab"]');
+  const panels = view.querySelectorAll('[role="tabpanel"]');
+  tabs.forEach((tab) => tab.addEventListener('click', () => {
+    tabs.forEach((item) => { const active = item === tab; item.classList.toggle('active', active); item.setAttribute('aria-selected', String(active)); });
+    panels.forEach((panel) => { const active = panel.id === tab.getAttribute('aria-controls'); panel.classList.toggle('active', active); panel.hidden = !active; });
+  }));
+});
+</script>
+{% endblock %}
