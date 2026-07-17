@@ -136,31 +136,117 @@ control. On first creation, `deploy.sh` discovers the created log and writes
 `FUNCTION_LOG_ID` back to that protected file. Use `deploy/showlog.sh` to view
 recent invocations.
 
-## Required access
+## OCI IAM policies: Function, Events, and Object Storage
 
-The deployment instance principal needs Functions, Events, repository, namespace,
-subnet, and Logging management permissions in the deployment compartment when
-Function logging is enabled. The deployed Function's resource principal needs
-read access to objects in the relevant bucket(s).
+This deployment has three separate OCI principals. Do not give the Function the
+deployment VM's broad permissions, and do not use a human user's API key inside
+the Function.
 
-For the dynamic group that contains the deployment Compute instances, add these
-OCI IAM statements (replace placeholders with your dynamic group and target
-compartment):
+| Principal | Used for | Minimum scope |
+| --- | --- | --- |
+| Deployment Compute instance principal | Builds/pushes the image and creates the Function, Event Rule, and Function log | Function/repository/Event/Logging resources in the deployment compartment |
+| OCI Function resource principal | Downloads the CSV that triggered the event | `read objects` for the specific source bucket |
+| OCI Events service | Delivers an already-matched event to the Function | No extra policy in the normal same-tenancy case |
+
+Replace every `<...>` value; policy examples deliberately use names/OCIDs rather
+than the protected values in `deploy/env.sh`.
+
+### 1. Deployment Compute instance principal
+
+Put the deployment VM in a dynamic group. Prefer an explicit instance OCID for
+a single deployment host; use a compartment rule only when every instance in
+that compartment is trusted to deploy this application.
 
 ```text
-Allow dynamic-group <deployment-instance-dynamic-group> to manage log-groups in compartment <deployment-compartment>
-Allow dynamic-group <deployment-instance-dynamic-group> to read log-content in compartment <deployment-compartment>
+# Option A: one deployment VM
+instance.id = '<deployment-instance-ocid>'
+
+# Option B: deployment VMs in one compartment
+ALL {resource.type = 'instance', resource.compartment.id = '<deployment-compartment-ocid>'}
 ```
 
-`manage log-groups` permits the deployment script to create the Functions
-`invoke` service log; `read log-content` permits `deploy/showlog.sh` to search
-that log. Without the first statement, OCI returns `CreateLog`
-`NotAuthorizedOrNotFound` even though the instance principal can list log
-groups.
+For that dynamic group, grant the deployment capabilities used by
+`deploy/deploy.sh` and `deploy/showlog.sh`:
 
-The MySQL account needs access to `fndb` plus `SELECT`, `INSERT`, `UPDATE`,
-`CREATE`, `ALTER`, and `DROP` on mapped target schemas. Restrict this account to
-the needed schemas and Function subnet/network path.
+```text
+Allow dynamic-group <deployment-instance-dg> to read objectstorage-namespaces in tenancy
+Allow dynamic-group <deployment-instance-dg> to inspect repos in tenancy
+Allow dynamic-group <deployment-instance-dg> to manage repos in compartment <registry-compartment>
+Allow dynamic-group <deployment-instance-dg> to manage functions-family in compartment <function-compartment>
+Allow dynamic-group <deployment-instance-dg> to use virtual-network-family in compartment <network-compartment>
+Allow dynamic-group <deployment-instance-dg> to manage cloudevents-rules in compartment <rule-compartment>
+Allow dynamic-group <deployment-instance-dg> to manage logging-family in compartment <logging-compartment>
+Allow dynamic-group <deployment-instance-dg> to read log-content in compartment <logging-compartment>
+```
+
+Use the same compartment for the placeholders when the repository, Function
+application, Event Rule, subnet, and log group are co-located. `manage repos`
+can be restricted further by repository name if the deployment identity also
+has the required `inspect repos` permission. If Function invocation logging is
+disabled, omit the final two Logging statements.
+
+### 2. OCI Function resource principal: read the CSV bucket
+
+The Function uses `get_resource_principals_signer()` to call Object Storage.
+Create a separate dynamic group for it. Scope it to the exact Function when
+possible; a compartment-wide rule is suitable only for a dedicated Functions
+compartment.
+
+```text
+# Preferred: one Function
+resource.id = '<function-ocid>'
+
+# Alternative: all Functions in a compartment
+ALL {resource.type = 'fnfunc', resource.compartment.id = '<function-compartment-ocid>'}
+```
+
+Grant read-only access to the source bucket. The loader only calls `GetObject`.
+
+```text
+Allow dynamic-group <object-loader-function-dg> to read objects in compartment <bucket-compartment> where all {target.bucket.name='<bucket-name>'}
+```
+
+If CSV files are received from multiple buckets, add one statement per bucket.
+Use `manage objects` only if a future Function revision must create, overwrite,
+or remove objects. OCI resource-principal policy and dynamic-group changes can
+take up to 15 minutes to be reflected in a running Function.
+
+### 3. Object Storage event emission and Event Rule
+
+The source bucket must have object events enabled; enabling a rule alone is not
+enough. A bucket administrator can enable it with:
+
+```sh
+oci os bucket update --name '<bucket-name>' --object-events-enabled true
+```
+
+`deploy/deploy.sh` creates an OCI Events rule with Function action and filters
+it using `OBJECT_STORAGE_BUCKET_NAME` and, optionally,
+`OBJECT_STORAGE_OBJECT_NAME_PATTERN` (for example `myfolder/*.csv`). Configure
+the rule for all required event types:
+
+```text
+com.oraclecloud.objectstorage.createobject
+com.oraclecloud.objectstorage.updateobject
+com.oraclecloud.objectstorage.deleteobject
+```
+
+In the usual same-tenancy deployment, OCI Events can deliver a matched rule to
+the selected Function without a separate `eventrule` invocation policy. For a
+cross-tenancy action, create the required paired `endorse`/`admit` policy using
+the `FN_INVOCATION` permission; do not reuse the same-tenancy template.
+
+### 4. MySQL network and database access
+
+IAM does not replace database or network authorization. The Function subnet
+must be able to reach the MySQL host and port (typically TCP/3306), and the
+MySQL account needs access to the control database plus only the mapped target
+schemas. At minimum the loader needs `SELECT`, `INSERT`, `UPDATE`, `CREATE`,
+`ALTER`, and `DROP` where its staging/partition workflow requires them. Restrict
+the account by schema and network path; keep its password only in protected
+Function configuration (`deploy/env.sh`), never in Git or the UI.
+
+For OCI reference, see [Functions resource-principal access](https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionsaccessingociresources.htm), [Functions deployment policies](https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionscreatingpolicies.htm), [Events IAM policies](https://docs.oracle.com/en-us/iaas/Content/Events/Concepts/eventspolicy.htm), and [enabling bucket object events](https://docs.oracle.com/iaas/Content/Object/Tasks/managingbuckets_topic-To_enable_or_disable_emitting_events_for_object_state_changes.htm).
 
 ## Local checks
 
