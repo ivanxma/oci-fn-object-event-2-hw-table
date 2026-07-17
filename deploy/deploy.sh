@@ -38,7 +38,8 @@ printf '%s' "$OCIR_AUTH_TOKEN" | podman login "$REGION_KEY.ocir.io" --username "
 
 BUILD_DIR=$(mktemp -d)
 CONFIG_FILE=$(mktemp)
-cleanup() { rm -rf "$BUILD_DIR" "$CONFIG_FILE"; }
+LOG_CONFIG=""
+cleanup() { rm -rf "$BUILD_DIR" "$CONFIG_FILE" "${LOG_CONFIG:-}"; }
 trap cleanup EXIT
 cp "$ROOT_DIR/function/Dockerfile" "$ROOT_DIR/function/func.py" "$ROOT_DIR/function/partition_loader.py" "$ROOT_DIR/function/requirements.txt" "$BUILD_DIR/"
 sed "s/^name:.*/name: $FUNCTION_NAME/" "$ROOT_DIR/function/func.yaml" > "$BUILD_DIR/func.yaml"
@@ -60,8 +61,16 @@ if [[ "${ENABLE_FUNCTION_LOG:-true}" == "true" && -n "${FUNCTION_LOG_GROUP_ID:-}
       '{"compartment-id":$compartment,source:{resource:$app,service:"functions","source-type":"OCISERVICE",category:"invoke"}}' > "$LOG_CONFIG"
     "${OCI[@]}" logging log create --log-group-id "$FUNCTION_LOG_GROUP_ID" --display-name "$FUNCTION_LOG_NAME" \
       --log-type SERVICE --is-enabled true --configuration "file://$LOG_CONFIG" >/dev/null
-    rm -f "$LOG_CONFIG"
+    FUNCTION_LOG_ID=$("${OCI[@]}" logging log list --log-group-id "$FUNCTION_LOG_GROUP_ID" --all \
+      --query "data[?configuration.source.resource=='$APP_ID' && configuration.source.service=='functions' && configuration.source.category=='invoke'].id | [0]" --raw-output)
   fi
+  [[ -n "$FUNCTION_LOG_ID" && "$FUNCTION_LOG_ID" != null ]] || { echo "Function invocation log was not created." >&2; exit 1; }
+  if grep -q '^export FUNCTION_LOG_ID=' "$ENV_FILE"; then
+    sed -i "s|^export FUNCTION_LOG_ID=.*|export FUNCTION_LOG_ID='$FUNCTION_LOG_ID'|" "$ENV_FILE"
+  else
+    printf "\nexport FUNCTION_LOG_ID='%s'\n" "$FUNCTION_LOG_ID" >> "$ENV_FILE"
+  fi
+  chmod 600 "$ENV_FILE"
 fi
 
 RULE_NAME="${RULE_NAME:-${FUNCTION_NAME}-events}"

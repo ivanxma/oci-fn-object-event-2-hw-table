@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCI Object Event to Table — fndb4 Deployment Report</title>
+  <style>
+    :root { color: #1c2730; font-family: Arial, sans-serif; }
+    body { background: #f5f7f8; margin: 0; }
+    main { background: #fff; box-shadow: 0 2px 12px #182e3a18; margin: 36px auto; max-width: 920px; padding: 42px; }
+    h1 { color: #b02432; margin: 0 0 8px; }
+    h2 { border-bottom: 2px solid #dbe3e8; font-size: 20px; margin-top: 32px; padding-bottom: 8px; }
+    .lead { color: #596b78; margin-top: 0; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #dbe3e8; padding: 12px; text-align: left; vertical-align: top; }
+    th { background: #f2f6f8; width: 34%; }
+    code { font-family: Consolas, monospace; overflow-wrap: anywhere; }
+    .ok { color: #176440; font-weight: 700; }
+    .note { background: #fff6dc; border-left: 4px solid #d09016; padding: 14px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>OCI Object Event to MySQL Table</h1>
+    <p class="lead">Deployment report — generated 2026-07-17T14:53:39Z</p>
+
+    <h2>Deployment target</h2>
+    <table>
+      <tr><th>Compute host</th><td><code>opc@84.8.146.209</code></td></tr>
+      <tr><th>OCI region</th><td><code>uk-london-1</code></td></tr>
+      <tr><th>Function application</th><td><code>object-storage-heatwave-app4</code></td></tr>
+      <tr><th>Function</th><td><code>object-storage-heatwave4</code></td></tr>
+      <tr><th>Container repository</th><td><code>hw-demo-functions4/object-storage-heatwave4</code></td></tr>
+      <tr><th>Control database</th><td><code>fndb4</code></td></tr>
+      <tr><th>Deployment status</th><td><span class="ok">ACTIVE</span></td></tr>
+    </table>
+
+    <h2>Object Storage Event Rule</h2>
+    <table>
+      <tr><th>Rule</th><td><code>object-storage-heatwave4-events</code></td></tr>
+      <tr><th>State</th><td><span class="ok">ACTIVE / enabled</span></td></tr>
+      <tr><th>Event types</th><td>Create object, update object, delete object</td></tr>
+      <tr><th>Bucket filter</th><td><code>ivanma-bucket</code></td></tr>
+      <tr><th>Object-name filter</th><td><code>myfolder/*.csv</code></td></tr>
+    </table>
+
+    <h2>Validation summary</h2>
+    <ul>
+      <li>The Function application and Function were verified active after deployment.</li>
+      <li>The Event Rule was verified active and linked to the suffix-4 Function.</li>
+      <li>The deployed Function configuration was verified to use <code>CONTROL_DATABASE=fndb4</code>.</li>
+      <li>Protected deployment settings and database credentials are intentionally excluded from this report.</li>
+    </ul>
+
+    <p class="note"><strong>Logging note:</strong> The VM instance principal was verified. After the dynamic-group Logging policy was updated, the suffix-4 OCI Functions invocation log was created and its ID was saved only in the protected deployment environment.</p>
+  </main>
+</body>
+</html>

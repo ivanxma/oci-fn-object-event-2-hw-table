@@ -110,8 +110,9 @@ Invocation logging is enabled by default when `ENABLE_FUNCTION_LOG='true'` and
 reuses the application's OCI Functions `invoke` service log in that group.
 Set `FUNCTION_LOG_NAME` only when a custom log name is required. The log group
 and log identifiers belong in the protected `deploy/env.sh`, never in source
-control. Use `deploy/showlog.sh` after setting `FUNCTION_LOG_ID` to view recent
-invocations.
+control. On first creation, `deploy.sh` discovers the created log and writes
+`FUNCTION_LOG_ID` back to that protected file. Use `deploy/showlog.sh` to view
+recent invocations.
 
 ## Required access
 
@@ -119,6 +120,21 @@ The deployment instance principal needs Functions, Events, repository, namespace
 subnet, and Logging management permissions in the deployment compartment when
 Function logging is enabled. The deployed Function's resource principal needs
 read access to objects in the relevant bucket(s).
+
+For the dynamic group that contains the deployment Compute instances, add these
+OCI IAM statements (replace placeholders with your dynamic group and target
+compartment):
+
+```text
+Allow dynamic-group <deployment-instance-dynamic-group> to manage log-groups in compartment <deployment-compartment>
+Allow dynamic-group <deployment-instance-dynamic-group> to read log-content in compartment <deployment-compartment>
+```
+
+`manage log-groups` permits the deployment script to create the Functions
+`invoke` service log; `read log-content` permits `deploy/showlog.sh` to search
+that log. Without the first statement, OCI returns `CreateLog`
+`NotAuthorizedOrNotFound` even though the instance principal can list log
+groups.
 
 The MySQL account needs access to `fndb` plus `SELECT`, `INSERT`, `UPDATE`,
 `CREATE`, `ALTER`, and `DROP` on mapped target schemas. Restrict this account to
