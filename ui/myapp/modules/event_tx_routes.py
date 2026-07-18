@@ -123,8 +123,9 @@ def list_event_transactions():
         else:
             object_event_columns, object_event_rows, object_event_total = [], [], 0
             object_event_sort, object_event_direction, object_event_page_count = "", "desc", 1
-    except (MySQLError, ValueError):
-        flash("Could not read Event TX records from fndb. Confirm this MySQL user can read the control tables.", "error")
+    except (MySQLError, ValueError, RuntimeError) as error:
+        detail = str(error).strip() or "No additional diagnostic text was returned."
+        flash(f"Could not read Event TX records: {type(error).__name__}: {detail}", "error")
         tables, event_log_exists, database, table, events, recent_events, audit_logs, error_logs, limit, active_tab, selected_error_id, selected_error = [], False, "", "", [], [], [], [], 10, "recent", None, None
         registered_total, registered_page, registered_page_size, registered_page_count = 0, 1, 10, 1
         stage_tables, stage_cleanup_blocked = [], False
