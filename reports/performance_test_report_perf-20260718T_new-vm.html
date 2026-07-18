@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fresh performance test — new VM</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;max-width:960px;margin:32px auto;color:#172b3a}table{border-collapse:collapse;width:100%}th,td{padding:9px;border:1px solid #d7e0e5;text-align:left}th{background:#edf3f6}.ok{color:#176440;font-weight:700}.note{background:#fff7df;padding:12px;border-left:4px solid #d49b00}</style></head>
+<body><h1>CSV to HeatWave performance test</h1>
+<p><strong>Fresh run definition:</strong> new VM <code>150.230.121.100</code>, suffix-5 Function deployment, and a new Object Storage prefix/rule namespace.</p>
+<h2>Isolation</h2><table><tr><th>Item</th><th>Value</th></tr>
+<tr><td>Function app</td><td><code>object-storage-heatwave-app5</code></td></tr>
+<tr><td>Function</td><td><code>object-storage-heatwave5</code></td></tr>
+<tr><td>Event Rule</td><td><code>object-storage-heatwave5-events</code> (ACTIVE)</td></tr>
+<tr><td>Control schema</td><td><code>fndb5</code></td></tr>
+<tr><td>Bucket</td><td><code>ivanma-bucket</code></td></tr>
+<tr><td>New test prefix</td><td><code>performance/new-vm-20260718/</code></td></tr>
+<tr><td>Rule object filter</td><td><code>performance/*</code></td></tr></table>
+<h2>Test matrix</h2><table><tr><th>Scenario</th><th>Planned sizes/count</th><th>Timing captured</th></tr>
+<tr><td>Single-file create</td><td>10 KB, 100 KB, 1 MB, 10 MB</td><td>Upload end → terminal event</td></tr>
+<tr><td>Medium/large create</td><td>100 MB, 500 MB, 1 GB</td><td>Upload end → successful partition exchange</td></tr>
+<tr><td>Fan-out</td><td>10, 25, 50, 100 files at approximately 10 KB</td><td>First/last completion and throughput</td></tr>
+<tr><td>Mixed lifecycle</td><td>Create, update, delete</td><td>Per-event and aggregate p50/p95/p99</td></tr></table>
+<h2>Measurement contract</h2><p>Each object records a UTC upload-start and upload-complete timestamp. The Event TX and Object Storage Event pages provide received, completed, and duration values. End-to-end latency is terminal completion minus upload-complete. Results must include bytes, rows, status, retries, and error text.</p>
+<div class="note"><strong>Execution note:</strong> the new VM deployment and isolated Event Rule were verified ACTIVE. The VM does not have the MySQL CLI installed, so database-side test-table/mapping setup must use the application’s Connector/Python environment or the UI before collecting measured rows. This report intentionally does not invent timing values.</div>
+<h2>Acceptance criteria</h2><ul><li>No Function temporary CSV file is created.</li><li>Every uploaded object has exactly one terminal lifecycle result.</li><li>Create/update use staging and partition exchange; delete retires the corresponding batch.</li><li>Report includes p50/p95/p99 latency, MB/s, objects/minute, and error rate.</li></ul>
+</body></html>
