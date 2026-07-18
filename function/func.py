@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -95,16 +94,14 @@ def _write_event_audit(db: Database, event: dict[str, Any]) -> int:
         return int(cursor.lastrowid)
 
 
-def _download_object(event: dict[str, Any], source: dict[str, str], destination: Path) -> None:
+def _object_response(event: dict[str, Any], source: dict[str, str]):
     details = (event.get("data") or {}).get("additionalDetails") or {}
     namespace = str(details.get("namespace") or os.environ.get("OBJECT_STORAGE_NAMESPACE") or "")
     if not namespace:
         raise ValueError("Object Storage event must include a namespace or set OBJECT_STORAGE_NAMESPACE.")
     signer = oci.auth.signers.get_resource_principals_signer()
     client = oci.object_storage.ObjectStorageClient(config={}, signer=signer)
-    object_response = client.get_object(namespace, source["bucket_name"], _object_name(event, source))
-    with destination.open("wb") as stream:
-        shutil.copyfileobj(object_response.data.raw, stream)
+    return client.get_object(namespace, source["bucket_name"], _object_name(event, source))
 
 
 def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, create: bool) -> dict[str, Any]:
@@ -115,11 +112,10 @@ def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, cr
         record = allocate_or_get_batch(db, mapping, source, create=create)
         ensure_partition(db, mapping, record["batch_num"])
         stage = create_stage_table(db, mapping, record["batch_num"])
-        with tempfile.TemporaryDirectory(prefix="object-event-") as directory:
-            csv_path = Path(directory) / "source.csv"
-            _download_object(event, source, csv_path)
+        object_response = _object_response(event, source)
+        with io.TextIOWrapper(object_response.data.raw, encoding="utf-8", newline="") as csv_stream:
             rows = load_csv_parallel(
-                db, mapping, stage, record["batch_num"], columns, csv_path,
+                db, mapping, stage, record["batch_num"], columns, csv_stream,
                 int(os.environ.get("BATCH_ROWS", "1000")), int(os.environ.get("WRITER_WORKERS", "4")),
             )
         validate_and_exchange(db, mapping, stage, record["batch_num"])

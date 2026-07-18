@@ -13,7 +13,7 @@ import uuid
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, TextIO
 
 import mysql.connector
 
@@ -351,34 +351,39 @@ def drop_stage_table(db: Database, mapping: dict[str, Any], stage: str) -> None:
         )
 
 
-def csv_batches(csv_path: Path, columns: list[str], batch_rows: int) -> Iterator[list[tuple[str, ...]]]:
-    with csv_path.open(newline="", encoding="utf-8") as source:
-        reader = csv.DictReader(source)
-        headers = reader.fieldnames or []
-        header_by_folded_name: dict[str, str] = {}
-        for header in headers:
-            folded = header.casefold()
-            if folded in header_by_folded_name:
-                raise ValueError(f"CSV has duplicate column names when compared case-insensitively: {header_by_folded_name[folded]}, {header}.")
-            header_by_folded_name[folded] = header
-        expected_by_folded_name = {column.casefold(): column for column in columns}
-        missing = [column for column in columns if column.casefold() not in header_by_folded_name]
-        unknown = [header for header in headers if header.casefold() not in expected_by_folded_name]
-        if missing or unknown:
-            details = []
-            if missing:
-                details.append(f"missing: {', '.join(missing)}")
-            if unknown:
-                details.append(f"unknown: {', '.join(unknown)}")
-            raise ValueError(f"CSV columns do not match target table ({'; '.join(details)}).")
-        batch: list[tuple[str, ...]] = []
-        for row in reader:
-            batch.append(tuple((row.get(header_by_folded_name[column.casefold()]) or "").strip() for column in columns))
-            if len(batch) >= batch_rows:
-                yield batch
-                batch = []
-        if batch:
+def csv_batches(csv_source: Path | TextIO, columns: list[str], batch_rows: int) -> Iterator[list[tuple[str, ...]]]:
+    """Read CSV batches from either a path or an already-open text stream."""
+    if isinstance(csv_source, Path):
+        with csv_source.open(newline="", encoding="utf-8") as source:
+            yield from csv_batches(source, columns, batch_rows)
+        return
+    source = csv_source
+    reader = csv.DictReader(source)
+    headers = reader.fieldnames or []
+    header_by_folded_name: dict[str, str] = {}
+    for header in headers:
+        folded = header.casefold()
+        if folded in header_by_folded_name:
+            raise ValueError(f"CSV has duplicate column names when compared case-insensitively: {header_by_folded_name[folded]}, {header}.")
+        header_by_folded_name[folded] = header
+    expected_by_folded_name = {column.casefold(): column for column in columns}
+    missing = [column for column in columns if column.casefold() not in header_by_folded_name]
+    unknown = [header for header in headers if header.casefold() not in expected_by_folded_name]
+    if missing or unknown:
+        details = []
+        if missing:
+            details.append(f"missing: {', '.join(missing)}")
+        if unknown:
+            details.append(f"unknown: {', '.join(unknown)}")
+        raise ValueError(f"CSV columns do not match target table ({'; '.join(details)}).")
+    batch: list[tuple[str, ...]] = []
+    for row in reader:
+        batch.append(tuple((row.get(header_by_folded_name[column.casefold()]) or "").strip() for column in columns))
+        if len(batch) >= batch_rows:
             yield batch
+            batch = []
+    if batch:
+        yield batch
 
 
 def insert_batch(db: Database, mapping: dict[str, Any], stage: str, batch_num: int, columns: list[str], rows: list[tuple[str, ...]]) -> int:
@@ -393,10 +398,10 @@ def insert_batch(db: Database, mapping: dict[str, Any], stage: str, batch_num: i
     return len(rows)
 
 
-def load_csv_parallel(db: Database, mapping: dict[str, Any], stage: str, batch_num: int, columns: list[str], csv_path: Path, batch_rows: int, workers: int) -> int:
+def load_csv_parallel(db: Database, mapping: dict[str, Any], stage: str, batch_num: int, columns: list[str], csv_source: Path | TextIO, batch_rows: int, workers: int) -> int:
     pending, inserted = set(), 0
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        for rows in csv_batches(csv_path, columns, batch_rows):
+        for rows in csv_batches(csv_source, columns, batch_rows):
             pending.add(executor.submit(insert_batch, db, mapping, stage, batch_num, columns, rows))
             if len(pending) >= workers * 2:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
