@@ -269,6 +269,21 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
         source = event_source(event)
         source["object_event_id"] = object_event_id
         action = _event_action(event)
+        # Event Rules arrive synchronously.  A mapping can hand the same
+        # CloudEvent back to this Function as a detached invocation, allowing
+        # large objects to run beyond the 300-second synchronous ceiling.
+        detached_worker = bool(event.get("_detached_worker")) or os.environ.get("DETACHED_WORKER", "false").lower() == "true"
+        mapping = None if detached_worker else resolve_mapping(db, source)
+        if mapping and mapping.get("invocation_mode", "SYNC") == "DETACHED":
+            function_id = os.environ.get("FUNCTION_ID", "")
+            if not function_id or os.environ.get("DETACHED_ENABLED", "false").lower() != "true":
+                raise ValueError("Mapping requests DETACHED mode but detached execution is not enabled or FUNCTION_ID is missing.")
+            signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+            client = oci.functions.FunctionsInvokeClient({"region": os.environ.get("OCI_REGION", "")}, signer=signer)
+            worker_event = dict(event)
+            worker_event["_detached_worker"] = True
+            client.invoke_function(function_id=function_id, invoke_function_body=json.dumps(worker_event).encode(), fn_intent="cloudevent", fn_invoke_type="detached")
+            return response.Response(ctx, response_data=json.dumps({"status": "detached_submitted", "mapping_id": mapping["id"], "worker_threads": mapping.get("worker_threads", 4)}), headers={"Content-Type": "application/json"}, status_code=202)
         result = _run_delete(db, event, source) if action == "DELETE" else _run_load(db, event, source, create=action == "CREATE")
         return response.Response(ctx, response_data=json.dumps({"status": "success", **result}), headers={"Content-Type": "application/json"}, status_code=200)
     except Exception as error:
