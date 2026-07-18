@@ -18,6 +18,9 @@
 <tr><td>Fan-out</td><td>10, 25, 50, 100 files at approximately 10 KB</td><td>First/last completion and throughput</td></tr>
 <tr><td>Mixed lifecycle</td><td>Create, update, delete</td><td>Per-event and aggregate p50/p95/p99</td></tr></table>
 <h2>Measurement contract</h2><p>Each object records a UTC upload-start and upload-complete timestamp. The Event TX and Object Storage Event pages provide received, completed, and duration values. End-to-end latency is terminal completion minus upload-complete. Results must include bytes, rows, status, retries, and error text.</p>
-<div class="note"><strong>Execution note:</strong> the new VM deployment and isolated Event Rule were verified ACTIVE. The VM does not have the MySQL CLI installed, so database-side test-table/mapping setup must use the application’s Connector/Python environment or the UI before collecting measured rows. This report intentionally does not invent timing values.</div>
+<h2>Run results</h2><table><tr><th>Case</th><th>Bytes</th><th>Upload duration</th><th>Upload completed (UTC)</th><th>Function signal</th></tr>
+<tr><td>small-10k.csv</td><td>1,483</td><td>1.152 s</td><td>2026-07-18T19:30:07Z</td><td>Invocation received</td></tr>
+<tr><td>small-100k.csv</td><td>17,643</td><td>1.037 s</td><td>2026-07-18T19:30:08Z</td><td>Invocation received</td></tr></table>
+<div class="note"><strong>Run status:</strong> both isolated objects were uploaded successfully and generated Function invocation records. Completion/terminal transaction records were not returned by the invocation-log query during the capture window; therefore end-to-end latency and throughput projections are intentionally not calculated. The VM also lacks the MySQL CLI, so database-side validation must use the application Connector/Python environment or UI.</div>
 <h2>Acceptance criteria</h2><ul><li>No Function temporary CSV file is created.</li><li>Every uploaded object has exactly one terminal lifecycle result.</li><li>Create/update use staging and partition exchange; delete retires the corresponding batch.</li><li>Report includes p50/p95/p99 latency, MB/s, objects/minute, and error rate.</li></ul>
 </body></html>
