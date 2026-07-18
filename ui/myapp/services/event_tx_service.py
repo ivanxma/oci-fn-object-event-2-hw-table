@@ -184,11 +184,11 @@ class EventTransactionService:
                 return []
             timing, timing_join = self._event_timing_sql(cursor)
             cursor.execute(
-                f"""SELECT id, mapping_id, batch_num, event_action, event_status, bucket_name,
-                              resource_name, object_version, message, created_at{timing}
+                f"""SELECT tx.id, tx.mapping_id, tx.batch_num, tx.event_action, tx.event_status, tx.bucket_name,
+                              tx.resource_name, tx.object_version, tx.message, tx.created_at{timing}
                        FROM {quote_identifier(control_database(), 'control database')}.`event_tx_log`
                        AS tx{timing_join}
-                       WHERE target_database = %s AND target_table = %s
+                       WHERE tx.target_database = %s AND tx.target_table = %s
                        ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""",
                 (database, table, limit),
             )
@@ -213,11 +213,11 @@ class EventTransactionService:
             )
             total = int(cursor.fetchone()["total"])
             cursor.execute(
-                f"""SELECT id, mapping_id, batch_num, event_action, event_status, bucket_name,
-                              resource_name, object_version, message, created_at{timing}
+                f"""SELECT tx.id, tx.mapping_id, tx.batch_num, tx.event_action, tx.event_status, tx.bucket_name,
+                              tx.resource_name, tx.object_version, tx.message, tx.created_at{timing}
                        FROM {control}.`event_tx_log`
                        AS tx{timing_join}
-                       WHERE target_database = %s AND target_table = %s
+                       WHERE tx.target_database = %s AND tx.target_table = %s
                        ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s OFFSET %s""",
                 (database, table, page_size, (page - 1) * page_size),
             )
@@ -263,8 +263,8 @@ class EventTransactionService:
                 return []
             timing, timing_join = self._event_timing_sql(cursor)
             cursor.execute(
-                f"""SELECT id, mapping_id, target_database, target_table, batch_num, event_action,
-                              event_status, bucket_name, resource_name, object_version, message, created_at{timing}
+                f"""SELECT tx.id, tx.mapping_id, tx.target_database, tx.target_table, tx.batch_num, tx.event_action,
+                              tx.event_status, tx.bucket_name, tx.resource_name, tx.object_version, tx.message, tx.created_at{timing}
                        FROM {quote_identifier(control_database(), 'control database')}.`event_tx_log`
                        AS tx{timing_join}
                        ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""",
