@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Performance test results — restart v2</title><style>body{font:15px/1.5 system-ui,sans-serif;max-width:920px;margin:32px auto;color:#172b3a}table{border-collapse:collapse;width:100%}th,td{padding:9px;border:1px solid #d7e0e5;text-align:left}th{background:#edf3f6}.ok{color:#176440;font-weight:700}.pending{color:#8a5a00}</style></head><body>
+<h1>CSV to HeatWave performance test results</h1><p>Fresh new-VM run. Prefix <code>performance/new-vm-restart-20260718/</code>; mapping <code>fntestdb.perf_t_001</code>.</p>
+<table><tr><th>Case</th><th>Rows</th><th>Bytes</th><th>Upload duration</th><th>Function duration</th><th>Status</th></tr>
+<tr><td>10 KB canary</td><td>100</td><td>4,519</td><td>0.961 s</td><td>0.966 s</td><td class="ok">SUCCESS</td></tr>
+<tr><td>100 KB</td><td>1,000</td><td>47,722</td><td>1.084 s</td><td>0.624 s</td><td class="ok">SUCCESS</td></tr>
+<tr><td>~1 MB</td><td>20,000</td><td>1,046,725</td><td>1.128 s</td><td>1.177 s</td><td class="ok">SUCCESS</td></tr>
+<tr><td>5 MB</td><td>100,000</td><td>5,366,728</td><td>1.121 s</td><td>2.031 s</td><td class="ok">SUCCESS</td></tr>
+<tr><td>10 MB</td><td>200,000</td><td>11,066,728</td><td>1.298 s</td><td>Pending</td><td class="pending">Uploaded; awaiting terminal log</td></tr></table>
+<h2>Notes</h2><p>All files use the validated schema <code>record_id,event_ts,category,payload,amount</code> and MySQL <code>DATETIME</code> values. Upload timing is measured around OCI Object Storage upload. Function timing is the OCI invocation received-to-served duration.</p>
+</body></html>
