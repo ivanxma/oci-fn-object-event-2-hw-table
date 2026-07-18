@@ -131,7 +131,7 @@ def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, cr
         with io.TextIOWrapper(object_response.data.raw, encoding="utf-8", newline="") as csv_stream:
             rows = load_csv_parallel(
                 db, mapping, stage, record["batch_num"], columns, csv_stream,
-                int(os.environ.get("BATCH_ROWS", "1000")), int(os.environ.get("WRITER_WORKERS", "4")),
+                int(os.environ.get("BATCH_ROWS", "10000")), int(os.environ.get("WRITER_WORKERS", "4")),
             )
         validate_and_exchange(db, mapping, stage, record["batch_num"])
         mark_active(db, record["id"])
