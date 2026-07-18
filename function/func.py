@@ -18,12 +18,14 @@ from partition_loader import (
     TargetTableError,
     allocate_or_get_batch,
     create_stage_table,
+    drop_stage_table,
     ensure_control_tables,
     ensure_partition,
     event_source,
     load_csv_parallel,
     log_error,
     log_event,
+    mark_error,
     mark_active,
     control_database,
     control_table,
@@ -113,7 +115,12 @@ def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, cr
         ensure_partition(db, mapping, record["batch_num"])
         stage = create_stage_table(db, mapping, record["batch_num"])
         object_response = _object_response(event, source)
-        with io.TextIOWrapper(object_response.data.raw, encoding="utf-8", newline="") as csv_stream:
+        # Keep the SDK's streaming-body wrapper alive for the entire CSV read.
+        # ``.raw`` is the wrapper's underlying HTTP response and can be closed
+        # while a long-running loader is still consuming it.  The response body
+        # itself is file-like, so it can be decoded directly without materialising
+        # the object in the Function filesystem.
+        with io.TextIOWrapper(object_response.data, encoding="utf-8", newline="") as csv_stream:
             rows = load_csv_parallel(
                 db, mapping, stage, record["batch_num"], columns, csv_stream,
                 int(os.environ.get("BATCH_ROWS", "1000")), int(os.environ.get("WRITER_WORKERS", "4")),
@@ -123,8 +130,25 @@ def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, cr
         log_event(db, source, action, "SUCCESS", mapping, record["batch_num"], f"Loaded {rows} row(s) by partition exchange.")
         return {"action": action.lower(), "batch_num": record["batch_num"], "rows": rows, "target": f"{mapping['target_database']}.{mapping['target_table']}"}
     except Exception as error:
+        if record is not None:
+            try:
+                mark_error(db, record["id"])
+            except Exception:
+                pass
         log_error(db, source, action, error, mapping, record.get("batch_num") if record else None)
+        # The outer handler owns errors that occur before a load/delete helper is
+        # selected.  Mark helper failures so it does not write a duplicate event
+        # transaction record without the mapping and batch information.
+        setattr(error, "event_logged", True)
         raise
+    finally:
+        if mapping is not None and stage is not None:
+            try:
+                drop_stage_table(db, mapping, stage)
+            except Exception:
+                # A failed cleanup is visible through the UI's staging-table
+                # section and must not mask the load error.
+                pass
 
 
 def _run_delete(db: Database, event: dict[str, Any], source: dict[str, str]) -> dict[str, Any]:
@@ -134,7 +158,11 @@ def _run_delete(db: Database, event: dict[str, Any], source: dict[str, str]) -> 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as event_file:
         json.dump(event, event_file)
         event_file.flush()
-        return run_delete(Path(event_file.name))
+        try:
+            return run_delete(Path(event_file.name))
+        except Exception as error:
+            setattr(error, "event_logged", True)
+            raise
 
 
 def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
@@ -153,7 +181,7 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
         result = _run_delete(db, event, source) if action == "DELETE" else _run_load(db, event, source, create=action == "CREATE")
         return response.Response(ctx, response_data=json.dumps({"status": "success", **result}), headers={"Content-Type": "application/json"}, status_code=200)
     except Exception as error:
-        if db is not None and source is not None:
+        if db is not None and source is not None and not getattr(error, "event_logged", False):
             action = "UNKNOWN"
             if "event" in locals():
                 try:
