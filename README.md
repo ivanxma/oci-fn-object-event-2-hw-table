@@ -100,14 +100,22 @@ only in the UI's server-side active connection state.
 - **Object Storage Event** adds a lifecycle column to raw OCI events:
   `SUCCESS` is green, `ERROR` is red, and `RECEIVED` is blue. A red
   **ERROR · View log** link opens and highlights the corresponding
-  `event_errors` record. Historical entries retain a bucket/resource/action
-  fallback until their next event is processed with the direct link.
+  `event_errors` record. Each event also captures `received_at`, `completed_at`,
+  and `duration_ms`; the UI renders duration in seconds. Historical entries
+  are backfilled when their transaction record is known.
 - **Registered Table** server-pages transaction history (10 rows by default;
   change **Show** and select **Refresh**). Its toolbar keeps Refresh on the
   left and a single CSV-download icon on the right.
-- The ▤ button beside **Target table** opens a paged dialog of the selected
-  target table's visible rows. The dialog fetches only the requested page, so
-  large target tables are not loaded into the browser or application at once.
+- The **Browse rows** button beside **Target table** opens a paged dialog of
+  the selected target table's visible rows. It has a tooltip and fetches only
+  the requested page, so large target tables are not loaded into the browser
+  or application at once.
+- **Staging tables** are shown below the target selector. Individual cleanup
+  buttons and **Clean all** are available for residual UUID-suffixed staging
+  tables. **Clean all** displays the table list and requires confirmation.
+  Cleanup is blocked only while a batch has been `LOADING` within the last ten
+  minutes; stale leases can be cleaned after processing has been verified
+  stopped.
 
 ### Deploy the UI with HTTPS
 
@@ -147,7 +155,13 @@ MySQL endpoint and the Object Storage service.
 
 The required `env.sh` variables are the OCI compartment/subnet/application
 details, OCIR credentials, and `DB_HOST`, `DB_USER`, and `DB_PASSWORD`. Optional
-`BATCH_ROWS` and `WRITER_WORKERS` control the loader. Set
+`BATCH_ROWS` and `WRITER_WORKERS` control the loader. The deployed defaults are
+10,000 rows and four workers. Set
+`FUNCTION_MEMORY` and `FUNCTION_TIMEOUT` to override the Function manifest's
+default 1024 MB / 300 second capacity. CSV objects are streamed without a
+temporary file. `OBJECT_STORAGE_RANGE_BYTES` controls the bounded HTTP Range
+size, and `OBJECT_STORAGE_READ_TIMEOUT_SECONDS` controls the per-range timeout.
+Set
 `OBJECT_STORAGE_BUCKET_NAME` to limit the Events rule to a bucket.
 Set `OBJECT_STORAGE_OBJECT_NAME_PATTERN='myfolder/*.csv'` to additionally
 limit the rule to matching `data.resourceName` values under that virtual folder.
@@ -199,7 +213,7 @@ For that dynamic group, grant the deployment capabilities used by
 
 ```text
 Allow dynamic-group <deployment-instance-dg> to read objectstorage-namespaces in tenancy
-Allow dynamic-group <deployment-instance-dg> to inspect repos in tenancy
+Allow dynamic-group <deployment-instance-dg> to inspect repos in compartment <registry-compartment>
 Allow dynamic-group <deployment-instance-dg> to manage repos in compartment <registry-compartment>
 Allow dynamic-group <deployment-instance-dg> to manage functions-family in compartment <function-compartment>
 Allow dynamic-group <deployment-instance-dg> to use virtual-network-family in compartment <network-compartment>
@@ -212,7 +226,9 @@ Use the same compartment for the placeholders when the repository, Function
 application, Event Rule, subnet, and log group are co-located. `manage repos`
 can be restricted further by repository name if the deployment identity also
 has the required `inspect repos` permission. If Function invocation logging is
-disabled, omit the final two Logging statements.
+disabled, omit the final two Logging statements. `objectstorage-namespaces` is
+the sole tenancy-scoped statement: OCI exposes the tenancy namespace at tenancy
+scope, so `read objectstorage-namespaces in compartment ...` is not valid.
 
 ### 2. OCI Function resource principal: read the CSV bucket
 
