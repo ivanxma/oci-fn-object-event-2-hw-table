@@ -24,6 +24,7 @@ flowchart LR
 The basic `LOAD DATA` command is fast, but production ingestion needs more than loading a file into a table.
 
 - **Schema control.** Headers, delimiters, quoting, character set, required fields, and data types must be checked before a file affects a shared analytical table.
+- **Object Storage is not a `LOAD DATA` file system.** `LOAD DATA` does not directly consume an Object Storage object. A conventional `LOAD DATA LOCAL INFILE` path first downloads the object to Function-local temporary storage and then loads that copy. The CSV is therefore read and stored twice: once during download and again during database ingestion. For large or concurrent files, this adds elapsed time, temporary-storage capacity requirements, cleanup work, and new failure modes such as a full ephemeral file system or an interrupted download.
 - **Idempotency.** Object Storage can send retries and a file can be overwritten. Processing must identify the object version or event identity and avoid duplicate rows.
 - **Concurrent arrivals.** Multiple files for the same target need isolated staging space and clear ownership of their work.
 - **Availability.** Long row-by-row inserts or delete-and-reload jobs make tables less predictable for readers.
