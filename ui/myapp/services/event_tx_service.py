@@ -13,6 +13,7 @@ EVENT_LOG_TABLE = "event_tx_log"
 OBJECT_EVENT_TABLE = "object_event"
 EVENT_ERROR_TABLE = "event_errors"
 SOURCE_BATCH_TABLE = "source_object_batches"
+STALE_LOADING_MINUTES = 10
 
 
 class EventTransactionService:
@@ -106,7 +107,7 @@ class EventTransactionService:
             if self._table_exists(cursor, SOURCE_BATCH_TABLE):
                 control = quote_identifier(control_database(), "control database")
                 cursor.execute(
-                    f"SELECT 1 FROM {control}.`source_object_batches` WHERE target_database = %s AND target_table = %s AND lifecycle_state = 'LOADING' LIMIT 1",
+                    f"SELECT 1 FROM {control}.`source_object_batches` WHERE target_database = %s AND target_table = %s AND lifecycle_state = 'LOADING' AND updated_at >= UTC_TIMESTAMP() - INTERVAL {STALE_LOADING_MINUTES} MINUTE LIMIT 1",
                     (database, table),
                 )
                 loading = cursor.fetchone() is not None
@@ -135,7 +136,7 @@ class EventTransactionService:
             if self._table_exists(cursor, SOURCE_BATCH_TABLE):
                 control = quote_identifier(control_database(), "control database")
                 cursor.execute(
-                    f"SELECT 1 FROM {control}.`source_object_batches` WHERE target_database = %s AND target_table = %s AND lifecycle_state = 'LOADING' LIMIT 1",
+                    f"SELECT 1 FROM {control}.`source_object_batches` WHERE target_database = %s AND target_table = %s AND lifecycle_state = 'LOADING' AND updated_at >= UTC_TIMESTAMP() - INTERVAL {STALE_LOADING_MINUTES} MINUTE LIMIT 1",
                     (database, table),
                 )
                 if cursor.fetchone() is not None:
@@ -160,7 +161,7 @@ class EventTransactionService:
             control = quote_identifier(control_database(), "control database")
             if self._table_exists(cursor, SOURCE_BATCH_TABLE):
                 cursor.execute(
-                    f"SELECT 1 FROM {control}.`source_object_batches` WHERE target_database = %s AND target_table = %s AND lifecycle_state = 'LOADING' LIMIT 1",
+                    f"SELECT 1 FROM {control}.`source_object_batches` WHERE target_database = %s AND target_table = %s AND lifecycle_state = 'LOADING' AND updated_at >= UTC_TIMESTAMP() - INTERVAL {STALE_LOADING_MINUTES} MINUTE LIMIT 1",
                     (database, table),
                 )
                 if cursor.fetchone() is not None:
