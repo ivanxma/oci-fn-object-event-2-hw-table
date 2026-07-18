@@ -129,19 +129,15 @@ sequenceDiagram
     OS->>ER: Object created, updated, or deleted
     ER->>F: Matching CloudEvent
     F->>DB: Persist raw event; resolve mapping
-    alt create or update
-        F->>DB: Allocate or retry batch lease
-        F->>OS: Download CSV with resource principal
-        F->>DB: Load and validate staging table
-        F->>T: Exchange staging table with partition
-        F->>DB: Mark SUCCESS and link audit records
-    else delete
-        F->>DB: Find object's active batch
-        F->>T: Truncate or retire that partition
-        F->>DB: Mark SUCCESS
-    else mapping missing or validation fails
-        F->>DB: Mark ERROR; write actionable error
-    end
+    F->>DB: For create or update, allocate or retry batch lease
+    F->>OS: Download CSV with resource principal
+    F->>DB: Load and validate staging table
+    F->>T: Exchange staging table with partition
+    F->>DB: Mark successful create or update
+    F->>DB: For delete, find the active batch
+    F->>T: Truncate or retire that partition
+    F->>DB: Mark successful delete
+    F->>DB: For a missing mapping or validation failure, record error
 ```
 
 The Function needs only the permissions required to read source objects and connect to the database. The deployment identity is separate: it creates or updates the Function, Event Rule, logging configuration, and container image. Enable Object Storage object events on the bucket and use a narrowly scoped rule so unrelated objects do not invoke the loader.
