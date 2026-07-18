@@ -80,13 +80,28 @@ def _write_event_audit(db: Database, event: dict[str, Any]) -> int:
                 resource_name TEXT NULL,
                 namespace VARCHAR(255) NULL,
                 event_time DATETIME(6) NULL,
+                received_at DATETIME(6) NOT NULL,
+                completed_at DATETIME(6) NULL,
+                duration_ms DECIMAL(16,3) NULL,
                 KEY ix_object_event_time (event_date)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
         )
+        for column, definition in (
+            ("received_at", "DATETIME(6) NULL"),
+            ("completed_at", "DATETIME(6) NULL"),
+            ("duration_ms", "DECIMAL(16,3) NULL"),
+        ):
+            cursor.execute(
+                """SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = %s AND table_name = 'object_event' AND column_name = %s""",
+                (control_database(), column),
+            )
+            if cursor.fetchone() is None:
+                cursor.execute(f"ALTER TABLE {control_table('object_event')} ADD COLUMN {quote_identifier(column, 'event timing column')} {definition}")
         cursor.execute(
             f"""INSERT INTO {control_table('object_event')}
-               (event_date, event_type, event_message, bucket_name, compartment_name, resource_name, namespace, event_time)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+               (event_date, event_type, event_message, bucket_name, compartment_name, resource_name, namespace, event_time, received_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, UTC_TIMESTAMP(6))""",
             (
                 _event_time(event), str(event.get("eventType") or "unknown"), json.dumps(event, separators=(",", ":")),
                 details.get("bucketName"), data.get("compartmentName"), data.get("resourceName"),
