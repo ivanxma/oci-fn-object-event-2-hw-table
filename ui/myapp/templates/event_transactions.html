@@ -38,5 +38,5 @@ const registeredDialog=document.getElementById('registered-table-dialog'), regis
 </script><script>
 const objectEventTable=document.querySelector('.object-event-table');
 if(objectEventTable){const headers=[...objectEventTable.tHead.rows[0].cells],index=headers.findIndex(cell=>cell.textContent.includes('Duration (ms)'));if(index>=0){headers[index].querySelector('.sort-link')?.replaceChildren(document.createTextNode('Duration (seconds)'));[...objectEventTable.tBodies[0].rows].forEach(row=>{const cell=row.cells[index];const value=Number(cell?.dataset.value);if(cell&&Number.isFinite(value)){const seconds=(value/1000).toFixed(3);cell.textContent=`${seconds} seconds`;cell.dataset.value=seconds;}})}}
-document.querySelectorAll("input[name=execution-mode]").forEach(r=>r.addEventListener("change",()=>{const mode=r.value;document.querySelectorAll(".event-tx-table tbody tr").forEach(row=>{row.hidden=mode!=="ALL"&&!row.textContent.toUpperCase().includes(mode)})}));
+document.querySelectorAll("input[name=execution-mode]").forEach(r=>r.addEventListener("change",()=>{const mode=r.value;document.querySelectorAll(".event-tx-table tbody tr[data-execution-mode]").forEach(row=>{row.hidden=mode!=="ALL"&&row.dataset.executionMode!==mode})}));
 {% endblock %}
