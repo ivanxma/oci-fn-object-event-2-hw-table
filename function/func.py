@@ -214,12 +214,12 @@ def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, cr
         with io.TextIOWrapper(io.BufferedReader(object_stream), encoding="utf-8", newline="") as csv_stream:
             rows = load_csv_parallel(
                 db, mapping, stage, record["batch_num"], columns, csv_stream,
-                int(os.environ.get("BATCH_ROWS", "10000")), int(os.environ.get("WRITER_WORKERS", "4")),
+                int(os.environ.get("BATCH_ROWS", "10000")), int(mapping.get("worker_threads") or os.environ.get("WRITER_WORKERS", "4")),
             )
         validate_and_exchange(db, mapping, stage, record["batch_num"])
         mark_active(db, record["id"])
         log_event(db, source, action, "SUCCESS", mapping, record["batch_num"], f"Loaded {rows} row(s) by partition exchange.")
-        return {"action": action.lower(), "batch_num": record["batch_num"], "rows": rows, "target": f"{mapping['target_database']}.{mapping['target_table']}"}
+        return {"action": action.lower(), "batch_num": record["batch_num"], "rows": rows, "target": f"{mapping['target_database']}.{mapping['target_table']}", "invocation_mode": mapping.get("invocation_mode", "SYNC"), "worker_threads": mapping.get("worker_threads", 4)}
     except Exception as error:
         if record is not None:
             try:
