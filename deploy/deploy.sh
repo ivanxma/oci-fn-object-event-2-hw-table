@@ -13,6 +13,18 @@ set +a
 for value in COMPARTMENT_ID SUBNET_ID APP_NAME FUNCTION_NAME REGION REGION_KEY REPOSITORY_PREFIX OCIR_USERNAME OCIR_AUTH_TOKEN DB_HOST DB_USER DB_PASSWORD; do
   [[ -n "${!value:-}" ]] || { echo "Missing $value in $ENV_FILE" >&2; exit 1; }
 done
+# OCIR repository paths are strictly lowercase.  Normalize the configurable
+# prefix up front so deployments copied from environments such as "HWDemo"
+# do not fail with OCI NameInvalid; preserve the function/app names as given.
+NORMALIZED_REPOSITORY_PREFIX=$(printf '%s' "$REPOSITORY_PREFIX" | tr '[:upper:]' '[:lower:]')
+if [[ "$NORMALIZED_REPOSITORY_PREFIX" != "$REPOSITORY_PREFIX" ]]; then
+  echo "Normalizing REPOSITORY_PREFIX to lowercase: $REPOSITORY_PREFIX -> $NORMALIZED_REPOSITORY_PREFIX" >&2
+  REPOSITORY_PREFIX="$NORMALIZED_REPOSITORY_PREFIX"
+fi
+[[ "$REPOSITORY_PREFIX" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || {
+  echo "REPOSITORY_PREFIX must contain only lowercase letters, digits, '.', '_' or '-' and start with a letter/digit." >&2
+  exit 1
+}
 CONTROL_DATABASE="${CONTROL_DATABASE:-${DB_NAME:-fndb}}"
 for command in oci fn podman jq; do command -v "$command" >/dev/null || { echo "Missing $command; run deploy/bootstrap.sh first." >&2; exit 1; }; done
 

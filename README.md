@@ -276,6 +276,11 @@ com.oraclecloud.objectstorage.updateobject
 com.oraclecloud.objectstorage.deleteobject
 ```
 
+The deployment script normalizes `REPOSITORY_PREFIX` to lowercase because OCI
+Container Registry rejects uppercase repository names. It also validates the
+prefix before creating the repository, so a copied environment file fails with
+an actionable message instead of a late OCI `NameInvalid` error.
+
 In the usual same-tenancy deployment, OCI Events can deliver a matched rule to
 the selected Function without a separate `eventrule` invocation policy. For a
 cross-tenancy action, create the required paired `endorse`/`admit` policy using
