@@ -102,16 +102,17 @@ def _object_response(event: dict[str, Any], source: dict[str, str]):
     if not namespace:
         raise ValueError("Object Storage event must include a namespace or set OBJECT_STORAGE_NAMESPACE.")
     signer = oci.auth.signers.get_resource_principals_signer()
-    client = oci.object_storage.ObjectStorageClient(config={}, signer=signer)
     # A large CSV can take longer to consume than the SDK's default read
     # timeout because ingestion pauses briefly while writer workers commit each
     # batch.  Keep the HTTP response open for the whole Function invocation.
     read_timeout = int(os.environ.get("OBJECT_STORAGE_READ_TIMEOUT_SECONDS", "300"))
+    client = oci.object_storage.ObjectStorageClient(
+        config={}, signer=signer, timeout=(10, read_timeout)
+    )
     return client.get_object(
         namespace,
         source["bucket_name"],
         _object_name(event, source),
-        timeout=(10, read_timeout),
     )
 
 
