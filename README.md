@@ -49,6 +49,35 @@ retries from sharing a staging name. The table is removed after a successful
 partition exchange and is also cleaned up after a failed load. Audit and error
 records remain in the control database after the temporary table is gone.
 
+## Limitations and assumptions
+
+- **One file is one logical data partition.** A mapping may route many CSV
+  files to one target table, but each file represents a distinct, complete
+  subset of that table's data. The loader publishes one source file at a time
+  into its own `batch_num` partition.
+- **Business records must not overlap between files.** The same business record
+  must not be present in two active source files for the same target. The
+  partition key allows the technical load to retain one file per partition, but
+  it does not make duplicate business records correct. Define and validate the
+  source-file ownership rule before enabling a mapping.
+- **Atomicity is limited to one file.** Loading, exchanging, or removing one
+  file-sized partition is atomic. A coordinated change affecting two or more
+  files is not a single transaction; readers can observe an intermediate state
+  between separate object events.
+- **Move records by removing first, then adding.** When records must move from
+  one file to another, publish and successfully process the source-file removal
+  first, then publish the destination file containing those records. Adding the
+  destination first can expose duplicate records or fail a unique-key check.
+  For a no-gap, multi-file cutover, use a separately designed publication
+  workflow rather than independent file events.
+- **Events can be retried and can arrive out of order.** The implementation
+  records object and batch state to make retries safe, but source publishers
+  must avoid simultaneous, conflicting updates to the same logical data set.
+- **The target table is a pre-approved contract.** It must already exist with
+  compatible columns, `LIST` partitioning by the loader batch column, and that
+  column included in each unique key. The Function does not infer or create
+  arbitrary business-table schemas.
+
 ## UI
 
 The Flask UI is deliberately separate from the Function deployment:
