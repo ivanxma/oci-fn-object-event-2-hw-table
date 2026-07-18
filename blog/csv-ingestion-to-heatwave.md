@@ -128,7 +128,7 @@ sequenceDiagram
     participant T as Target table
     OS->>ER: Object created, updated, or deleted
     ER->>F: Matching CloudEvent
-    F->>DB: Persist raw event; resolve mapping
+    F->>DB: Persist raw event and resolve mapping
     F->>DB: For create or update, allocate or retry batch lease
     F->>OS: Download CSV with resource principal
     F->>DB: Load and validate staging table
