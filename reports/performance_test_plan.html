@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CSV to HeatWave Performance Test Plan</title>
+  <style>
+    :root { --ink:#172b3a; --muted:#5c6d78; --line:#d7e0e5; --soft:#f4f7f9; --card:#fff; --red:#c62835; --blue:#206a93; --green:#18794e; --amber:#98600b; }
+    * { box-sizing:border-box; } body { margin:0; background:var(--soft); color:var(--ink); font:15px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    main { max-width:1200px; margin:0 auto; padding:38px 26px 64px; } header { background:linear-gradient(125deg,#112d40,#225e7d); color:#fff; border-radius:12px; padding:34px 38px; box-shadow:0 8px 26px #172b3a2b; } h1 { font-size:32px; line-height:1.15; margin:0 0 10px; } h2 { font-size:22px; margin:0 0 12px; } h3 { font-size:17px; margin:0 0 8px; } p { margin:0 0 13px; } .subtitle { color:#d8e7ee; font-size:17px; max-width:850px; } .meta { color:#bcd1dc; font-size:13px; margin:18px 0 0; }
+    section { background:var(--card); border:1px solid var(--line); border-radius:10px; margin-top:20px; padding:25px 28px; box-shadow:0 2px 10px #172b3a0a; } .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(235px,1fr)); } .card { border:1px solid var(--line); border-radius:8px; padding:16px; } .card strong { display:block; color:var(--blue); font-size:13px; letter-spacing:.04em; text-transform:uppercase; } .callout { border-left:4px solid var(--amber); background:#fff8e9; padding:13px 16px; } .success { border-left-color:var(--green); background:#eef8f2; } code { background:#edf2f5; border-radius:4px; font-size:.92em; padding:2px 5px; } pre { background:#172b3a; border-radius:7px; color:#e7f2f7; overflow:auto; padding:16px; white-space:pre-wrap; }
+    table { border-collapse:collapse; width:100%; min-width:760px; } .table-wrap { border:1px solid var(--line); border-radius:7px; overflow:auto; } th { background:#eff4f6; color:#465b67; font-size:12px; letter-spacing:.03em; padding:10px 12px; text-align:left; text-transform:uppercase; } td { border-top:1px solid var(--line); padding:10px 12px; vertical-align:top; } ul,ol { margin:8px 0 0; padding-left:22px; } li { margin:5px 0; } .flow { display:flex; align-items:stretch; gap:8px; margin:18px 0 4px; overflow:auto; } .flow div { background:#edf5f8; border:1px solid #c7dce7; border-radius:7px; flex:1; min-width:160px; padding:13px; text-align:center; } .flow div:not(:last-child)::after { color:#6d8795; content:"→"; float:right; font-size:22px; margin:-1px -22px 0 0; } .flow strong { display:block; font-size:13px; } .formula { background:#f5f8fa; border:1px dashed #aebfc9; border-radius:7px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; padding:14px; } .tag { border-radius:12px; display:inline-block; font-size:11px; font-weight:700; padding:3px 8px; } .tag.required { background:#fce7e9; color:#9b2630; } .tag.measure { background:#e8f3f8; color:#145d82; } .tag.pass { background:#e8f7ee; color:#176440; } @media (max-width:700px) { main { padding:20px 14px 42px; } header,section { padding:21px 18px; } h1 { font-size:27px; } .flow { flex-direction:column; } .flow div:not(:last-child)::after { content:"↓"; float:none; display:block; margin:5px 0 -16px; } }
+    @media print { body { background:#fff; } main { max-width:none; padding:0; } header,section { box-shadow:none; break-inside:avoid; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>CSV to HeatWave performance test plan</h1>
+    <p class="subtitle">A repeatable plan for measuring OCI Object Storage event ingestion through OCI Functions, staging tables, partition exchange, and the MySQL/HeatWave publication path.</p>
+    <p class="meta">Scope: file size, file count, target-table fan-out, lifecycle-event mix, capacity projection, and operational limits.</p>
+  </header>
+
+  <section>
+    <h2>1. Purpose and test questions</h2>
+    <div class="grid">
+      <div class="card"><strong>File-size scaling</strong>How do elapsed time, throughput, and temporary storage change from 10 KB through 10 MB, then from 100 MB through 1 GB?</div>
+      <div class="card"><strong>Event-rate scaling</strong>How many small-file events can be accepted and completed per minute when 10–100 files are routed to different target tables?</div>
+      <div class="card"><strong>Lifecycle behaviour</strong>How do create, update, and delete events affect latency, contention, correctness, and cleanup?</div>
+      <div class="card"><strong>Capacity decision</strong>What Function concurrency, database capacity, temporary storage, and operational guardrails are needed for the expected production workload?</div>
+    </div>
+    <div class="callout"><strong>Primary outcome:</strong> publish a measured operating envelope, not a single best throughput number. Report the sustainable rate where p95 latency, error rate, database load, and temporary-storage headroom remain within agreed limits.</div>
+  </section>
+
+  <section>
+    <h2>2. System under test and timing model</h2>
+    <div class="flow"><div><strong>Object Storage</strong>CSV object lifecycle event</div><div><strong>OCI Events</strong>Rule delivery and invocation</div><div><strong>OCI Function</strong>Download, parse, stage, load</div><div><strong>MySQL</strong>Validate and exchange partition</div><div><strong>HeatWave</strong>Refresh / analytic availability</div></div>
+    <p>Capture a correlation ID for every generated object and carry it through the object name, event transaction record, Function logs, and result dataset. Measure both end-to-end time and each phase so bottlenecks are visible.</p>
+    <div class="table-wrap"><table><thead><tr><th>Metric</th><th>Definition</th><th>Source</th></tr></thead><tbody>
+      <tr><td>End-to-end latency</td><td>Object upload complete to successful event transaction; separately report create/update/delete.</td><td>Test driver timestamp + <code>event_tx_log.created_at</code></td></tr>
+      <tr><td>Function duration</td><td>Invocation start to completion; include cold and warm starts separately.</td><td>OCI Function invocation logs / metrics</td></tr>
+      <tr><td>Phase timing</td><td>Download, CSV parse, stage load, partition exchange, HeatWave refresh, and cleanup.</td><td>Structured Function logs</td></tr>
+      <tr><td>Throughput</td><td>Rows/s and MB/s for successful ingestion; objects/min for event-rate scenarios.</td><td>Derived from input manifest and timestamps</td></tr>
+      <tr><td>Resource pressure</td><td>Function memory, ephemeral disk peak, concurrent invocations, DB CPU/memory/I/O, connections, locks, and HeatWave load state.</td><td>OCI monitoring, Function logs, MySQL performance schema/status</td></tr>
+      <tr><td>Correctness</td><td>Expected row count, checksum or key sample, exactly one active batch per source object, and no residual staging table after success.</td><td>Target/control-table verification queries</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section>
+    <h2>3. Preconditions and assumptions</h2>
+    <ul>
+      <li>Use a dedicated bucket prefix, test schemas, and test mappings. Never use production target tables for load testing.</li>
+      <li>Each CSV is a complete, disjoint logical partition of its target table. Do not distribute the same business key across active files.</li>
+      <li>Use production-like column count, row width, character set, type conversion, indexes, partition layout, Function memory/timeout, network path, and HeatWave publication policy.</li>
+      <li>Record the exact deployed Function image, UI version, MySQL/HeatWave version, OCI region, Function shape/memory, writer-worker setting, and batch-row setting for every run.</li>
+      <li>Run a baseline with no competing workload, then repeat selected scenarios with representative analytical queries and controlled database background activity.</li>
+      <li>Warm up each configuration with at least three discarded runs. Execute at least five measured repetitions per data point; report median, p95, minimum, and maximum rather than only an average.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>4. Prepare the test machine, OCI resources, and deployment</h2>
+    <p>Use a dedicated test machine with the OCI CLI, Git, Python 3.13+, and MySQL client installed. Its clock, the Function environment, and MySQL should use NTP; record UTC timestamps everywhere. Do not put credentials in the run manifest or final report.</p>
+    <pre>TEST_ROOT="$HOME/oci-object-event-performance"
+RUN_ID="run-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$TEST_ROOT/$RUN_ID"/{input,manifest,results,logs,sql}
+chmod 700 "$TEST_ROOT" "$TEST_ROOT/$RUN_ID"
+
+# Use the protected deployment configuration already maintained on the test machine.
+# Do not copy it into Git, result bundles, or browser-visible files.
+set -a
+. /path/to/oci-object-event-2-table/deploy/env.sh
+set +a
+export PERF_BUCKET="$OBJECT_STORAGE_BUCKET_NAME"
+export PERF_PREFIX="performance/$RUN_ID"</pre>
+    <ol>
+      <li>Create a separate Object Storage bucket or, at minimum, a unique <code>$PERF_PREFIX/</code> prefix. Enable bucket object events and retain the bucket name, namespace, compartment display name, and region in the run configuration.</li>
+      <li>Deploy an isolated test Function application where possible. In its protected <code>env.sh</code>, set <code>OBJECT_STORAGE_BUCKET_NAME</code> to the test bucket and <code>OBJECT_STORAGE_OBJECT_NAME_PATTERN</code> to <code>performance/*/*.csv</code>; use test database credentials and a dedicated Function log group.</li>
+      <li>Run <code>deploy/deploy.sh</code> from the test machine. It creates or updates the Function and OCI Events rule for create, update, and delete events. Confirm the bucket has object events enabled and record the rule and Function OCIDs.</li>
+      <li>Verify the test Function resource principal can read only the test bucket, and that the Function subnet can reach the test MySQL endpoint. Keep deployment identity, Function resource-principal, and human/test-machine credentials separate.</li>
+      <li>Before each test run, save a redacted configuration snapshot: Function image/version, memory/timeout, <code>BATCH_ROWS</code>, <code>WRITER_WORKERS</code>, Event Rule filters, database version, and HeatWave state.</li>
+    </ol>
+    <div class="callout"><strong>Isolation rule:</strong> a performance run must have its own bucket prefix, mappings, tables, and Function/Event Rule target. Never point a test rule at a production bucket or a production target table.</div>
+  </section>
+
+  <section>
+    <h2>5. Create existing test tables and resource mappings</h2>
+    <p>The loader expects a pre-existing target table. Create one test table per intended target in the fan-out scenario; the table below is a representative template. Adjust business columns and indexes to match the real workload, but retain the invisible <code>batch_num</code>, LIST partitioning, and unique-key rule.</p>
+    <pre>CREATE DATABASE IF NOT EXISTS perf_hw;
+
+CREATE TABLE perf_hw.perf_t_001 (
+  record_id BIGINT NOT NULL,
+  event_ts DATETIME(6) NOT NULL,
+  category VARCHAR(32) NOT NULL,
+  payload VARCHAR(512) NOT NULL,
+  amount DECIMAL(14,2) NOT NULL,
+  batch_num BIGINT UNSIGNED NOT NULL INVISIBLE,
+  PRIMARY KEY (record_id, batch_num),
+  KEY ix_event_ts (event_ts)
+)
+PARTITION BY LIST (batch_num) (
+  PARTITION p_seed VALUES IN (0)
+);</pre>
+    <ol>
+      <li>Create <code>perf_t_001</code> through <code>perf_t_100</code> for the 10–100-file fan-out test. Use a script to generate the DDL, but save the generated SQL in <code>$TEST_ROOT/$RUN_ID/sql/</code>.</li>
+      <li><strong>Create the Resource Mapping before uploading any object.</strong> In the UI Registered Table/Resource Mappings page, add one mapping per target with the exact test compartment display name, bucket name, and a unique pattern such as <code>performance/&lt;run-id&gt;/perf_t_001/*.csv</code>; map it to <code>perf_hw.perf_t_001</code>. Export or record the mapping IDs.</li>
+      <li><strong>Verify the mapping gate:</strong> confirm the mapping list shows the exact compartment, bucket, resource-name pattern, target database, and target table. The pattern must match the complete Object Storage object name (including the run prefix and <code>.csv</code> suffix). Do not start an upload when the list is empty or the pattern differs; the Function will report “No Resource Mappings entry matches this compartment, bucket, and resource name.”</li>
+      <li>For each additional table or file group, create and verify a separate mapping before its first upload. Keep the Event Rule prefix and mapping pattern aligned; the Event Rule filters delivery, while the mapping selects the destination table.</li>
+      <li>Confirm the mapping is visible in the UI and that <code>fndb.object_storage_mappings</code> has the expected target. Run one 10 KB smoke file before starting a matrix.</li>
+      <li>For repeatability, reset only test data: delete the run prefix, truncate/retire its test partitions, and recreate the test schema if necessary. Do not manually delete control rows needed for audit analysis until results are archived.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>6. Generate test data and a machine-readable manifest</h2>
+    <p>Generate deterministic CSVs with a manifest containing object name, target table, event type, byte size, row count, checksum, business-key range, upload time, and expected outcome. Keep a fixed row shape for direct comparisons; add a separate wide-row variant if production rows are materially wider.</p>
+    <pre># For each requested byte size, generate rows until the CSV is at or just above the target size.
+# Use a unique, non-overlapping record_id range for every source object.
+python3.13 tools/generate_perf_csv.py \
+  --output "$TEST_ROOT/$RUN_ID/input/perf_t_001/small-10k.csv" \
+  --target-bytes 10240 --record-id-start 1000000 --seed 101 \
+  --manifest "$TEST_ROOT/$RUN_ID/manifest/objects.ndjson"
+
+sha256sum "$TEST_ROOT/$RUN_ID/input/perf_t_001/small-10k.csv" \
+  &gt;&gt; "$TEST_ROOT/$RUN_ID/manifest/checksums.txt"</pre>
+    <p>If a generator utility is not yet available, implement it with Python's standard-library <code>csv</code> and <code>random.Random(seed)</code>. It should write the header once, generate deterministic <code>record_id,event_ts,category,payload,amount</code> values, stop at the requested size boundary, then append one NDJSON manifest record. The manifest is the authoritative expected-result dataset.</p>
+    <div class="table-wrap"><table><thead><tr><th>Band</th><th>Nominal file sizes</th><th>Purpose</th><th>Recommended repetitions</th></tr></thead><tbody>
+      <tr><td><span class="tag required">Small</span></td><td>10 KB, 25 KB, 50 KB, 100 KB, 250 KB, 500 KB, 1 MB, 5 MB, 10 MB</td><td>Measure event, initialization, mapping, and exchange overhead; establish the small-file knee.</td><td>5 warm + 5 measured each</td></tr>
+      <tr><td><span class="tag required">Medium / large</span></td><td>100 MB, 250 MB, 500 MB, 750 MB, 1 GB</td><td>Measure download/load throughput, temporary storage, timeout margin, and database/HeatWave pressure.</td><td>3 warm + 5 measured each</td></tr>
+      <tr><td><span class="tag measure">Fan-out seed</span></td><td>10 KB fixed</td><td>Isolate event dispatch and per-table concurrency from bulk-data throughput.</td><td>One warm-up set + 5 measured sets</td></tr>
+    </tbody></table></div>
+    <p class="callout success"><strong>Data integrity control:</strong> allocate non-overlapping business-key ranges per source file. For every run, compare expected and loaded row counts; sample keys and verify the active batch registry. This prevents a fast but duplicate-producing run from being reported as a success.</p>
+  </section>
+
+  <section>
+    <h2>7. Mapping preflight gate</h2>
+    <p>Before Scenario A, stop and verify routing in the UI. The required order is: create target table → create Resource Mapping → verify mapping row → upload object. An Event Rule alone is not a table mapping.</p>
+    <ol><li>Open <code>Resource Mappings</code> and create the mapping for the exact run prefix and target table.</li><li>Confirm the displayed compartment and bucket equal the event payload values, and that the shell-style pattern matches the complete object name.</li><li>Upload one 10 KB canary file and wait for a successful terminal transaction. If the Function reports <code>No Resource Mappings entry matches this compartment, bucket, and resource name</code>, do not continue: correct the mapping and rerun the canary.</li><li>Record the mapping ID, target table, canary object name, and terminal event ID in the manifest.</li></ol>
+  </section>
+
+  <section>
+    <h2>8. Put objects in Object Storage and run Scenario A — file-size scaling</h2>
+    <p>Run one create event at a time against a reset target. This establishes the uncontentious cost curve. Repeat the same matrix for update events after an initial baseline file has been successfully loaded.</p>
+    <pre>LOCAL_FILE="$TEST_ROOT/$RUN_ID/input/perf_t_001/small-10k.csv"
+OBJECT_NAME="$PERF_PREFIX/perf_t_001/small-10k.csv"
+UPLOAD_END_UTC=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+oci os object put --namespace "$OBJECT_STORAGE_NAMESPACE" --bucket-name "$PERF_BUCKET" \
+  --name "$OBJECT_NAME" --file "$LOCAL_FILE" --force \
+  &gt; "$TEST_ROOT/$RUN_ID/logs/object-put-small-10k.json"
+printf '%s,%s,%s\n' "$OBJECT_NAME" CREATE "$UPLOAD_END_UTC" \
+  &gt;&gt; "$TEST_ROOT/$RUN_ID/manifest/uploads.csv"</pre>
+    <div class="table-wrap"><table><thead><tr><th>Step</th><th>Procedure</th><th>Measurements and pass criteria</th></tr></thead><tbody>
+      <tr><td>1. Prepare</td><td>Create an approved target table and mapping; generate the selected file-size band with known rows and checksum.</td><td>Record configuration and baseline DB/Function metrics.</td></tr>
+      <tr><td>2. Create</td><td>Upload one CSV and wait for a terminal <code>SUCCESS</code> or <code>ERROR</code> transaction.</td><td>End-to-end time, phase times, rows/s, MB/s, peak temporary disk, Function duration, and target correctness.</td></tr>
+      <tr><td>3. Update</td><td>Replace the same source object with a new, disjoint version of the same file size.</td><td>Replacement latency; correct active batch; retirement of the prior batch per policy; no residual staging table.</td></tr>
+      <tr><td>4. Reset</td><td>Delete the object and verify the associated target partition is removed; return the test target to its baseline state.</td><td>Delete latency, partition-removal result, audit record, and absence of unexpected rows.</td></tr>
+    </tbody></table></div>
+    <div class="formula">For each size: throughput_MBps = file_bytes / 1,048,576 / phase_seconds. &nbsp; Overhead_seconds = median(end_to_end_seconds) − median(file_bytes / measured_bulk_MBps).</div>
+    <p>Plot file size on a logarithmic x-axis against median/p95 end-to-end latency and MB/s. The point where throughput stops increasing materially identifies a practical file-size range; the small-file curve quantifies fixed per-event overhead.</p>
+  </section>
+
+  <section>
+    <h2>8. Scenario B — medium and large files (100 MB–1 GB)</h2>
+    <p>Use 100 MB, 250 MB, 500 MB, 750 MB, and 1 GB files. First run one event at a time; then run the best two sizes at two, four, and the configured maximum safe concurrent invocations. Stop a load level if it breaches a guardrail.</p>
+    <div class="table-wrap"><table><thead><tr><th>Guardrail</th><th>Example stop / investigate condition</th></tr></thead><tbody>
+      <tr><td>Function execution</td><td>Timeout, out-of-memory termination, or ephemeral disk usage above 80% of the available allocation.</td></tr>
+      <tr><td>Database stability</td><td>Connection failures, sustained CPU/I/O saturation, lock waits that materially grow with each run, or failed partition exchange.</td></tr>
+      <tr><td>Data correctness</td><td>Row-count/checksum mismatch, duplicate business key, wrong batch number, or a staging table remaining after a successful event.</td></tr>
+      <tr><td>Service level</td><td>p95 completion time exceeds the agreed target or error/retry rate exceeds the agreed threshold.</td></tr>
+    </tbody></table></div>
+    <p>Also record the time to analytic readiness in HeatWave, if that publication step is asynchronous or separately triggered. Report ingestion completion and HeatWave availability as separate service-level measures.</p>
+  </section>
+
+  <section>
+    <h2>9. Scenario C — many small files across target tables</h2>
+    <p>Use 10 KB files with unique source names and disjoint key ranges. Each file maps to a different target table, so this scenario measures event delivery, Function concurrency, database connection use, and control-table contention without serializing on one business table.</p>
+    <div class="table-wrap"><table><thead><tr><th>Run</th><th>Files / tables</th><th>Arrival pattern</th><th>Expected observation</th></tr></thead><tbody>
+      <tr><td>C1</td><td>10 files → 10 tables</td><td>All uploaded within 10 seconds</td><td>Baseline parallel event overhead and per-table isolation.</td></tr>
+      <tr><td>C2</td><td>25 files → 25 tables</td><td>All uploaded within 30 seconds</td><td>Concurrency growth and control-table behaviour.</td></tr>
+      <tr><td>C3</td><td>50 files → 50 tables</td><td>All uploaded within 60 seconds</td><td>Sustainable event-completion rate and queued-event latency.</td></tr>
+      <tr><td>C4</td><td>100 files → 100 tables</td><td>All uploaded within 120 seconds, then repeat as a burst</td><td>Capacity limit, retry behaviour, and operational alert thresholds.</td></tr>
+    </tbody></table></div>
+    <p>For each run calculate: accepted objects/minute, successful objects/minute, p50/p95/p99 upload-to-success latency, concurrent invocations, database connections, and retry/error count. Repeat the 50- and 100-file tests with a steady ramp (one upload every 1–5 seconds) to distinguish a burst limit from a sustainable rate.</p>
+  </section>
+
+  <section>
+    <h2>10. Scenario D — mixed create, update, and delete events</h2>
+    <p>Prepare a stable population of mapped files, then issue a mixed workload. Maintain per-object sequencing: do not intentionally move records between two files in this scenario because multi-file changes are not atomic. Test record migration separately using the documented remove-first, add-second procedure.</p>
+    <div class="table-wrap"><table><thead><tr><th>Mix</th><th>Example workload</th><th>Validate</th></tr></thead><tbody>
+      <tr><td>Balanced</td><td>40% create, 40% update, 20% delete across distinct source objects</td><td>Lifecycle correctness, partition allocation/removal, latency by action, and audit linkage.</td></tr>
+      <tr><td>Update heavy</td><td>20% create, 70% update, 10% delete</td><td>Replacement throughput, old-batch retirement, and no duplicate business records.</td></tr>
+      <tr><td>Delete burst</td><td>10% create, 20% update, 70% delete</td><td>Partition truncation speed, control-state accuracy, and target row-count reduction.</td></tr>
+      <tr><td>Retry / disorder</td><td>Deliberately replay selected events and vary arrival order where OCI semantics permit</td><td>Idempotency, lease handling, error classification, and safe final table state.</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section>
+    <h2>11. Measure event latency and derive performance projections</h2>
+    <p>Record the local upload-complete timestamp before polling. Then query the control schema by the exact bucket, object name, target, and action until a terminal event status is present. Store the raw database timestamp and the polling timestamp; account for clock offset measured at run start.</p>
+    <pre>mysql --defaults-extra-file=/path/to/test-client.cnf --batch --skip-column-names -e "
+SELECT event_status, batch_num, created_at, message
+FROM fndb.event_tx_log
+WHERE bucket_name = '$PERF_BUCKET'
+  AND resource_name = '$OBJECT_NAME'
+  AND event_action = 'CREATE'
+ORDER BY id DESC LIMIT 1;"</pre>
+    <p>Calculate <code>upload-to-terminal latency</code> as terminal transaction time minus upload-complete time after normalizing clocks. Keep separate fields for OCI Event delivery delay, Function start delay, download/load/exchange duration, and HeatWave-ready time where instrumented. Poll at a fixed interval (for example one second); preserve each poll result so a timeout is distinguishable from an absent event.</p>
+    <p>Derive projections from stable measured points, separately for small and bulk files. Do not extrapolate one 10 KB result directly to 1 GB, or a single-file result directly to a 100-event burst.</p>
+    <div class="formula">
+      Small-file completion estimate = fixed_event_overhead + (file_MB / measured_small_file_MBps)<br>
+      Bulk-file completion estimate = fixed_bulk_overhead + (file_MB / measured_bulk_MBps)<br>
+      Sustainable objects/minute = min(measured_completion_rate, Function concurrency × 60 / p95_duration_s, DB-safe completion rate)<br>
+      Temporary storage requirement = concurrent_bulk_files × max_file_size × download_multiplier × safety_factor<br>
+      Use download_multiplier ≥ 1 and safety_factor ≥ 1.25; set them from observed peak disk use rather than assumptions.
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Projection input</th><th>How to derive it</th><th>Decision supported</th></tr></thead><tbody>
+      <tr><td>Fixed event overhead</td><td>Median latency from 10–100 KB tests after subtracting negligible transfer/load time.</td><td>Whether producers should bundle tiny files.</td></tr>
+      <tr><td>Bulk throughput</td><td>Median and p95 MB/s from 250 MB–1 GB stable runs.</td><td>Function timeout, file-size ceiling, and daily ingestion window.</td></tr>
+      <tr><td>Safe concurrency</td><td>Highest tested concurrency before DB/Function guardrails are breached, reduced by an operational safety margin.</td><td>Function concurrency cap and event-rate controls.</td></tr>
+      <tr><td>Peak temporary storage</td><td>Observed Function-local disk use per concurrent large-file run.</td><td>Function memory/storage sizing and maximum concurrent bulk files.</td></tr>
+      <tr><td>Lifecycle mix capacity</td><td>Weighted p95 duration and resource cost from the mixed-event scenario.</td><td>Expected production service level for the real create/update/delete mix.</td></tr>
+    </tbody></table></div>
+    <p class="callout"><strong>Report uncertainty:</strong> present a forecast range using median and p95 measurements, state the tested configuration, and apply a safety margin before turning measured throughput into a production commitment.</p>
+  </section>
+
+  <section>
+    <h2>12. Run sheet and final performance report</h2>
+    <ol>
+      <li>Capture environment/configuration snapshot and verify empty or reset test targets.</li>
+      <li>Generate the data manifest and upload files using a controlled driver with timestamps.</li>
+      <li>Collect OCI event/Function logs, control-table records, MySQL metrics, HeatWave availability, and target checks after every run.</li>
+      <li>Classify every non-success outcome: event delivery, mapping, download, parse, database connection, load, exchange, cleanup, or HeatWave publication.</li>
+      <li>Merge the object manifest, upload timestamps, control-table terminal records, Function phase logs, and database/HeatWave metrics into a results CSV or parquet dataset keyed by <code>run_id</code> and object name.</li>
+      <li>Create the final HTML/PDF report with: environment snapshot; scenario matrix; raw-result location; p50/p95/p99 latency by action and size; MB/s; objects/minute; disk peak; DB resource pressure; error/retry rate; correctness results; capacity projections; and recommended operating envelope/alerts.</li>
+    </ol>
+    <div class="grid"><div class="card"><strong>Acceptance criteria</strong><span class="tag pass">Define before testing</span><br>Example: zero correctness failures; p95 under the chosen service-level target; disk below 80%; and no sustained DB saturation.</div><div class="card"><strong>Deliverables</strong>Input manifest, raw metrics/log references, run results, charts, configuration snapshot, failures, capacity projection, and recommended alert thresholds.</div></div>
+  </section>
+</main>
+</body>
+</html>
