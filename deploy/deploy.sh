@@ -41,8 +41,12 @@ CONFIG_FILE=$(mktemp)
 LOG_CONFIG=""
 cleanup() { rm -rf "$BUILD_DIR" "$CONFIG_FILE" "${LOG_CONFIG:-}"; }
 trap cleanup EXIT
+FUNCTION_MEMORY="${FUNCTION_MEMORY:-1024}"
+FUNCTION_TIMEOUT="${FUNCTION_TIMEOUT:-300}"
+[[ "$FUNCTION_MEMORY" =~ ^[0-9]+$ ]] || { echo "FUNCTION_MEMORY must be numeric." >&2; exit 1; }
+[[ "$FUNCTION_TIMEOUT" =~ ^[0-9]+$ ]] || { echo "FUNCTION_TIMEOUT must be numeric." >&2; exit 1; }
 cp "$ROOT_DIR/function/Dockerfile" "$ROOT_DIR/function/func.py" "$ROOT_DIR/function/partition_loader.py" "$ROOT_DIR/function/requirements.txt" "$BUILD_DIR/"
-sed "s/^name:.*/name: $FUNCTION_NAME/" "$ROOT_DIR/function/func.yaml" > "$BUILD_DIR/func.yaml"
+sed -e "s/^name:.*/name: $FUNCTION_NAME/" -e "s/^memory:.*/memory: $FUNCTION_MEMORY/" -e "s/^timeout:.*/timeout: $FUNCTION_TIMEOUT/" "$ROOT_DIR/function/func.yaml" > "$BUILD_DIR/func.yaml"
 (cd "$BUILD_DIR" && fn deploy --app "$APP_NAME")
 FUNCTION_ID=$("${OCI[@]}" fn function list --application-id "$APP_ID" --all --query "data[?\"display-name\"=='$FUNCTION_NAME'].id | [0]" --raw-output)
 jq -n --arg host "$DB_HOST" --arg port "${DB_PORT:-3306}" --arg user "$DB_USER" --arg password "$DB_PASSWORD" --arg ssl "${DB_SSL_DISABLED:-false}" --arg namespace "${OBJECT_STORAGE_NAMESPACE:-}" --arg batch "${BATCH_ROWS:-1000}" --arg workers "${WRITER_WORKERS:-4}" --arg control "$CONTROL_DATABASE" '{DB_HOST:$host,DB_PORT:$port,DB_USER:$user,DB_PASSWORD:$password,DB_SSL_DISABLED:$ssl,OBJECT_STORAGE_NAMESPACE:$namespace,BATCH_ROWS:$batch,WRITER_WORKERS:$workers,CONTROL_DATABASE:$control}' > "$CONFIG_FILE"
