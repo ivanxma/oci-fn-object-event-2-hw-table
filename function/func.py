@@ -96,7 +96,77 @@ def _write_event_audit(db: Database, event: dict[str, Any]) -> int:
         return int(cursor.lastrowid)
 
 
-def _object_response(event: dict[str, Any], source: dict[str, str]):
+class ObjectStorageRangeStream(io.RawIOBase):
+    """A diskless, seek-free Object Storage reader using bounded HTTP ranges.
+
+    OCI Functions can close one long-lived object response before a slow MySQL
+    writer has consumed a large CSV.  Fetching modest byte ranges gives every
+    response a short lifetime without accumulating the object in memory.
+    """
+
+    def __init__(self, client: Any, namespace: str, bucket: str, object_name: str, *, range_bytes: int) -> None:
+        super().__init__()
+        if range_bytes < 1024 * 1024:
+            raise ValueError("OBJECT_STORAGE_RANGE_BYTES must be at least 1048576.")
+        head = client.head_object(namespace, bucket, object_name)
+        content_length = head.headers.get("content-length") or head.headers.get("Content-Length")
+        if content_length is None:
+            raise ValueError("Object Storage did not return Content-Length for the CSV object.")
+        self._client, self._namespace, self._bucket, self._object_name = client, namespace, bucket, object_name
+        self._length, self._range_bytes, self._position = int(content_length), range_bytes, 0
+        self._body: Any | None = None
+        self._body_remaining = 0
+
+    def readable(self) -> bool:
+        return True
+
+    def _close_body(self) -> None:
+        if self._body is not None:
+            self._body.close()
+            self._body = None
+            self._body_remaining = 0
+
+    def _open_range(self) -> None:
+        end = min(self._position + self._range_bytes, self._length) - 1
+        response = self._client.get_object(
+            self._namespace, self._bucket, self._object_name,
+            range=f"bytes={self._position}-{end}",
+        )
+        self._body = response.data.raw
+        self._body_remaining = end - self._position + 1
+
+    def readinto(self, buffer: bytearray) -> int:
+        if self.closed:
+            raise ValueError("I/O operation on closed file.")
+        if self._position >= self._length:
+            return 0
+        written = 0
+        view = memoryview(buffer)
+        while written < len(view) and self._position < self._length:
+            if self._body is None:
+                self._open_range()
+            chunk = self._body.read(min(len(view) - written, self._body_remaining))
+            if not chunk:
+                remaining = self._body_remaining
+                self._close_body()
+                if remaining:
+                    raise OSError("Object Storage range response ended before its advertised byte range.")
+                continue
+            size = len(chunk)
+            view[written:written + size] = chunk
+            written += size
+            self._position += size
+            self._body_remaining -= size
+            if self._body_remaining == 0:
+                self._close_body()
+        return written
+
+    def close(self) -> None:
+        self._close_body()
+        super().close()
+
+
+def _object_stream(event: dict[str, Any], source: dict[str, str]) -> ObjectStorageRangeStream:
     details = (event.get("data") or {}).get("additionalDetails") or {}
     namespace = str(details.get("namespace") or os.environ.get("OBJECT_STORAGE_NAMESPACE") or "")
     if not namespace:
@@ -109,10 +179,9 @@ def _object_response(event: dict[str, Any], source: dict[str, str]):
     client = oci.object_storage.ObjectStorageClient(
         config={}, signer=signer, timeout=(10, read_timeout)
     )
-    return client.get_object(
-        namespace,
-        source["bucket_name"],
-        _object_name(event, source),
+    return ObjectStorageRangeStream(
+        client, namespace, source["bucket_name"], _object_name(event, source),
+        range_bytes=int(os.environ.get("OBJECT_STORAGE_RANGE_BYTES", str(32 * 1024 * 1024))),
     )
 
 
@@ -124,11 +193,10 @@ def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, cr
         record = allocate_or_get_batch(db, mapping, source, create=create)
         ensure_partition(db, mapping, record["batch_num"])
         stage = create_stage_table(db, mapping, record["batch_num"])
-        object_response = _object_response(event, source)
-        # The OCI response wrapper is metadata plus a file-like ``raw`` body.
-        # Decode that body directly: no object copy is made in /tmp or elsewhere
-        # on the Function filesystem.
-        with io.TextIOWrapper(object_response.data.raw, encoding="utf-8", newline="") as csv_stream:
+        object_stream = _object_stream(event, source)
+        # Decode a bounded range stream directly: no object copy is made in /tmp
+        # or elsewhere on the Function filesystem.
+        with io.TextIOWrapper(io.BufferedReader(object_stream), encoding="utf-8", newline="") as csv_stream:
             rows = load_csv_parallel(
                 db, mapping, stage, record["batch_num"], columns, csv_stream,
                 int(os.environ.get("BATCH_ROWS", "10000")), int(os.environ.get("WRITER_WORKERS", "4")),
