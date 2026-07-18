@@ -41,6 +41,19 @@ class EventTransactionService:
             f" LEFT JOIN {control}.`object_event` AS object_event ON object_event.id = {alias}.object_event_id",
         )
 
+    def detached_processes(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Return mapping-driven detached work for operational monitoring."""
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor(dictionary=True, buffered=True)
+            control = quote_identifier(control_database(), "control database")
+            cursor.execute(f"""SELECT tx.id, tx.mapping_id, tx.event_action, tx.event_status,
+                tx.target_database, tx.target_table, tx.bucket_name, tx.resource_name,
+                tx.message, tx.created_at, COALESCE((SELECT invocation_mode FROM {quote_identifier(control_database(), "control database")}.`object_storage_mappings` m2 WHERE m2.id = tx.mapping_id), "SYNC") AS invocation_mode, COALESCE(m.invocation_mode, 'SYNC') AS invocation_mode,
+                COALESCE(m.worker_threads, 4) AS worker_threads, COALESCE(m.timeout_seconds, 300) AS timeout_seconds
+                FROM {control}.event_tx_log tx LEFT JOIN {control}.object_storage_mappings m ON m.id=tx.mapping_id
+                WHERE m.invocation_mode='DETACHED' ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""", (limit,))
+            return cursor.fetchall()
+
     def registered_tables(self) -> tuple[list[dict[str, Any]], bool]:
         with self.mysql.connection() as conn:
             cursor = conn.cursor(dictionary=True, buffered=True)
@@ -186,7 +199,7 @@ class EventTransactionService:
             timing, timing_join = self._event_timing_sql(cursor)
             cursor.execute(
                 f"""SELECT tx.id, tx.mapping_id, tx.batch_num, tx.event_action, tx.event_status, tx.bucket_name,
-                              tx.resource_name, tx.object_version, tx.message, tx.created_at{timing}
+                              tx.resource_name, tx.object_version, tx.message, tx.created_at, COALESCE((SELECT invocation_mode FROM {quote_identifier(control_database(), "control database")}.`object_storage_mappings` m2 WHERE m2.id = tx.mapping_id), "SYNC") AS invocation_mode{timing}
                        FROM {quote_identifier(control_database(), 'control database')}.`event_tx_log`
                        AS tx{timing_join}
                        WHERE tx.target_database = %s AND tx.target_table = %s
@@ -215,7 +228,7 @@ class EventTransactionService:
             total = int(cursor.fetchone()["total"])
             cursor.execute(
                 f"""SELECT tx.id, tx.mapping_id, tx.batch_num, tx.event_action, tx.event_status, tx.bucket_name,
-                              tx.resource_name, tx.object_version, tx.message, tx.created_at{timing}
+                              tx.resource_name, tx.object_version, tx.message, tx.created_at, COALESCE((SELECT invocation_mode FROM {quote_identifier(control_database(), "control database")}.`object_storage_mappings` m2 WHERE m2.id = tx.mapping_id), "SYNC") AS invocation_mode{timing}
                        FROM {control}.`event_tx_log`
                        AS tx{timing_join}
                        WHERE tx.target_database = %s AND tx.target_table = %s
@@ -265,7 +278,7 @@ class EventTransactionService:
             timing, timing_join = self._event_timing_sql(cursor)
             cursor.execute(
                 f"""SELECT tx.id, tx.mapping_id, tx.target_database, tx.target_table, tx.batch_num, tx.event_action,
-                              tx.event_status, tx.bucket_name, tx.resource_name, tx.object_version, tx.message, tx.created_at{timing}
+                              tx.event_status, tx.bucket_name, tx.resource_name, tx.object_version, tx.message, tx.created_at, COALESCE((SELECT invocation_mode FROM {quote_identifier(control_database(), "control database")}.`object_storage_mappings` m2 WHERE m2.id = tx.mapping_id), "SYNC") AS invocation_mode{timing}
                        FROM {quote_identifier(control_database(), 'control database')}.`event_tx_log`
                        AS tx{timing_join}
                        ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""",

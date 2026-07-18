@@ -13,6 +13,7 @@
       <a class="{{ 'active' if active_page == 'import' else '' }}" href="{{ url_for('imports.home') }}">Data Import</a>
       <a class="{{ 'active' if active_page == 'mappings' else '' }}" href="{{ url_for('mappings.list_mappings') }}">Resource Mappings</a>
       <a class="{{ 'active' if active_page == 'event_tx' else '' }}" href="{{ url_for('event_tx.list_event_transactions') }}">Event TX</a>
+      <a class="{{ 'active' if active_page == 'detached' else '' }}" href="{{ url_for('event_tx.detached_processes') }}">Detached Processes</a>
       <a class="{{ 'active' if active_page == 'profiles' else '' }}" href="{{ url_for('profiles.manage') }}">Connection Profiles</a>
     </nav>
     <details class="user-menu">
