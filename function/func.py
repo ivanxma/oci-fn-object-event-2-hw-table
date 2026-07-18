@@ -103,7 +103,16 @@ def _object_response(event: dict[str, Any], source: dict[str, str]):
         raise ValueError("Object Storage event must include a namespace or set OBJECT_STORAGE_NAMESPACE.")
     signer = oci.auth.signers.get_resource_principals_signer()
     client = oci.object_storage.ObjectStorageClient(config={}, signer=signer)
-    return client.get_object(namespace, source["bucket_name"], _object_name(event, source))
+    # A large CSV can take longer to consume than the SDK's default read
+    # timeout because ingestion pauses briefly while writer workers commit each
+    # batch.  Keep the HTTP response open for the whole Function invocation.
+    read_timeout = int(os.environ.get("OBJECT_STORAGE_READ_TIMEOUT_SECONDS", "300"))
+    return client.get_object(
+        namespace,
+        source["bucket_name"],
+        _object_name(event, source),
+        timeout=(10, read_timeout),
+    )
 
 
 def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, create: bool) -> dict[str, Any]:
@@ -115,12 +124,10 @@ def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, cr
         ensure_partition(db, mapping, record["batch_num"])
         stage = create_stage_table(db, mapping, record["batch_num"])
         object_response = _object_response(event, source)
-        # Keep the SDK's streaming-body wrapper alive for the entire CSV read.
-        # ``.raw`` is the wrapper's underlying HTTP response and can be closed
-        # while a long-running loader is still consuming it.  The response body
-        # itself is file-like, so it can be decoded directly without materialising
-        # the object in the Function filesystem.
-        with io.TextIOWrapper(object_response.data, encoding="utf-8", newline="") as csv_stream:
+        # The OCI response wrapper is metadata plus a file-like ``raw`` body.
+        # Decode that body directly: no object copy is made in /tmp or elsewhere
+        # on the Function filesystem.
+        with io.TextIOWrapper(object_response.data.raw, encoding="utf-8", newline="") as csv_stream:
             rows = load_csv_parallel(
                 db, mapping, stage, record["batch_num"], columns, csv_stream,
                 int(os.environ.get("BATCH_ROWS", "1000")), int(os.environ.get("WRITER_WORKERS", "4")),
