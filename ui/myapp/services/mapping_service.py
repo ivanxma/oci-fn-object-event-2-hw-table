@@ -65,7 +65,8 @@ class MappingService:
         )
         for column, definition in (("invocation_mode", "ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC'"), ("worker_threads", "SMALLINT UNSIGNED NOT NULL DEFAULT 4"), ("timeout_seconds", "INT UNSIGNED NOT NULL DEFAULT 300")):
             cursor.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=%s AND table_name=%s AND column_name=%s", (database, MAPPING_TABLE, column))
-            if not cursor.fetchone()[0]:
+            row = cursor.fetchone()
+            if not row or not next(iter(row.values())):
                 cursor.execute(f"ALTER TABLE {quote_identifier(database, 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} ADD COLUMN {quote_identifier(column, 'mapping column')} {definition}")
 
     def list_mappings(self) -> list[dict[str, Any]]:
