@@ -167,7 +167,7 @@ class EventTransactionService:
                 if cursor.fetchone() is not None:
                     raise ValueError("Cleanup is unavailable while this target has a loading batch.")
             cursor.execute(
-                """SELECT table_name FROM information_schema.tables
+                """SELECT table_name AS table_name FROM information_schema.tables
                    WHERE table_schema = %s AND table_type = 'BASE TABLE'""",
                 (database,),
             )
