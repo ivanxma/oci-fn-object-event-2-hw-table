@@ -27,6 +27,19 @@ class EventTransactionService:
         )
         return cursor.fetchone() is not None
 
+    def _event_timing_sql(self, cursor, alias: str = "tx") -> tuple[str, str]:
+        """Return optional Object Storage timing projection and join."""
+        if not self._table_exists(cursor, OBJECT_EVENT_TABLE):
+            return (
+                ", NULL AS event_received_at, NULL AS event_completed_at, NULL AS event_duration_ms",
+                "",
+            )
+        control = quote_identifier(control_database(), "control database")
+        return (
+            ", object_event.received_at AS event_received_at, object_event.completed_at AS event_completed_at, object_event.duration_ms AS event_duration_ms",
+            f" LEFT JOIN {control}.`object_event` AS object_event ON object_event.id = {alias}.object_event_id",
+        )
+
     def registered_tables(self) -> tuple[list[dict[str, Any]], bool]:
         with self.mysql.connection() as conn:
             cursor = conn.cursor(dictionary=True, buffered=True)
@@ -137,6 +150,31 @@ class EventTransactionService:
                 f"DROP TABLE {quote_identifier(database, 'target database')}.{quote_identifier(stage_table, 'staging table')}"
             )
 
+    def cleanup_stage_tables(self, database: str, table: str) -> list[str]:
+        """Drop every residual staging table for one target after one confirmation."""
+        database = validate_identifier(database, "target database")
+        table = validate_identifier(table, "target table")
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor(dictionary=True, buffered=True)
+            self._require_registered_target(cursor, database, table)
+            control = quote_identifier(control_database(), "control database")
+            if self._table_exists(cursor, SOURCE_BATCH_TABLE):
+                cursor.execute(
+                    f"SELECT 1 FROM {control}.`source_object_batches` WHERE target_database = %s AND target_table = %s AND lifecycle_state = 'LOADING' LIMIT 1",
+                    (database, table),
+                )
+                if cursor.fetchone() is not None:
+                    raise ValueError("Cleanup is unavailable while this target has a loading batch.")
+            cursor.execute(
+                """SELECT table_name FROM information_schema.tables
+                   WHERE table_schema = %s AND table_type = 'BASE TABLE'""",
+                (database,),
+            )
+            names = [row["table_name"] for row in cursor.fetchall() if self._is_stage_table_for_target(table, row["table_name"])]
+            for stage_table in names:
+                cursor.execute(f"DROP TABLE {quote_identifier(database, 'target database')}.{quote_identifier(stage_table, 'staging table')}")
+            return names
+
     def recent_events(self, database: str, table: str, limit: int = 100) -> list[dict[str, Any]]:
         database = validate_identifier(database, "target database")
         table = validate_identifier(table, "target table")
@@ -144,12 +182,14 @@ class EventTransactionService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             if not self._table_exists(cursor, EVENT_LOG_TABLE):
                 return []
+            timing, timing_join = self._event_timing_sql(cursor)
             cursor.execute(
                 f"""SELECT id, mapping_id, batch_num, event_action, event_status, bucket_name,
-                              resource_name, object_version, message, created_at
+                              resource_name, object_version, message, created_at{timing}
                        FROM {quote_identifier(control_database(), 'control database')}.`event_tx_log`
+                       AS tx{timing_join}
                        WHERE target_database = %s AND target_table = %s
-                       ORDER BY created_at DESC, id DESC LIMIT %s""",
+                       ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""",
                 (database, table, limit),
             )
             return cursor.fetchall()
@@ -166,6 +206,7 @@ class EventTransactionService:
             if not self._table_exists(cursor, EVENT_LOG_TABLE):
                 return [], 0
             control = quote_identifier(control_database(), "control database")
+            timing, timing_join = self._event_timing_sql(cursor)
             cursor.execute(
                 f"SELECT COUNT(*) AS total FROM {control}.`event_tx_log` WHERE target_database = %s AND target_table = %s",
                 (database, table),
@@ -173,10 +214,11 @@ class EventTransactionService:
             total = int(cursor.fetchone()["total"])
             cursor.execute(
                 f"""SELECT id, mapping_id, batch_num, event_action, event_status, bucket_name,
-                              resource_name, object_version, message, created_at
+                              resource_name, object_version, message, created_at{timing}
                        FROM {control}.`event_tx_log`
+                       AS tx{timing_join}
                        WHERE target_database = %s AND target_table = %s
-                       ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s""",
+                       ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s OFFSET %s""",
                 (database, table, page_size, (page - 1) * page_size),
             )
             return cursor.fetchall(), total
@@ -219,11 +261,13 @@ class EventTransactionService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             if not self._table_exists(cursor, EVENT_LOG_TABLE):
                 return []
+            timing, timing_join = self._event_timing_sql(cursor)
             cursor.execute(
                 f"""SELECT id, mapping_id, target_database, target_table, batch_num, event_action,
-                              event_status, bucket_name, resource_name, object_version, message, created_at
+                              event_status, bucket_name, resource_name, object_version, message, created_at{timing}
                        FROM {quote_identifier(control_database(), 'control database')}.`event_tx_log`
-                       ORDER BY created_at DESC, id DESC LIMIT %s""",
+                       AS tx{timing_join}
+                       ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""",
                 (limit,),
             )
             return cursor.fetchall()

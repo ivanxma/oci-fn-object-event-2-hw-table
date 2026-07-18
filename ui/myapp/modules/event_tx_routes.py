@@ -182,6 +182,22 @@ def cleanup_stage_table():
     return redirect(url_for("event_tx.list_event_transactions", tab="registered", database=database, table=table))
 
 
+@event_tx_bp.post("/registered/stage-tables/cleanup-all")
+@login_required
+def cleanup_stage_tables():
+    """Remove all residual staging tables after the browser confirmation."""
+    database = request.form.get("database", "")
+    table = request.form.get("table", "")
+    try:
+        database = validate_identifier(database, "target database")
+        table = validate_identifier(table, "target table")
+        names = EventTransactionService(mysql_for_request()).cleanup_stage_tables(database, table)
+        flash(f"Removed {len(names)} staging table(s).", "success")
+    except (MySQLError, ValueError) as error:
+        flash(f"Could not remove staging tables: {error}", "error")
+    return redirect(url_for("event_tx.list_event_transactions", tab="registered", database=database, table=table))
+
+
 @event_tx_bp.get("/object-events/download")
 @login_required
 def download_object_events():
