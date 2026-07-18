@@ -257,3 +257,7 @@ bash -n deploy/deploy.sh deploy/bootstrap.sh
 
 No secrets, private keys, OCI auth tokens, generated reports, or UI runtime
 state are tracked by Git.
+
+## Blog
+
+- [From CSV in Object Storage to HeatWave: an operational ingestion design](blog/csv-ingestion-to-heatwave.md) — event-driven CSV ingestion, partition exchange, lifecycle handling, operations UI, and event tracking.
