@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import io
 
-from flask import Blueprint, Response, flash, jsonify, request
+from flask import Blueprint, Response, flash, jsonify, redirect, request, url_for
 from mysql.connector import Error as MySQLError
 
 from ..services.event_tx_service import EventTransactionService
@@ -82,8 +82,10 @@ def list_event_transactions():
                 events, registered_total = service.registered_events_page(
                     database, table, page=registered_page, page_size=registered_page_size
                 )
+            stage_tables, stage_cleanup_blocked = service.stage_tables(database, table)
         else:
             events, registered_total, registered_page, registered_page_size, registered_page_count = [], 0, 1, _limit(request.args.get("registered_page_size")), 1
+            stage_tables, stage_cleanup_blocked = [], False
         recent_events = service.recent_events_all(limit)
         audit_logs = service.audit_logs(limit)
         error_logs = service.error_logs(limit)
@@ -125,6 +127,7 @@ def list_event_transactions():
         flash("Could not read Event TX records from fndb. Confirm this MySQL user can read the control tables.", "error")
         tables, event_log_exists, database, table, events, recent_events, audit_logs, error_logs, limit, active_tab, selected_error_id, selected_error = [], False, "", "", [], [], [], [], 10, "recent", None, None
         registered_total, registered_page, registered_page_size, registered_page_count = 0, 1, 10, 1
+        stage_tables, stage_cleanup_blocked = [], False
         object_event_tables, selected_object_database, object_event_columns, object_event_rows = [], "", [], []
         object_event_total, object_event_sort, object_event_direction, object_page, object_page_size, object_event_page_count = 0, "", "desc", 1, 25, 1
     return render_dashboard(
@@ -139,6 +142,8 @@ def list_event_transactions():
         registered_page=registered_page,
         registered_page_size=registered_page_size,
         registered_page_count=registered_page_count,
+        stage_tables=stage_tables,
+        stage_cleanup_blocked=stage_cleanup_blocked,
         recent_events=recent_events,
         audit_logs=audit_logs,
         error_logs=error_logs,
@@ -157,6 +162,24 @@ def list_event_transactions():
         object_event_page_size=object_page_size,
         object_event_page_count=object_event_page_count,
     )
+
+
+@event_tx_bp.post("/registered/stage-tables/cleanup")
+@login_required
+def cleanup_stage_table():
+    """Remove one residual staging table from the selected registered target."""
+    database = request.form.get("database", "")
+    table = request.form.get("table", "")
+    try:
+        database = validate_identifier(database, "target database")
+        table = validate_identifier(table, "target table")
+        EventTransactionService(mysql_for_request()).cleanup_stage_table(
+            database, table, request.form.get("stage_table", "")
+        )
+        flash("Staging table removed.", "success")
+    except (MySQLError, ValueError) as error:
+        flash(f"Could not remove staging table: {error}", "error")
+    return redirect(url_for("event_tx.list_event_transactions", tab="registered", database=database, table=table))
 
 
 @event_tx_bp.get("/object-events/download")

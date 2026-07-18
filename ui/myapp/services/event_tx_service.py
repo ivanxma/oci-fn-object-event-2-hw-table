@@ -12,6 +12,7 @@ MAPPING_TABLE = "object_storage_mappings"
 EVENT_LOG_TABLE = "event_tx_log"
 OBJECT_EVENT_TABLE = "object_event"
 EVENT_ERROR_TABLE = "event_errors"
+SOURCE_BATCH_TABLE = "source_object_batches"
 
 
 class EventTransactionService:
@@ -53,6 +54,88 @@ class EventTransactionService:
                        ORDER BY target_database, target_table"""
                 )
             return cursor.fetchall(), event_log_exists
+
+    @staticmethod
+    def _stage_prefix(target_table: str) -> str:
+        """Return the deterministic portion of a Function staging-table name."""
+        return f"{target_table[:45]}_stage_"
+
+    @classmethod
+    def _is_stage_table_for_target(cls, target_table: str, stage_table: str) -> bool:
+        prefix = cls._stage_prefix(target_table)
+        suffix = stage_table[len(prefix):]
+        return stage_table.startswith(prefix) and len(suffix) == 12 and all(char in "0123456789abcdef" for char in suffix.lower())
+
+    def _require_registered_target(self, cursor, database: str, table: str) -> None:
+        if not self._table_exists(cursor, MAPPING_TABLE):
+            raise ValueError("No registered target tables are available.")
+        control = quote_identifier(control_database(), "control database")
+        cursor.execute(
+            f"SELECT 1 FROM {control}.`object_storage_mappings` WHERE target_database = %s AND target_table = %s LIMIT 1",
+            (database, table),
+        )
+        if cursor.fetchone() is None:
+            raise ValueError("Select a registered target table.")
+
+    def stage_tables(self, database: str, table: str) -> tuple[list[dict[str, Any]], bool]:
+        """Return residual Function staging tables for one registered target.
+
+        A true loading batch makes cleanup unavailable: the current loader does
+        not persist a stage-table name, so it cannot safely identify which
+        temporary table belongs to an in-flight invocation.
+        """
+        database = validate_identifier(database, "target database")
+        table = validate_identifier(table, "target table")
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor(dictionary=True, buffered=True)
+            self._require_registered_target(cursor, database, table)
+            loading = False
+            if self._table_exists(cursor, SOURCE_BATCH_TABLE):
+                control = quote_identifier(control_database(), "control database")
+                cursor.execute(
+                    f"SELECT 1 FROM {control}.`source_object_batches` WHERE target_database = %s AND target_table = %s AND lifecycle_state = 'LOADING' LIMIT 1",
+                    (database, table),
+                )
+                loading = cursor.fetchone() is not None
+            cursor.execute(
+                """SELECT table_name AS table_name, table_rows AS table_rows,
+                          data_length AS data_length, index_length AS index_length,
+                          create_time AS create_time, update_time AS update_time
+                     FROM information_schema.tables
+                    WHERE table_schema = %s AND table_type = 'BASE TABLE'
+                    ORDER BY create_time, table_name""",
+                (database,),
+            )
+            tables = [row for row in cursor.fetchall() if self._is_stage_table_for_target(table, row["table_name"])]
+            return tables, loading
+
+    def cleanup_stage_table(self, database: str, table: str, stage_table: str) -> None:
+        """Drop a residual stage table after confirming its target and idle state."""
+        database = validate_identifier(database, "target database")
+        table = validate_identifier(table, "target table")
+        stage_table = validate_identifier(stage_table, "staging table")
+        if not self._is_stage_table_for_target(table, stage_table):
+            raise ValueError("The selected table is not a staging table for this registered target.")
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor(dictionary=True, buffered=True)
+            self._require_registered_target(cursor, database, table)
+            if self._table_exists(cursor, SOURCE_BATCH_TABLE):
+                control = quote_identifier(control_database(), "control database")
+                cursor.execute(
+                    f"SELECT 1 FROM {control}.`source_object_batches` WHERE target_database = %s AND target_table = %s AND lifecycle_state = 'LOADING' LIMIT 1",
+                    (database, table),
+                )
+                if cursor.fetchone() is not None:
+                    raise ValueError("Cleanup is unavailable while this target has a loading batch.")
+            cursor.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema = %s AND table_name = %s AND table_type = 'BASE TABLE'",
+                (database, stage_table),
+            )
+            if cursor.fetchone() is None:
+                raise ValueError("The staging table no longer exists.")
+            cursor.execute(
+                f"DROP TABLE {quote_identifier(database, 'target database')}.{quote_identifier(stage_table, 'staging table')}"
+            )
 
     def recent_events(self, database: str, table: str, limit: int = 100) -> list[dict[str, Any]]:
         database = validate_identifier(database, "target database")

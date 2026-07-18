@@ -2,9 +2,19 @@
 {% macro tx_rows(items, target=false) %}
 {% for row in items %}<tr class="{{ 'event-error-row' if row.event_status == 'ERROR' else '' }}"><td>{{ row.event_action }} / {{ row.event_status }}</td>{% if target %}<td><code>{{ row.target_database }}.{{ row.target_table }}</code></td>{% endif %}<td>{{ row.batch_num if row.batch_num is not none else '—' }}</td><td>{{ row.bucket_name or '—' }}<small>{{ row.resource_name or '' }}</small></td><td>{{ row.message or '—' }}</td><td>{{ row.created_at }}</td></tr>{% else %}<tr><td colspan="{{ 6 if target else 5 }}" class="empty-state">No records to display.</td></tr>{% endfor %}
 {% endmacro %}
+{% macro render_stage_tables(items, cleanup_blocked) %}
+<section class="stage-tables-panel" aria-labelledby="stage-tables-heading">
+  <div class="panel-heading"><div><h2 id="stage-tables-heading">Staging tables</h2><p>Residual tables created for <code>{{ selected_database }}.{{ selected_table }}</code>. Pause OCI Function processing before cleanup.</p></div></div>
+  {% if cleanup_blocked %}<p class="message warning">Cleanup is unavailable while this target has a batch in <code>LOADING</code> state.</p>{% endif %}
+  <div class="table-wrap"><table class="stage-tables-table"><thead><tr><th>Table</th><th>Estimated rows</th><th>Data bytes</th><th>Created</th><th>Action</th></tr></thead><tbody>
+  {% for stage in items %}<tr><td><code>{{ stage.table_name }}</code></td><td>{{ stage.table_rows if stage.table_rows is not none else '—' }}</td><td>{{ stage.data_length if stage.data_length is not none else '—' }}</td><td>{{ stage.create_time or '—' }}</td><td><form method="post" action="{{ url_for('event_tx.cleanup_stage_table') }}" onsubmit="return confirm('Remove {{ stage.table_name }}? Ensure OCI Function processing is paused for this target.');"><input type="hidden" name="database" value="{{ selected_database }}"><input type="hidden" name="table" value="{{ selected_table }}"><input type="hidden" name="stage_table" value="{{ stage.table_name }}"><button class="secondary-button compact danger-button" type="submit" {{ 'disabled' if cleanup_blocked }}>Cleanup</button></form></td></tr>
+  {% else %}<tr><td colspan="5" class="empty-state">No residual staging tables found for this registered target.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endmacro %}
 {% block content %}
 <section class="page-heading"><div><p class="eyebrow">EVENT TRANSACTIONS</p><h1>Event TX</h1><p>Review registered targets, received Object Storage events, transaction audit, and errors.</p></div></section>
-<section class="content-card event-tx-tabs"><div class="tab-list" role="tablist" aria-label="Event TX views">
+<section class="content-card event-tx-tabs">{% if active_tab == 'registered' %}{{ render_stage_tables(stage_tables, stage_cleanup_blocked) }}{% endif %}<div class="tab-list" role="tablist" aria-label="Event TX views">
 <button class="tab {{ 'active' if active_tab == 'recent' else '' }}" role="tab" aria-selected="{{ 'true' if active_tab == 'recent' else 'false' }}" data-tab="recent-panel" data-server-tab="recent">Recent TX <span>{{ recent_events|length }}</span></button>
 <button class="tab {{ 'active' if active_tab == 'registered' else '' }}" role="tab" aria-selected="{{ 'true' if active_tab == 'registered' else 'false' }}" data-tab="registered-panel" data-server-tab="registered">Registered Table <span>{{ registered_tables|length }}</span></button>
 <button class="tab {{ 'active' if active_tab == 'object-events' else '' }}" role="tab" aria-selected="{{ 'true' if active_tab == 'object-events' else 'false' }}" data-tab="object-events-panel" data-server-tab="object-events">Object Storage Event <span>{{ object_event_total }}</span></button>
