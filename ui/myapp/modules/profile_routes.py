@@ -13,9 +13,12 @@ profile_bp = Blueprint("profiles", __name__, url_prefix="/profiles")
 def create():
     """Create a non-secret connection profile before first sign-in."""
     store = current_app.extensions["profile_store"]
+    if not store.profile_creation_enabled():
+        flash("Profile creation at the login screen is disabled. Sign in and enable it from Connection Profiles if needed.", "warning")
+        return redirect(url_for("auth.login"))
     if request.method == "POST":
         try:
-            store.save(request.form, request.files.get("ssh_key"))
+            store.save(request.form, request.files.get("ssh_key"), create_only=True)
             flash("Profile created. Sign in with its MySQL username and password.", "success")
             return redirect(url_for("auth.login"))
         except (ValueError, OSError) as error:
@@ -34,7 +37,33 @@ def manage():
             return redirect(url_for("profiles.manage"))
         except (ValueError, OSError) as error:
             flash(str(error), "error")
-    return render_dashboard("profiles.html", active_page="profiles", profiles=store.list())
+    return render_dashboard(
+        "profiles.html",
+        active_page="profiles",
+        profiles=store.list(),
+        profile_creation_enabled=store.profile_creation_enabled(),
+    )
+
+
+@profile_bp.route("/creation-policy", methods=["GET", "POST"])
+@login_required
+def creation_policy():
+    """Confirm or change whether login-screen profile creation is available."""
+    store = current_app.extensions["profile_store"]
+    if request.method == "POST":
+        enabled = request.form.get("enabled") == "true"
+        store.set_profile_creation_enabled(enabled)
+        flash(
+            "Profile creation at the login screen is enabled." if enabled else "Profile creation at the login screen is disabled.",
+            "success",
+        )
+        return redirect(url_for("imports.home"))
+    return render_dashboard(
+        "profile_creation_policy.html",
+        active_page="profiles",
+        profile_creation_enabled=store.profile_creation_enabled(),
+        policy_prompt=True,
+    )
 
 
 @profile_bp.route("/<path:name>/edit", methods=["GET", "POST"])

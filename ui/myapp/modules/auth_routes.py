@@ -29,13 +29,19 @@ def login():
                 connection_id = current_app.extensions["session_store"].create(profile, username, password, tunnel)
                 session.clear()
                 session["connection_id"] = connection_id
+                if store.profile_creation_enabled():
+                    return redirect(url_for("profiles.creation_policy"))
                 return redirect(url_for("imports.home"))
             except Exception:
                 if tunnel:
                     tunnel.stop()
                 current_app.logger.info("Connection login failed for profile %s", profile["name"])
                 flash("Could not connect with that profile and username. Check the connection details and credentials.", "error")
-    return render_template("login.html", profiles=store.list())
+    return render_template(
+        "login.html",
+        profiles=store.list(),
+        profile_creation_enabled=store.profile_creation_enabled(),
+    )
 
 
 @auth_bp.post("/logout")

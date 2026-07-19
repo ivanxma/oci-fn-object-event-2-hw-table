@@ -5,6 +5,7 @@ ui/.env/
 ui/.venv/
 ui/.ui-runtime.env
 function-report.html
+reports/
 __pycache__/
 *.py[cod]
 .DS_Store

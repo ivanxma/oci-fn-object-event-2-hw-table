@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Profile creation setting · MySQL CSV Import{% endblock %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">CONNECTION SETTINGS</p><h1>Profile creation at login</h1><p>Choose whether the login screen should allow unauthenticated users to create connection profiles.</p></div></section>
+<section class="content-card profile-policy-prompt"><h2>Connection established successfully</h2><p class="muted">Profile creation is currently enabled. For a safer operational setup, disable the login-screen creation link now. You can re-enable it later from Connection Profiles.</p><div class="profile-policy-actions"><form method="post" action="{{ url_for('profiles.creation_policy') }}"><input type="hidden" name="enabled" value="false"><button class="primary-button" type="submit">Disable profile creation</button></form><form method="post" action="{{ url_for('profiles.creation_policy') }}"><input type="hidden" name="enabled" value="true"><button class="secondary-button" type="submit">Keep enabled</button></form></div></section>
+{% endblock %}

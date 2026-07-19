@@ -11,13 +11,16 @@ from .naming import validate_identifier
 
 
 class ProfileStore:
-    def __init__(self, path: Path, key_folder: Path) -> None:
+    def __init__(self, path: Path, key_folder: Path, settings_path: Path | None = None) -> None:
         self.path, self.key_folder = path, key_folder
+        self.settings_path = settings_path or path.with_name("profile_settings.json")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.key_folder.mkdir(parents=True, exist_ok=True)
         os.chmod(self.key_folder, 0o700)
         if not self.path.exists():
             self._save([{"name": "Local MySQL", "mode": "direct", "host": "127.0.0.1", "port": 3306, "database": ""}])
+        if not self.settings_path.exists():
+            self.set_profile_creation_enabled(True)
 
     def _save(self, profiles: list[dict]) -> None:
         temporary = self.path.with_suffix(".tmp")
@@ -28,11 +31,37 @@ class ProfileStore:
     def list(self) -> list[dict]:
         return json.loads(self.path.read_text(encoding="utf-8"))
 
+    def profile_creation_enabled(self) -> bool:
+        """Return whether the unauthenticated login-screen create link is shown."""
+        try:
+            settings = json.loads(self.settings_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return False
+        return bool(settings.get("profile_creation_enabled", True))
+
+    def set_profile_creation_enabled(self, enabled: bool) -> None:
+        temporary = self.settings_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps({"profile_creation_enabled": bool(enabled)}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(temporary, 0o600)
+        temporary.replace(self.settings_path)
+
     def get(self, name: str) -> dict | None:
         return next((profile for profile in self.list() if profile["name"] == name), None)
 
-    def save(self, profile: dict, key_upload=None, *, original_name: str | None = None) -> None:
+    def save(
+        self,
+        profile: dict,
+        key_upload=None,
+        *,
+        original_name: str | None = None,
+        create_only: bool = False,
+    ) -> None:
         name = validate_identifier(profile["name"].replace(" ", "_"), "profile name").replace("_", " ")
+        if create_only and self.get(name):
+            raise ValueError("A connection profile with that name already exists.")
         previous = self.get(original_name or name) or {}
         mode = profile.get("mode", "direct")
         if mode not in {"direct", "ssh"}:

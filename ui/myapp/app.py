@@ -25,6 +25,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         SESSION_COOKIE_SAMESITE="Lax",
         UPLOAD_FOLDER=os.environ.get("UPLOAD_FOLDER", str(Path(app.instance_path) / "uploads")),
         PROFILE_STORE=os.environ.get("PROFILE_STORE", str(Path(app.instance_path) / "profiles.json")),
+        PROFILE_SETTINGS=os.environ.get("PROFILE_SETTINGS", str(Path(app.instance_path) / "profile_settings.json")),
         SSH_KEY_FOLDER=os.environ.get("SSH_KEY_FOLDER", str(Path(app.instance_path) / "profile_ssh_keys")),
         MAX_CONTENT_LENGTH=25 * 1024 * 1024,
         CONTROL_DATABASE=os.environ.get("CONTROL_DATABASE", "fndb"),
@@ -41,7 +42,11 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     for directory in (app.instance_path, app.config["UPLOAD_FOLDER"], app.config["SSH_KEY_FOLDER"]):
         Path(directory).mkdir(parents=True, exist_ok=True)
-    app.extensions["profile_store"] = ProfileStore(Path(app.config["PROFILE_STORE"]), Path(app.config["SSH_KEY_FOLDER"]))
+    app.extensions["profile_store"] = ProfileStore(
+        Path(app.config["PROFILE_STORE"]),
+        Path(app.config["SSH_KEY_FOLDER"]),
+        Path(app.config["PROFILE_SETTINGS"]),
+    )
     app.extensions["session_store"] = SessionStore()
 
     app.register_blueprint(auth_bp)

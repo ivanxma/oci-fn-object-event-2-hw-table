@@ -12,7 +12,9 @@ deploy/    Oracle Linux bootstrap and idempotent deployment scripts
 tests/     Function tests and fixtures
 ui/tests/  Flask UI and OCI-management tests
 blog/      Architecture and operational design articles
-reports/   Test plans, implementation notes, and measured reports
+docs/      Versioned technical implementation documentation
+external-reports/  Versioned final measured reports for external sharing
+reports/   Git-ignored HTML plans and working assessment artifacts
 ```
 
 ## Runtime flow
@@ -199,9 +201,10 @@ retries, and timing to be correlated.
 3. Split larger feeds into smaller, disjoint objects and use a manifest or
    durable sequencer when their order matters.
 
-Detached mode extends the bound; it does not remove it. The measured 1 GB Sync
-test exceeded 300 seconds. See the linked performance reports and architecture
-blog for the test environment, shapes, worker counts, and storage observations.
+Detached mode extends the bound; it does not remove it. Earlier 1 GB Sync tests
+exceeded 300 seconds; the final controlled run used Detached mode for 1–5 GB.
+See the linked final performance report and architecture blog for the test
+environment, shapes, worker counts, and storage observations.
 
 ## Logging and troubleshooting
 
@@ -237,4 +240,6 @@ session state should be committed.
 
 - [CSV-to-HeatWave ingestion design](../blog/csv-ingestion-to-heatwave.md)
 - [Large-file technical architecture](../blog/technical-architecture-large-csv-heatwave.md)
-- [Performance reports](../reports/)
+- [Parallel CSV streaming implementation](csv-stream-parallelization-implementation.md)
+- [Diskless parallel CSV streaming implementation](diskless-parallel-csv-streaming-implementation.md)
+- [Final sync and detached performance report](../external-reports/performance-test-report-20260719-sync-detached.md)

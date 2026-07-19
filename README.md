@@ -115,7 +115,11 @@ troubleshooting, and validation commands.
 ## More information
 
 - [Technical deployment and operations guide](docs/technical-details.md)
+- [Parallel CSV streaming implementation](docs/csv-stream-parallelization-implementation.md)
+- [Diskless parallel CSV streaming implementation](docs/diskless-parallel-csv-streaming-implementation.md)
 - [CSV-to-HeatWave ingestion design](blog/csv-ingestion-to-heatwave.md)
 - [Large-file technical architecture](blog/technical-architecture-large-csv-heatwave.md)
-- [Security assessment and remediation plan](reports/security_assessment_20260719.html)
-- [Performance reports](reports/)
+- [Final sync and detached performance report](external-reports/performance-test-report-20260719-sync-detached.md)
+
+The local `reports/` folder is intentionally ignored by Git and retains HTML
+plans and working assessment artifacts outside the published documentation.
