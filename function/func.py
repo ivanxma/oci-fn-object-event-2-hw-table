@@ -278,7 +278,9 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
             function_id = os.environ.get("FUNCTION_ID", "")
             if not function_id or os.environ.get("DETACHED_ENABLED", "false").lower() != "true":
                 raise ValueError("Mapping requests DETACHED mode but detached execution is not enabled or FUNCTION_ID is missing.")
-            signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+            # A Function invocation runs with a resource-principal identity;
+            # instance principals are only available on Compute instances.
+            signer = oci.auth.signers.get_resource_principals_signer()
             client = oci.functions.FunctionsInvokeClient({"region": os.environ.get("OCI_REGION", "")}, signer=signer)
             worker_event = dict(event)
             worker_event["_detached_worker"] = True
