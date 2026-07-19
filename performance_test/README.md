@@ -6,6 +6,8 @@ rule, creates the partitioned target table and resource mapping, and adds a
 non-secret direct-MySQL UI profile. It never stores the MySQL password in the UI
 profile. `--smoke-test` uploads 100 rows, waits for successful ingestion, deletes
 the object, waits for successful partition cleanup, and verifies zero final rows.
+`--reset` clears only mutable batch/target state and deliberately preserves
+Event TX and error audit history.
 
 ```bash
 cd /home/opc/oci-object-event-2-table

@@ -25,3 +25,8 @@ def test_transaction_mode_uses_snapshots_not_current_mapping():
 
     assert expression == "COALESCE(tx.invocation_mode, object_event.invocation_mode, 'UNKNOWN')"
     assert "object_storage_mappings" not in expression
+
+
+def test_completed_raw_event_does_not_fall_back_to_received():
+    assert EventTransactionService._raw_event_lifecycle({"completed_at": "2026-07-19 15:00:00"}) == "COMPLETED"
+    assert EventTransactionService._raw_event_lifecycle({"completed_at": None}) == "RECEIVED"

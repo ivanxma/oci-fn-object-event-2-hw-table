@@ -43,10 +43,13 @@ try:
         (os.environ["TARGET_DATABASE"], os.environ["TARGET_TABLE"] + "\\_stage\\_%"),
     )
     staging_count = int(cursor.fetchone()["count"])
-    create_event = next((row for row in events if str(row["event_type"]).lower().endswith(("createobject", "updateobject"))), None)
-    delete_event = next((row for row in events if str(row["event_type"]).lower().endswith("deleteobject")), None)
-    create_tx = next((row for row in transactions if row["event_action"] in {"CREATE", "UPDATE"}), None)
-    delete_tx = next((row for row in transactions if row["event_action"] == "DELETE"), None)
+    # OCI Events is at-least-once and a transient Function dispatch can leave an
+    # ERROR followed by a successful retry. Report the latest attempt for each
+    # operation rather than permanently selecting the first delivery.
+    create_event = next((row for row in reversed(events) if str(row["event_type"]).lower().endswith(("createobject", "updateobject"))), None)
+    delete_event = next((row for row in reversed(events) if str(row["event_type"]).lower().endswith("deleteobject")), None)
+    create_tx = next((row for row in reversed(transactions) if row["event_action"] in {"CREATE", "UPDATE"}), None)
+    delete_tx = next((row for row in reversed(transactions) if row["event_action"] == "DELETE"), None)
     file_bytes = int(os.environ["FILE_BYTES"])
     rows = int(os.environ["EXPECTED_ROWS"])
     duration_seconds = float(create_event["duration_ms"]) / 1000 if create_event and create_event["duration_ms"] is not None else None

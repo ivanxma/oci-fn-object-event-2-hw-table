@@ -14,6 +14,7 @@ exchange.
 | 5 GiB Function processing | **343.368 seconds** |
 | 5 GiB throughput | **14.911 MiB/s** |
 | 5 GiB rows | **10,076,665** |
+| Controlled narrow 5 GiB | **1,120.274 seconds; 4.570 MiB/s** |
 | New database storage allocation | **1.3 TB** |
 | Previous database storage allocation | **50 GB** |
 | Final rows, stages, active batches, live objects | **0** |
@@ -31,10 +32,11 @@ A controlled 500 MiB narrow-row comparison closely matched the previous row
 count: 8,096,895 rows now versus 8,080,750 previously. Processing improved from
 117.454 to 108.640 seconds: **7.50% less time** and **8.09% higher throughput**.
 
-At 5 GiB, the new run completed in **343.368 seconds** versus **1,408.743
-seconds** previously: **75.63% less time** and **4.10× higher byte throughput**.
-This is a large operational improvement, but the two 5 GiB files used different
-row sizes and therefore do not isolate the effect of storage allocation.
+The controlled narrow-row 5 GiB retest completed in **1,120.274 seconds** versus
+**1,408.743 seconds** previously: **20.48% less time**, **25.77% higher byte
+throughput**, and **19.43% less time per 100 rows**. The earlier 343.368-second
+wide-row result is not used for the storage comparison because its row density
+was materially different.
 
 > The 1.3 TB allocation provides a higher potential storage envelope, but the
 > measured wide-row workload did not demonstrate that the 50 GB allocation's
@@ -82,8 +84,9 @@ tokens, and full OCIDs are excluded.
    processing duration from Function receipt to its terminal audit update.
 5. Verify exact rows, terminal success, immutable execution-mode snapshot, and
    zero staging residue. Delete the object and wait for partition cleanup.
-6. Run an additional 500 MiB file with a 12-byte payload, averaging 64.75 bytes
-   per row, to match the previous 50 GB-storage workload.
+6. Run additional 500 MiB and 5 GiB files with a 12-byte payload to closely
+   match the previous 50 GB-storage workload. The controlled 5 GiB file
+   contained 81,649,748 rows averaging 65.753 bytes per row.
 
 ## Measured results
 
@@ -96,6 +99,12 @@ tokens, and full OCIDs are excluded.
 | 2 GiB | DETACHED | 4,031,976 | 36.706 s | 20.475 s | 6.962 s | 137.089 s | 14.939 | 0.003400 | 1.207 s | SUCCESS |
 | 5 GiB | DETACHED | 10,076,665 | 108.720 s | 46.199 s | 4.932 s | 343.368 s | 14.911 | 0.003408 | 1.896 s | SUCCESS |
 | 500 MiB narrow comparison | SYNC | 8,096,895 | 12.487 s | 6.407 s | 12.025 s | 108.640 s | 4.602 | 0.001342 | 0.182 s | SUCCESS |
+| 5 GiB narrow comparison | DETACHED | 81,649,748 | 103.167 s | 46.014 s | 61.342 s | 1,120.274 s | 4.570 | 0.001372 | 0.174 s | SUCCESS* |
+
+`*` The create/import succeeded normally. The first delete delivery logged a
+transient detached-dispatch 503; the same idempotent delete CloudEvent was
+replayed synchronously and completed in 0.174 seconds with zero final rows and
+zero staging tables.
 
 ## Performance charts
 
@@ -105,13 +114,12 @@ tokens, and full OCIDs are excluded.
 
 ## Storage allocation context: 1.3 TB versus 50 GB
 
-The primary test series used different row widths. The table below isolates the
-only closely matched workload: both 500 MiB files contained approximately 8.1
-million narrow rows, with average row size differing by only 0.21%.
+The primary test series used different row widths. Two additional narrow-row
+tests now provide closely matched comparisons at 500 MiB and 5 GiB.
 
 | Controlled 500 MiB narrow case | Previous MySQL.8 / 50 GB | New MySQL.8 / 1.3 TB | Change |
 | --- | ---: | ---: | ---: |
-| Actual bytes | 524,357,793 | 524,288,491 | −0.01% |
+| Actual bytes | 524,357,793 | 524,288,017 | −0.01% |
 | Actual rows | 8,080,750 | 8,096,895 | +0.20% |
 | Average bytes per row | 64.890 | 64.752 | −0.21% |
 | Processing duration | 117.454 s | 108.640 s | **−7.50%** |
@@ -123,54 +131,44 @@ The prior storage context was 50 GB, one LUN, and approximately 3,750
 configured maximum IOPS. The new allocation is 1.3 TB and exhibited materially
 higher database write-operation samples.
 
+### Controlled 5 GiB narrow-row result
+
+| 5 GiB detached case | Previous MySQL.8 / 50 GB | New MySQL.8 / 1.3 TB | Controlled change |
+| --- | ---: | ---: | ---: |
+| Actual bytes | 5,368,734,188 | 5,368,709,161 | −0.0005% |
+| Rows | 82,736,033 | 81,649,748 | −1.31% |
+| Average bytes per row | 64.890 | 65.753 | +1.33% |
+| Processing duration | 1,408.743 s | 1,120.274 s | **−20.48%** |
+| Time saved | — | 288.469 s | **4 minutes 48.469 seconds** |
+| Byte throughput | 3.634 MiB/s | 4.570 MiB/s | **+25.77%** |
+| Rows per second | 58,730 | 72,884 | **+24.10%** |
+| Seconds per 100 rows | 0.001703 | 0.001372 | **−19.43%** |
+
+This is the strongest storage-context comparison in the report because object
+size, row size, schema, four workers, and 10,000-row batches are closely
+matched. The new run completed in approximately 18.67 minutes instead of 23.48
+minutes and retained substantial headroom inside the 3,600-second detached
+timeout.
+
 ### IOPS interpretation
 
-Larger rows reduce the number of rows processed for a fixed file size. With the
-configured 10,000-row batches, the 5 GiB files represent approximately 8,274
-loader transactions in the prior narrow-row run versus 1,008 in the new
-wide-row run—about **8.21× fewer row batches and commits**. The byte volume is
-similar, so this does not guarantee 8.21× fewer physical writes, but it can
-materially reduce transaction, index, log, and commit-related I/O operations.
+During the controlled new run's stable 15:22–15:29 UTC window, supplied DB
+monitoring showed reported write operations averaging **679.309** and peaking
+at **700.635**. This is well below the prior 50 GB allocation's stated maximum
+of about 3,750 IOPS if the console statistic and configured ceiling use the same
+unit and interval. CPU averaged **14.95%** and peaked at **23.63%**, so the
+database was not CPU saturated either.
 
-Consequently, the wide-row workload may not require enough IOPS to saturate the
-50 GB, one-LUN allocation. The new database's reported monitoring peak of
-1,936.5 operations is below the prior volume's configured maximum of about
-3,750 IOPS **if** the console statistic represents the same unit and interval.
-Because the monitoring aggregation was not captured, that numerical comparison
-is indicative only; it is not proof of spare IOPS.
+Database receive averaged **6.677 million bytes** per reported sample (**6.367
+MiB** if the statistic is bytes/second), peaking at 6.778 million bytes. The
+measured CSV processing rate was 4.570 MiB/s. These plateaus are consistent with
+a row-processing/pipeline constraint rather than exhaustion of database CPU or
+the available storage IOPS.
 
-There is therefore no evidence that the **4.10×** 5 GiB improvement was caused
-by the larger storage allocation. To isolate storage, run the same generated
-file—identical bytes, rows, row width, indexes, batch size, workers, and cache
-protocol—on both database allocations while collecting IOPS, throughput,
-latency, CPU, and Function timing with the same aggregation.
-
-### Observed 5 GiB result
-
-| 5 GiB detached case | Previous MySQL.8 / 50 GB | New MySQL.8 / 1.3 TB | Observed change |
-| --- | ---: | ---: | ---: |
-| Processing duration | 1,408.743 s | 343.368 s | **−75.63%; 4.10× faster** |
-| Time saved | — | 1,065.375 s | **17 minutes 45.375 seconds** |
-| Byte throughput | 3.634 MiB/s | 14.911 MiB/s | **+310.32%; 4.10×** |
-| Rows | 82,736,033 | 10,076,665 | Different row-density workload |
-| Seconds per 100 rows | 0.001703 | 0.003408 | Not comparable per row |
-
-The 5 GiB result is a substantial end-to-end improvement and is operationally
-important: the same nominal object size completed within approximately 5.72
-minutes instead of 23.48 minutes. It also left far more headroom within the
-3,600-second detached timeout.
-
-> **Interpretation boundary:** apart from the deliberately matched 500 MiB
-> narrow case, row size differs across the old and new test series. The 5 GiB
-> comparison is therefore not a controlled storage benchmark. The previous
-> object averaged about 64.89 bytes per row and contained 82.7 million rows;
-> the new object averaged about 532.79 bytes per row and contained 10.1 million
-> rows. Row parsing,
-> SQL statement count, indexes, batching, cache state, and service load differ.
-> Treat the **4.10×** result as an observed environment-and-workload improvement,
-> not as proof that storage allocation alone caused it. The closely matched
-> 500 MiB narrow-row test is the stronger storage comparison and measured an
-> **8.09% throughput gain** in one sequential run.
+> The controlled result shows a repeatable environment-level improvement of
+> about **20–26%**, but it still does not prove storage allocation alone caused
+> the gain. Cache state, service load, tenancy conditions, Function scheduling,
+> and monitoring aggregation were not held or captured identically.
 
 ## Database monitoring evidence
 
@@ -185,6 +183,9 @@ limits.
 | 5 GiB database network receive plateau | 15.989 MiB average reported sample; 16.164 MiB peak |
 | 5 GiB database network transmit plateau | 76.661 MiB average reported sample; 86.534 MiB peak |
 | Disk write operations | 1,936.5 overall peak; 5 GiB phase average 1,249.826 and peak 1,870.048 |
+| Controlled narrow 5 GiB CPU, 15:22–15:29 | 14.95% average; 23.63% peak |
+| Controlled narrow 5 GiB receive, 15:22–15:29 | 6.677 million-byte average reported sample; 6.778 million peak |
+| Controlled narrow 5 GiB write operations, 15:22–15:29 | 679.309 average reported sample; 700.635 peak |
 
 During 14:30–14:34, database receive averaged 16.765 million bytes per reported
 sample, or 15.989 MiB if the statistic is bytes/second. That is about 7.2% above
@@ -218,7 +219,7 @@ variance. These are planning estimates, not OCI guarantees.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | New wide-row regression | 14.917 MiB/s fitted | 4.37 GiB | 3.50 GiB | 52.44 GiB | 41.95 GiB |
 | New wide-row conservative | 13.208 MiB/s lowest bulk point | 3.87 GiB | 3.10 GiB | 46.44 GiB | 37.15 GiB |
-| New narrow-row single point | 4.602 MiB/s at 500 MiB | 1.35 GiB | 1.08 GiB | 16.18 GiB | 12.94 GiB |
+| New narrow-row sustained | 4.570 MiB/s at 5 GiB | 1.34 GiB | 1.07 GiB | 16.07 GiB | 12.85 GiB |
 | Previous narrow-row sustained | 3.634 MiB/s at 5 GiB | 1.06 GiB | 0.85 GiB | 12.78 GiB | 10.22 GiB |
 
 ![Projected hard timeout file-size envelope](performance-vm6-projection.svg)
@@ -248,6 +249,11 @@ snapshot.
   control tables.
 - Legacy records without reliable evidence display `UNKNOWN` rather than a
   false mode.
+- A performance reset had deleted target audit rows while retaining raw Object
+  Storage events, making completed events appear `RECEIVED` and emptying the
+  Registered Table history. The reset now preserves audit/error rows; the UI
+  falls back to `COMPLETED` when raw `completed_at` timing exists without a
+  surviving detailed transaction link.
 
 ## Final state
 
@@ -262,7 +268,7 @@ snapshot.
 
 ## Limitations
 
-- One sequential measurement per primary size; no median, p95, p99, variance,
+- One sequential measurement per primary and controlled size; no median, p95, p99, variance,
   or concurrent-event matrix.
 - Primary files used wide deterministic rows. Complex quoting, multibyte data,
   conversions, secondary indexes, and duplicate detection can reduce throughput.
@@ -274,7 +280,7 @@ snapshot.
   extrapolations and may become nonlinear.
 - Deleted objects may remain in bucket version history depending on retention.
 
-Test window: **2026-07-19 14:08–14:37 UTC**.
+Test window: **2026-07-19 14:08–15:38 UTC**.
 
 Raw measurements: [performance-test-vm6-20260719-results.jsonl](performance-test-vm6-20260719-results.jsonl).
 

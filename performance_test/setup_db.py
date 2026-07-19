@@ -78,10 +78,15 @@ def main() -> None:
         )
 
         if args.reset:
-            for table in ("event_errors", "event_tx_log", "source_object_batches"):
-                if table_exists(cursor, control, table):
-                    key = "target_database = %s AND target_table = %s"
-                    cursor.execute(f"DELETE FROM `{control}`.`{table}` WHERE {key}", (target_db, target_table))
+            # Reset mutable loader state but retain event_tx_log/event_errors.
+            # Those tables are the operational audit history used by Event TX;
+            # deleting them leaves completed object_event rows looking RECEIVED
+            # and empties the Registered Table transaction list.
+            if table_exists(cursor, control, "source_object_batches"):
+                cursor.execute(
+                    f"DELETE FROM `{control}`.`source_object_batches` WHERE target_database = %s AND target_table = %s",
+                    (target_db, target_table),
+                )
             if table_exists(cursor, control, "target_batch_sequences"):
                 cursor.execute(
                     f"DELETE FROM `{control}`.`target_batch_sequences` WHERE target_database=%s AND target_table=%s",

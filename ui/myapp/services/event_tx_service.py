@@ -412,7 +412,7 @@ class EventTransactionService:
         control = quote_identifier(control_database(), "control database")
         invocation_mode = f"{self._transaction_mode_sql(cursor)} AS invocation_mode"
         for row in rows:
-            row["_lifecycle_status"] = "RECEIVED"
+            row["_lifecycle_status"] = self._raw_event_lifecycle(row)
             row["_error_id"] = None
             row["_invocation_mode"] = row.get("invocation_mode") or "UNKNOWN"
             if not event_log_exists:
@@ -446,6 +446,11 @@ class EventTransactionService:
                 row["_lifecycle_status"] = linked["event_status"]
                 row["_error_id"] = linked["error_id"]
                 row["_invocation_mode"] = linked["invocation_mode"] or row["_invocation_mode"]
+
+    @staticmethod
+    def _raw_event_lifecycle(row: dict[str, Any]) -> str:
+        """Use persisted timing when detailed transaction history is unavailable."""
+        return "COMPLETED" if row.get("completed_at") is not None else "RECEIVED"
 
     @staticmethod
     def _event_action(event_type: Any) -> str | None:
