@@ -1,5 +1,109 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="page-heading"><div><p class="eyebrow">OBJECT STORAGE ROUTING</p><h1>Resource mappings</h1><p>Match an OCI compartment, bucket, and resource-name pattern to the MySQL table that will receive the CSV.</p></div><a class="primary-button compact" href="{{ url_for('mappings.create_mapping') }}">Add mapping <span>+</span></a></section>
-<section class="content-card"><div class="panel-heading"><div><h2>Mappings stored in <code>{{ config.CONTROL_DATABASE }}.object_storage_mappings</code></h2><p>Patterns use shell-style matching, for example <code>myfolder/emp*.csv</code>.</p></div></div><div class="table-wrap"><table class="mappings-table"><thead><tr><th>Compartment name</th><th>Bucket name</th><th>Resource-name pattern</th><th>Target table</th><th>Execution</th><th>Workers</th><th>Timeout</th><th>Actions</th></tr></thead><tbody>{% for mapping in mappings %}<tr><td>{{ mapping.compartment_name }}</td><td>{{ mapping.bucket_name }}</td><td><code>{{ mapping.resource_name_pattern }}</code></td><td><code>{{ mapping.target_database }}.{{ mapping.target_table }}</code></td><td><span class="lifecycle-badge {{ 'success' if mapping.invocation_mode == 'SYNC' else 'processing' }}">{{ mapping.invocation_mode or 'SYNC' }}</span></td><td>{{ mapping.worker_threads or 4 }}</td><td>{{ mapping.timeout_seconds or 300 }} s</td><td class="profile-actions"><a class="secondary-button compact" href="{{ url_for('mappings.edit_mapping', mapping_id=mapping.id) }}">Edit</a><form method="post" action="{{ url_for('mappings.delete_mapping', mapping_id=mapping.id) }}" onsubmit="return confirm('Delete this resource mapping?');"><button class="secondary-button compact danger-button" type="submit">Delete</button></form></td></tr>{% else %}<tr><td colspan="8" class="empty-state">No mappings yet. Add one to define the destination for Object Storage CSV files.</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="page-heading"><div><p class="eyebrow">OBJECT STORAGE ROUTING</p><h1>Resource mappings and OCI automation</h1><p>Maintain database routing, live OCI Events rules, and global Function capacity.</p></div><a class="primary-button compact" href="{{ url_for('mappings.create_mapping') }}">Add mapping <span>+</span></a></section>
+
+<section class="content-card mappings-tabs">
+  <div class="tab-list" role="tablist" aria-label="Mapping and OCI configuration views">
+    <a class="tab {{ 'active' if active_tab == 'mappings' else '' }}" role="tab" aria-selected="{{ 'true' if active_tab == 'mappings' else 'false' }}" href="{{ url_for('mappings.list_mappings', tab='mappings') }}">Mappings <span>{{ mappings|length }}</span></a>
+    <a class="tab {{ 'active' if active_tab == 'rules' else '' }}" role="tab" aria-selected="{{ 'true' if active_tab == 'rules' else 'false' }}" href="{{ url_for('mappings.list_mappings', tab='rules') }}">OCI Rules{% if active_tab == 'rules' %} <span>{{ rules|length }}</span>{% endif %}</a>
+    <a class="tab {{ 'active' if active_tab == 'function' else '' }}" role="tab" aria-selected="{{ 'true' if active_tab == 'function' else 'false' }}" href="{{ url_for('mappings.list_mappings', tab='function') }}">OCI Function Configuration</a>
+    <a class="tab {{ 'active' if active_tab == 'upload' else '' }}" role="tab" aria-selected="{{ 'true' if active_tab == 'upload' else 'false' }}" href="{{ url_for('mappings.list_mappings', tab='upload') }}">Object Storage Upload</a>
+  </div>
+
+  {% if active_tab == 'mappings' %}
+  <div class="tab-panel active" role="tabpanel">
+    <div class="panel-heading"><div><h2>Mappings stored in <code>{{ config.CONTROL_DATABASE }}.object_storage_mappings</code></h2><p>Patterns use shell-style matching, for example <code>myfolder/emp*.csv</code>. Timeout and Function capacity are global OCI Function settings.</p></div></div>
+    <aside class="mapping-assumptions compact-assumptions"><strong>Operational assumptions</strong><span>Each rule belongs to one mapping. Rule bucket/object patterns must be mutually exclusive; overlapping OCI rules can cause duplicate Function invocations. Events across multiple files are not guaranteed to execute transactionally or in object-operation order.</span></aside>
+    <form method="post" class="table-page-view mapping-selection-form">
+      <div class="table-page-toolbar"><div class="selection-actions"><button class="secondary-button compact" type="submit" formaction="{{ url_for('mappings.edit_selected_mapping') }}" title="Edit exactly one selected mapping">Edit</button><button class="secondary-button compact danger-button" type="submit" formaction="{{ url_for('mappings.delete_selected_mappings') }}" title="Delete selected mappings and their managed rules" onclick="return confirm('Delete all selected mappings and their managed OCI Events rules?');">Delete</button></div><div class="table-toolbar-icons"></div></div>
+      <div class="table-wrap"><table class="mappings-table"><thead><tr><th class="selection-column"><label class="checkbox-field" title="Select all visible mappings"><input id="select-all-mappings" type="checkbox" aria-label="Select all visible mappings"><span>Select</span></label></th><th>Compartment</th><th>Bucket</th><th>Resource pattern</th><th>Target table</th><th>Execution</th><th>Workers</th><th>OCI rule</th></tr></thead><tbody>{% for mapping in mappings %}<tr><td class="selection-column"><label class="checkbox-field"><input class="mapping-row-select" type="checkbox" name="mapping_id" value="{{ mapping.id }}" aria-label="Select mapping {{ mapping.id }}"><span class="visually-hidden">Select mapping {{ mapping.id }}</span></label></td><td>{{ mapping.compartment_name }}</td><td>{{ mapping.bucket_name }}</td><td><code>{{ mapping.resource_name_pattern }}</code></td><td><code>{{ mapping.target_database }}.{{ mapping.target_table }}</code></td><td><span class="lifecycle-badge {{ 'success' if mapping.invocation_mode == 'SYNC' else 'processing' }}">{{ mapping.invocation_mode or 'SYNC' }}</span></td><td>{{ mapping.worker_threads or 4 }}</td><td>{% if mapping.event_rule_id %}<span class="lifecycle-badge success">Managed</span>{% else %}<span class="mode-badge">None</span>{% endif %}</td></tr>{% else %}<tr><td colspan="8" class="empty-state">No mappings yet. Add one to define the destination for Object Storage CSV files.</td></tr>{% endfor %}</tbody></table></div>
+    </form>
+  </div>
+
+  {% elif active_tab == 'rules' %}
+  <div class="tab-panel active" role="tabpanel">
+    <div class="panel-heading"><div><h2>Live OCI Events rules</h2><p>Retrieved directly from OCI. Only rules whose FAAS action targets the configured Function are shown.</p></div><a class="secondary-button compact" href="{{ url_for('mappings.list_mappings', tab='rules') }}">Refresh from OCI</a></div>
+    <aside class="mapping-assumptions compact-assumptions"><strong>Mutually exclusive scope required</strong><span>Do not overlap bucket and object-name patterns across rules for this Function. OCI evaluates each matching rule independently, so one Object Storage event can invoke the same Function multiple times.</span></aside>
+    <form method="post" class="table-page-view rule-selection-form">
+      <div class="table-page-toolbar">
+        <div class="selection-actions" aria-label="Selected rule actions">
+          <button class="secondary-button compact" type="submit" formaction="{{ url_for('mappings.edit_selected_rule') }}" title="Edit the mapping associated with one selected rule">Edit</button>
+          <button class="secondary-button compact" type="submit" formaction="{{ url_for('mappings.disable_selected_rules') }}" title="Disable all selected OCI Events rules">Disable</button>
+          <button class="secondary-button compact danger-button" type="submit" formaction="{{ url_for('mappings.delete_selected_rules') }}" title="Delete all selected OCI Events rules" onclick="return confirm('Delete all selected OCI Events rules? Associated mappings will be retained.');">Delete</button>
+        </div>
+        <div class="table-toolbar-icons"></div>
+      </div>
+      <div class="table-wrap"><table class="rules-table"><thead><tr><th class="selection-column"><label class="checkbox-field" title="Select all visible rules"><input id="select-all-rules" type="checkbox" aria-label="Select all visible rules"><span>Select</span></label></th><th>Rule</th><th>Enabled</th><th>Lifecycle</th><th>Condition from OCI</th><th>Mapping</th><th>Created</th></tr></thead><tbody>{% for rule in rules %}{% set mapping = rule_mapping_lookup.get(rule.id) %}<tr><td class="selection-column"><label class="checkbox-field"><input class="rule-row-select" type="checkbox" name="rule_id" value="{{ rule.id }}" aria-label="Select rule {{ rule.display_name }}"><span class="visually-hidden">Select {{ rule.display_name }}</span></label></td><td><strong>{{ rule.display_name }}</strong><small>{{ 'UI managed' if rule.managed else 'External rule' }}</small></td><td>{{ 'Yes' if rule.is_enabled else 'No' }}</td><td><span class="lifecycle-badge {{ 'success' if rule.lifecycle_state == 'ACTIVE' else 'warning' }}">{{ rule.lifecycle_state }}</span></td><td><code class="rule-condition">{{ rule.condition }}</code></td><td>{% if mapping %}<span>#{{ mapping.id }} · {{ mapping.target_database }}.{{ mapping.target_table }}</span>{% elif rule.mapping_id %}Mapping #{{ rule.mapping_id }} not found{% else %}Unassociated{% endif %}</td><td>{{ rule.time_created or '—' }}</td></tr>{% else %}<tr><td colspan="7" class="empty-state">No OCI Events rules target the configured Function.</td></tr>{% endfor %}</tbody></table></div>
+    </form>
+  </div>
+
+  {% elif active_tab == 'function' %}
+  <div class="tab-panel active" role="tabpanel">
+    <div class="panel-heading"><div><h2>Live OCI Function configuration</h2><p>Function-wide timeout, memory, provisioned concurrency, and streaming/writer capacity. Values are read directly from OCI.</p></div><a class="secondary-button compact" href="{{ url_for('mappings.list_mappings', tab='function') }}">Refresh from OCI</a></div>
+    {% if function_configuration %}
+    <div class="function-summary"><div><small>Function</small><strong>{{ function_configuration.display_name }}</strong></div><div><small>Lifecycle</small><strong>{{ function_configuration.lifecycle_state }}</strong></div><div><small>Shape</small><strong>{{ function_configuration.shape }}</strong></div><div><small>Image</small><strong title="{{ function_configuration.image }}">{{ function_configuration.image }}</strong></div><div><small>Last updated</small><strong>{{ function_configuration.time_updated or '—' }}</strong></div></div>
+    <form class="form-grid function-config-form" method="post" action="{{ url_for('mappings.update_function_configuration') }}">
+      <label>Sync timeout (seconds) <span>*</span><input type="number" name="sync_timeout_seconds" min="1" max="300" required value="{{ function_configuration.sync_timeout_seconds }}"><small>OCI synchronous invocation limit: 1–300 seconds.</small></label>
+      <label>Detached timeout (seconds) <span>*</span><input type="number" name="detached_timeout_seconds" min="5" max="3600" required value="{{ function_configuration.detached_timeout_seconds }}"><small>Maximum detached execution time: 5–3,600 seconds.</small></label>
+      <label>Memory (MB) <span>*</span><input type="number" name="memory_in_mbs" min="128" max="3072" step="64" required value="{{ function_configuration.memory_in_mbs }}"><small>Function memory, in 64 MB increments. More memory also provides more Function CPU capacity.</small></label>
+      <label>Provisioned concurrency <span>*</span><input type="number" name="provisioned_concurrency" min="0" required value="{{ function_configuration.provisioned_concurrency }}"><small>Pre-warmed concurrent Function instances. Zero disables it; tenancy limits and cost apply.</small></label>
+      <label>Default writer workers <span>*</span><input type="number" name="writer_workers" min="1" max="64" required value="{{ function_configuration.writer_workers }}"><small>Global fallback. A mapping's Worker threads value takes precedence.</small></label>
+      <label>Rows per database batch <span>*</span><input type="number" name="batch_rows" min="100" max="100000" required value="{{ function_configuration.batch_rows }}"><small>Larger batches reduce round trips but consume more memory per worker.</small></label>
+      <label>Object Storage range bytes <span>*</span><input type="number" name="object_storage_range_bytes" min="1048576" max="268435456" required value="{{ function_configuration.object_storage_range_bytes }}"><small>Streaming range size; 33,554,432 bytes is 32 MiB.</small></label>
+      <label>Object Storage read timeout (seconds) <span>*</span><input type="number" name="object_storage_read_timeout_seconds" min="1" max="300" required value="{{ function_configuration.object_storage_read_timeout_seconds }}"><small>Per-range SDK read timeout, not the overall Function lifetime.</small></label>
+      <div class="form-actions mapping-actions"><button class="primary-button" type="submit">Update OCI Function</button></div>
+    </form>
+    <aside class="mapping-assumptions"><strong>Capacity notes</strong><ul><li>Writer workers are threads inside one Function invocation; provisioned concurrency controls the number of pre-warmed Function instances.</li><li>Higher concurrency can increase simultaneous database writes and Object Storage reads. Validate HeatWave connections, IOPS, redo capacity, and tenancy limits before increasing it.</li><li>Updating the Function configuration is global and affects every mapping and rule that invokes this Function.</li></ul></aside>
+    {% else %}<p class="empty-state">OCI Function configuration is unavailable. Review the detailed error above and the Compute instance-principal policy.</p>{% endif %}
+  </div>
+
+  {% else %}
+  <div class="tab-panel active" role="tabpanel">
+    <div class="panel-heading"><div><h2>Object Storage Upload</h2><p>Upload test CSV files through a mapping and remove matching files from the selected bucket.</p></div>{% if selected_upload_mapping %}<a class="secondary-button compact" href="{{ url_for('mappings.list_mappings', tab='upload', mapping_id=selected_upload_mapping.id) }}">Refresh files</a>{% endif %}</div>
+    <aside class="mapping-assumptions compact-assumptions"><strong>Mapping-scoped testing</strong><span>The selected mapping controls the bucket and required object-name pattern. Object Storage folders are virtual prefixes: entering a new folder below creates it automatically when the CSV is uploaded. Upload, overwrite, and deletion can emit events when bucket events and a matching enabled rule are configured.</span></aside>
+    <form method="get" class="upload-mapping-picker">
+      <input type="hidden" name="tab" value="upload">
+      <label>Mapping <span>*</span><select id="upload-mapping" name="mapping_id" required><option value="">Select mapping</option>{% for mapping in mappings %}<option value="{{ mapping.id }}" {{ 'selected' if selected_upload_mapping and mapping.id == selected_upload_mapping.id else '' }}>{{ mapping.bucket_name }} / {{ mapping.resource_name_pattern }} → {{ mapping.target_database }}.{{ mapping.target_table }}</option>{% endfor %}</select><small>Selecting a mapping loads matching live objects from OCI.</small></label>
+      <button class="secondary-button" type="submit">Load bucket files</button>
+    </form>
+    {% if selected_upload_mapping %}
+    <form method="post" action="{{ url_for('mappings.upload_mapping_csv') }}" enctype="multipart/form-data" class="form-grid object-upload-form">
+      <input type="hidden" name="mapping_id" value="{{ selected_upload_mapping.id }}">
+      <label>Bucket<input value="{{ selected_upload_mapping.bucket_name }}" readonly><small>Derived from mapping #{{ selected_upload_mapping.id }}.</small></label>
+      <label>Required object pattern<input value="{{ selected_upload_mapping.resource_name_pattern }}" readonly><small>The final folder and filename must match this pattern.</small></label>
+      <label>Folder / prefix<input name="folder" value="{{ upload_folders.get(selected_upload_mapping.id, '') }}" placeholder="myfolder/subfolder"><small>Enter an existing or new virtual folder. It is created automatically by uploading the object.</small></label>
+      <label>CSV file <span>*</span><input type="file" name="csv_file" accept=".csv,text/csv" required><small>Testing upload limit: 25 MB. The server streams the selected file to OCI.</small></label>
+      <div class="form-actions mapping-actions"><button class="primary-button" type="submit">Upload CSV</button></div>
+    </form>
+    <form method="post" action="{{ url_for('mappings.delete_mapping_objects') }}" class="table-page-view object-selection-form">
+      <input type="hidden" name="mapping_id" value="{{ selected_upload_mapping.id }}">
+      <div class="table-page-toolbar"><div class="selection-actions"><button class="secondary-button compact danger-button" type="submit" onclick="return confirm('Delete all selected Object Storage files? Delete events may invoke the configured Function.');">Delete selected</button></div><div class="table-toolbar-icons"></div></div>
+      <div class="table-wrap"><table class="object-upload-table"><thead><tr><th class="selection-column"><label class="checkbox-field" title="Select all visible objects"><input id="select-all-objects" type="checkbox" aria-label="Select all visible objects"><span>Select</span></label></th><th>Object name</th><th>Size</th><th>Storage tier</th><th>ETag</th><th>Created</th><th>Modified</th></tr></thead><tbody>{% for object in upload_objects %}<tr><td class="selection-column"><label class="checkbox-field"><input class="object-row-select" type="checkbox" name="object_name" value="{{ object.name }}" aria-label="Select object {{ object.name }}"><span class="visually-hidden">Select {{ object.name }}</span></label></td><td><code>{{ object.name }}</code></td><td>{{ object.size }}</td><td>{{ object.storage_tier or '—' }}</td><td><code>{{ object.etag or '—' }}</code></td><td>{{ object.time_created or '—' }}</td><td>{{ object.time_modified or '—' }}</td></tr>{% else %}<tr><td colspan="7" class="empty-state">No live objects match this mapping pattern.</td></tr>{% endfor %}</tbody></table></div>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const connectSelectAll = (selectAllId, rowSelector) => {
+    const selectAll = document.getElementById(selectAllId);
+    if (!selectAll) return;
+    const rowSelections = [...document.querySelectorAll(rowSelector)];
+    selectAll.closest('label')?.addEventListener('click', (event) => event.stopPropagation());
+    selectAll.addEventListener('change', () => {
+      rowSelections.forEach((checkbox) => { checkbox.checked = selectAll.checked; });
+    });
+    rowSelections.forEach((checkbox) => checkbox.addEventListener('change', () => {
+      selectAll.checked = rowSelections.length > 0 && rowSelections.every((item) => item.checked);
+      selectAll.indeterminate = rowSelections.some((item) => item.checked) && !selectAll.checked;
+    }));
+  };
+  connectSelectAll('select-all-mappings', '.mapping-row-select');
+  connectSelectAll('select-all-rules', '.rule-row-select');
+  connectSelectAll('select-all-objects', '.object-row-select');
+});
+</script>
 {% endblock %}

@@ -1,367 +1,121 @@
 # OCI Object Event to MySQL Table
 
-This project turns OCI Object Storage create, update, and delete events into
-partition-exchanged MySQL table updates. It combines the tested prototype's
-per-target-table batch allocation, parallel CSV inserts, and partition exchange
-with an OCI Function deployment and the Flask management UI.
+This application turns OCI Object Storage CSV lifecycle events into controlled,
+auditable MySQL table updates. OCI Events routes object create, update, and
+delete events to an OCI Function. A mapping selects the target table and either
+Sync or Detached execution. CSV rows are streamed into parallel staging-table
+writers, then a partition exchange publishes one file's data atomically.
 
-## Layout
+The Flask operations UI provides one place to create and maintain mappings,
+manage live OCI Events rules, configure Function capacity, upload or remove test
+objects, inspect target and staging tables, and trace event timing, transaction
+status, detached work, and errors. This operational view makes setup,
+verification, troubleshooting, retry decisions, and orphaned-stage cleanup
+available without requiring operators to join OCI Console and control-schema
+data manually.
 
-```text
-function/  OCI Function source and partition loader
-ui/        Separate Flask UI application
-deploy/    Oracle Linux bootstrap and idempotent OCI deployment scripts
-tests/     Function-focused tests and fixtures
-blog/      Architecture and operational design articles
+## Application components
+
+```mermaid
+flowchart LR
+    Operator[Operator] --> UI[Flask operations UI]
+    UI --> Control[(MySQL control schema)]
+    UI --> OCIAPI[OCI APIs]
+    UI --> Target[(Mapped MySQL tables)]
+    Publisher[CSV publisher] --> Bucket[OCI Object Storage]
+    Bucket --> Events[OCI Events rule]
+    Events --> Intake[OCI Function intake]
+    Intake --> Control
+    Intake -->|Sync| Loader[Streaming CSV loader]
+    Intake -->|Detached self-invocation| Loader
+    Loader --> Bucket
+    Loader --> Stage[(Parallel staging tables)]
+    Stage -->|Atomic partition exchange| Target
+    Loader --> Control
 ```
 
-## Event flow
+## What it does
 
-1. OCI Events invokes `function/func.py` for an Object Storage event.
-2. The Function records the raw event in `fndb.object_event`, then persists its
-   `object_event_id` on the corresponding transaction audit entry. This makes
-   the UI's **Event TX → Object Storage Event** status and error drill-down
-   deterministic for newly received events.
-3. It resolves `fndb.object_storage_mappings` by compartment, bucket, and
-   resource-name pattern.
-4. The mapping selects `SYNC` or `DETACHED` execution. Detached intake records
-   the event, invokes the same Function asynchronously, and returns while the
-   worker continues the load.
-5. For create/update, the worker assigns a batch number scoped to the mapped
-   target database/table, streams bounded Object Storage byte ranges with a
-   resource principal, loads parsed row batches into a staging table with
-   parallel database writers, and atomically exchanges the corresponding
-   `batch_num` partition into the target table. It does not create a full CSV
-   copy on the Function file system.
-6. For delete, it finds the mapped batch and truncates that partition.
-7. It records success and failure rows in `fndb.event_tx_log` and
-   `fndb.event_errors`.
+- Maps a compartment, bucket, and object-name pattern to a pre-approved target
+  table.
+- Handles create/update by streaming bounded Object Storage ranges into
+  parallel database writers without creating a full temporary CSV file.
+- Publishes one file atomically with MySQL partition exchange; delete events
+  retire the corresponding partition.
+- Chooses Sync or Detached processing dynamically from each mapping.
+- Records raw events, execution mode, lifecycle status, timing, transaction
+  audit, and actionable error detail.
+- Provides operational UI workflows for mappings, live OCI Rules, Function
+  configuration, Object Storage testing, registered-table data, stage cleanup,
+  Event TX, and detached-process monitoring.
 
-If a load fails after its batch is allocated, its batch record changes from
-`LOADING` to `ERROR`, allowing a later update event to retry it. A configurable
-`LOAD_LEASE_SECONDS` (default `120`) also treats an abandoned `LOADING` record
-as retryable while still rejecting genuinely concurrent loads for the same
-source object.
+## Deployment and configuration
 
-The target table must already exist, use `LIST` partitioning by an invisible
-`batch_num` column, and include `batch_num` in every unique key. The Function
-does not create arbitrary business tables.
+The supported runtime is Python 3.13 or later. The UI uses Flask and Oracle
+MySQL Connector/Python `>=9.7,<10`.
 
-### Staging-table lifecycle
-
-Each create or update uses a short-lived staging table with a UUID suffix, for
-example `employees_stage_a1b2c3d4e5f6`. This prevents concurrent events and
-retries from sharing a staging name. The table is removed after a successful
-partition exchange and is also cleaned up after a failed load. Audit and error
-records remain in the control database after the temporary table is gone.
-If a Function is terminated at its timeout or database cleanup fails, a staging
-table can remain. The Registered Table UI lists this residue and provides
-confirmed individual and Clean all actions. Cleanup remains blocked while the
-target has an active `LOADING` lease.
-
-### Sync, Detached, and large files
-
-- `SYNC` executes the complete stream, staging load, exchange, audit, and
-  cleanup in the Event Rule invocation. OCI limits synchronous Function
-  execution to 300 seconds. The measured 1 GB test reached 300.953 seconds and
-  timed out.
-- `DETACHED` makes the intake Function record the event and self-invoke the
-  same Function asynchronously. OCI supports a detached execution timeout of
-  up to 3,600 seconds when the Function resource's
-  `detachedModeTimeoutInSeconds` property is configured. Setting mapping
-  `timeout_seconds` or Function configuration `DETACHED_TIMEOUT_SECONDS` alone
-  does not change that OCI resource property.
-- Files that approach the detached limit should be split into smaller objects
-  and coordinated with a manifest or durable queue. A set of files is not one
-  transaction.
-
-The Function reads each object with sequential bounded HTTP Range requests,
-decodes one continuous CSV stream, and applies back-pressure when the pending
-writer queue reaches approximately twice the configured worker count. More
-workers can improve throughput only while MySQL connections, CPU, storage
-throughput, and IOPS have headroom.
-
-## Limitations and assumptions
-
-- **One file is one logical data partition.** A mapping may route many CSV
-  files to one target table, but each file represents a distinct, complete
-  subset of that table's data. The loader publishes one source file at a time
-  into its own `batch_num` partition.
-- **Business records must not overlap between files.** The same business record
-  must not be present in two active source files for the same target. The
-  partition key allows the technical load to retain one file per partition, but
-  it does not make duplicate business records correct. Define and validate the
-  source-file ownership rule before enabling a mapping.
-- **Atomicity is limited to one file.** Loading, exchanging, or removing one
-  file-sized partition is atomic. A coordinated change affecting two or more
-  files is not a single transaction; readers can observe an intermediate state
-  between separate object events.
-- **Move records by removing first, then adding.** When records must move from
-  one file to another, publish and successfully process the source-file removal
-  first, then publish the destination file containing those records. Adding the
-  destination first can expose duplicate records or fail a unique-key check.
-  For a no-gap, multi-file cutover, use a separately designed publication
-  workflow rather than independent file events.
-- **Events can be retried and can arrive out of order.** The implementation
-  records object and batch state to make retries safe, but source publishers
-  must avoid simultaneous, conflicting updates to the same logical data set.
-- **Neither invocation mode is FIFO.** Separate Sync events can run
-  concurrently, and Detached workers are independent. Upload or submission
-  order does not guarantee start or completion order. A delete-before-create
-  dependency must wait for the delete transaction to reach `SUCCESS`, or use a
-  durable queue and persisted sequence gate with one active worker per key.
-- **The target table is a pre-approved contract.** It must already exist with
-  compatible columns, `LIST` partitioning by the loader batch column, and that
-  column included in each unique key. The Function does not infer or create
-  arbitrary business-table schemas.
-
-## UI
-
-The Flask UI is deliberately separate from the Function deployment:
-
-```sh
-cd ui
-python3.13 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-export FLASK_SECRET_KEY='set-a-local-random-value'
-flask --app myapp.app run --host 127.0.0.1 --port 8080
-```
-
-Use **Resource Mappings** to register a target. Use **Event TX** to review
-per-table transactions and raw Object Storage events. Database passwords remain
-only in the UI's server-side active connection state.
-
-### Event TX views
-
-- **Object Storage Event** adds a lifecycle column to raw OCI events:
-  `SUCCESS` is green, `ERROR` is red, and `RECEIVED` is blue. A red
-  **ERROR · View log** link opens and highlights the corresponding
-  `event_errors` record. Each event also captures `received_at`, `completed_at`,
-  and `duration_ms`; the UI renders duration in seconds. Historical entries
-  are backfilled when their transaction record is known.
-- **Registered Table** server-pages transaction history (10 rows by default;
-  change **Show** and select **Refresh**). Its toolbar keeps Refresh on the
-  left and a single CSV-download icon on the right.
-- The **Browse rows** button beside **Target table** opens a paged dialog of
-  the selected target table's visible rows. It has a tooltip and fetches only
-  the requested page, so large target tables are not loaded into the browser
-  or application at once.
-- **Staging tables** are shown below the target selector. Individual cleanup
-  buttons and **Clean all** are available for residual UUID-suffixed staging
-  tables. **Clean all** displays the table list and requires confirmation.
-  Cleanup is blocked only while a batch has been `LOADING` within the last ten
-  minutes; stale leases can be cleaned after processing has been verified
-  stopped.
-
-### Deploy the UI with HTTPS
-
-On Oracle Linux, `deploy/deploy_ui.sh` builds the UI container, creates a
-systemd service, binds the container only to `127.0.0.1`, and creates an nginx
-HTTPS reverse proxy on port 443. It does not expose the Flask port directly.
-
-```sh
-cd deploy
-# env.sh must be mode 0600 and include FLASK_SECRET_KEY plus TLS settings.
-./deploy_ui.sh
-```
-
-Set `TLS_CERT_FILE` and `TLS_KEY_FILE` in `env.sh` to existing CA-signed
-material. For a non-production test only, set `GENERATE_SELF_SIGNED_CERT=true`.
-The script enables the host firewall's HTTPS service; also allow inbound
-TCP/443 in the Compute instance's OCI NSG or security list. The generated UI
-runtime environment and any generated TLS files remain untracked.
-
-## Deploy the OCI Function
-
-On an Oracle Linux deployment host with an OCI instance principal:
+On an Oracle Linux deployment host configured with an OCI instance principal:
 
 ```sh
 cd deploy
 ./bootstrap.sh
 cp env.sh.example env.sh
 chmod 600 env.sh
-# Edit env.sh locally. Do not commit it.
+# Set OCI, database, Function, rule, logging, HTTPS, and UI values in env.sh.
 ./deploy.sh
+./deploy_ui.sh
 ```
 
-`deploy.sh` creates or updates the Function application, deploys the container,
-sets its protected Function configuration, and creates or updates the Object
-Storage Events rule. It expects the Functions application subnet to reach the
-MySQL endpoint and the Object Storage service.
+`deploy.sh` builds and deploys the Function, discovers its OCID and invoke
+endpoint, applies Function timeouts/capacity, and creates or updates the base
+Object Storage rule. `deploy_ui.sh` deploys the Flask container behind nginx
+HTTPS and discovers the same OCI resources for live rule and Function
+management. Keep `deploy/env.sh`, database passwords, OCIR tokens, TLS private
+keys, and Flask secrets out of Git.
 
-The required `env.sh` variables are the OCI compartment/subnet/application
-details, OCIR credentials, and `DB_HOST`, `DB_USER`, and `DB_PASSWORD`. Optional
-`BATCH_ROWS` and `WRITER_WORKERS` control the loader. The deployed defaults are
-10,000 rows and four workers. Set
-`FUNCTION_MEMORY` and `FUNCTION_TIMEOUT` to override the Function manifest's
-default 1024 MB / 300 second capacity. CSV objects are streamed without a
-temporary file. `OBJECT_STORAGE_RANGE_BYTES` controls the bounded HTTP Range
-size, and `OBJECT_STORAGE_READ_TIMEOUT_SECONDS` controls the per-range timeout.
-Set
-`OBJECT_STORAGE_BUCKET_NAME` to limit the Events rule to a bucket.
-Set `OBJECT_STORAGE_OBJECT_NAME_PATTERN='myfolder/*.csv'` to additionally
-limit the rule to matching `data.resourceName` values under that virtual folder.
-OCI Events supports `*` in filter values; leave the setting blank to process
-all object names in the selected bucket.
+Before use, confirm:
 
-For mapping-driven Detached execution, set `DETACHED_ENABLED=true`. After
-deployment, `deploy.sh` discovers the Function OCID and invoke endpoint and
-injects them as `FUNCTION_ID` and `FUNCTION_INVOKE_ENDPOINT`; do not hard-code
-either value. The Function runtime dynamic group also needs permission to
-invoke the intended Function. Configure the actual detached execution limit on
-the Function resource, for example:
+- Object events are enabled on each source bucket.
+- The Events rule covers create, update, and delete and its bucket/object filter
+  matches exactly one mapping.
+- The Function resource principal can read source objects and can invoke the
+  Function for Detached processing.
+- The deployment/UI instance principal has the scoped Function, Events,
+  Logging, repository, and test-object permissions it needs.
+- The Function subnet can reach MySQL and the database account can use the
+  control schema plus approved target/staging objects.
 
-```sh
-oci fn function update \
-  --function-id "$FUNCTION_ID" \
-  --detached-mode-timeout-in-seconds 3600 \
-  --force
-```
+See [Deployment, configuration, IAM, and implementation details](docs/technical-details.md)
+for environment variables, policies, runtime flow, UI behavior, logging,
+troubleshooting, and validation commands.
 
-If that property is omitted, Detached execution uses the synchronous timeout.
+## Assumptions and limitations
 
-### Function invocation logs
+- One CSV file is one complete logical partition of a mapped table. Many files
+  may map to one table, but active files must not contain overlapping business
+  records.
+- Atomicity is limited to one file. Multiple object operations are not one
+  transaction and neither Sync nor Detached processing guarantees FIFO order.
+- Move records between files by completing removal from the source file before
+  adding them to the destination, or use an external sequenced publication
+  workflow.
+- Target tables must already satisfy the loader contract: compatible columns,
+  LIST partitioning by `batch_num`, and `batch_num` in every unique key.
+- Sync execution is limited to 300 seconds. Detached execution can be
+  configured up to 3,600 seconds, but it is still bounded; split very large
+  files into ordered, independently owned chunks or use a durable queue.
+- OCI Events is at-least-once and may retry or deliver conflicting operations
+  out of order. Publishers must avoid simultaneous updates to the same logical
+  data set.
+- A timeout can leave a staging table behind. The UI exposes confirmed cleanup,
+  while protecting a target that still has an active loading lease.
+- More worker threads help only while MySQL CPU, connection capacity, storage
+  throughput, and IOPS have headroom.
 
-Invocation logging is enabled by default when `ENABLE_FUNCTION_LOG='true'` and
-`FUNCTION_LOG_GROUP_ID` is set. During deployment, `deploy.sh` creates or
-reuses the application's OCI Functions `invoke` service log in that group.
-Set `FUNCTION_LOG_NAME` only when a custom log name is required. The log group
-and log identifiers belong in the protected `deploy/env.sh`, never in source
-control. On first creation, `deploy.sh` discovers the created log and writes
-`FUNCTION_LOG_ID` back to that protected file. Use `deploy/showlog.sh` to view
-recent invocations.
+## More information
 
-## OCI IAM policies: Function, Events, and Object Storage
-
-This deployment has three separate OCI principals. Do not give the Function the
-deployment VM's broad permissions, and do not use a human user's API key inside
-the Function.
-
-| Principal | Used for | Minimum scope |
-| --- | --- | --- |
-| Deployment Compute instance principal | Builds/pushes the image and creates the Function, Event Rule, and Function log | Function/repository/Event/Logging resources in the deployment compartment |
-| OCI Function resource principal | Streams the CSV and, for Detached mappings, self-invokes the Function | `read objects` for the source bucket plus scoped Function invocation permission |
-| OCI Events service | Delivers an already-matched event to the Function | No extra policy in the normal same-tenancy case |
-
-Replace every `<...>` value; policy examples deliberately use names/OCIDs rather
-than the protected values in `deploy/env.sh`.
-
-### 1. Deployment Compute instance principal
-
-Put the deployment VM in a dynamic group. Prefer an explicit instance OCID for
-a single deployment host; use a compartment rule only when every instance in
-that compartment is trusted to deploy this application.
-
-```text
-# Option A: one deployment VM
-instance.id = '<deployment-instance-ocid>'
-
-# Option B: deployment VMs in one compartment
-ALL {resource.type = 'instance', resource.compartment.id = '<deployment-compartment-ocid>'}
-```
-
-For that dynamic group, grant the deployment capabilities used by
-`deploy/deploy.sh` and `deploy/showlog.sh`:
-
-```text
-Allow dynamic-group <deployment-instance-dg> to read objectstorage-namespaces in tenancy
-Allow dynamic-group <deployment-instance-dg> to inspect repos in compartment <registry-compartment>
-Allow dynamic-group <deployment-instance-dg> to manage repos in compartment <registry-compartment>
-Allow dynamic-group <deployment-instance-dg> to manage functions-family in compartment <function-compartment>
-Allow dynamic-group <deployment-instance-dg> to use virtual-network-family in compartment <network-compartment>
-Allow dynamic-group <deployment-instance-dg> to manage cloudevents-rules in compartment <rule-compartment>
-Allow dynamic-group <deployment-instance-dg> to manage logging-family in compartment <logging-compartment>
-Allow dynamic-group <deployment-instance-dg> to read log-content in compartment <logging-compartment>
-```
-
-Use the same compartment for the placeholders when the repository, Function
-application, Event Rule, subnet, and log group are co-located. `manage repos`
-can be restricted further by repository name if the deployment identity also
-has the required `inspect repos` permission. If Function invocation logging is
-disabled, omit the final two Logging statements. `objectstorage-namespaces` is
-the sole tenancy-scoped statement: OCI exposes the tenancy namespace at tenancy
-scope, so `read objectstorage-namespaces in compartment ...` is not valid.
-
-### 2. OCI Function resource principal: read the CSV bucket
-
-The Function uses `get_resource_principals_signer()` to call Object Storage.
-Create a separate dynamic group for it. Scope it to the exact Function when
-possible; a compartment-wide rule is suitable only for a dedicated Functions
-compartment.
-
-```text
-# Preferred: one Function
-resource.id = '<function-ocid>'
-
-# Alternative: all Functions in a compartment
-ALL {resource.type = 'fnfunc', resource.compartment.id = '<function-compartment-ocid>'}
-```
-
-Grant read-only access to the source bucket. The loader only calls `GetObject`.
-
-```text
-Allow dynamic-group <object-loader-function-dg> to read objects in compartment <bucket-compartment> where all {target.bucket.name='<bucket-name>'}
-```
-
-If CSV files are received from multiple buckets, add one statement per bucket.
-Use `manage objects` only if a future Function revision must create, overwrite,
-or remove objects. OCI resource-principal policy and dynamic-group changes can
-take up to 15 minutes to be reflected in a running Function.
-
-### 3. Object Storage event emission and Event Rule
-
-The source bucket must have object events enabled; enabling a rule alone is not
-enough. A bucket administrator can enable it with:
-
-```sh
-oci os bucket update --name '<bucket-name>' --object-events-enabled true
-```
-
-`deploy/deploy.sh` creates an OCI Events rule with Function action and filters
-it using `OBJECT_STORAGE_BUCKET_NAME` and, optionally,
-`OBJECT_STORAGE_OBJECT_NAME_PATTERN` (for example `myfolder/*.csv`). Configure
-the rule for all required event types:
-
-```text
-com.oraclecloud.objectstorage.createobject
-com.oraclecloud.objectstorage.updateobject
-com.oraclecloud.objectstorage.deleteobject
-```
-
-The deployment script normalizes `REPOSITORY_PREFIX` to lowercase because OCI
-Container Registry rejects uppercase repository names. It also validates the
-prefix before creating the repository, so a copied environment file fails with
-an actionable message instead of a late OCI `NameInvalid` error.
-
-In the usual same-tenancy deployment, OCI Events can deliver a matched rule to
-the selected Function without a separate `eventrule` invocation policy. For a
-cross-tenancy action, create the required paired `endorse`/`admit` policy using
-the `FN_INVOCATION` permission; do not reuse the same-tenancy template.
-
-### 4. MySQL network and database access
-
-IAM does not replace database or network authorization. The Function subnet
-must be able to reach the MySQL host and port (typically TCP/3306), and the
-MySQL account needs access to the control database plus only the mapped target
-schemas. At minimum the loader needs `SELECT`, `INSERT`, `UPDATE`, `CREATE`,
-`ALTER`, and `DROP` where its staging/partition workflow requires them. Restrict
-the account by schema and network path; keep its password only in protected
-Function configuration (`deploy/env.sh`), never in Git or the UI.
-
-For OCI reference, see [Functions resource-principal access](https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionsaccessingociresources.htm), [Functions deployment policies](https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionscreatingpolicies.htm), [Events IAM policies](https://docs.oracle.com/en-us/iaas/Content/Events/Concepts/eventspolicy.htm), and [enabling bucket object events](https://docs.oracle.com/iaas/Content/Object/Tasks/managingbuckets_topic-To_enable_or_disable_emitting_events_for_object_state_changes.htm).
-
-## Local checks
-
-```sh
-python3.13 -m compileall function ui/myapp
-bash -n deploy/deploy.sh deploy/bootstrap.sh
-```
-
-No secrets, private keys, OCI auth tokens, generated reports, or UI runtime
-state are tracked by Git.
-
-## Blog
-
-- [From CSV in Object Storage to HeatWave: an operational ingestion design](blog/csv-ingestion-to-heatwave.md) — event-driven CSV ingestion, partition exchange, lifecycle handling, operations UI, and event tracking.
-- [Designing an operable CSV-to-HeatWave pipeline with OCI Functions](blog/technical-architecture-large-csv-heatwave.md) — diagram-rich technical architecture covering Sync and Detached execution, 300/3,600-second limits, diskless range streaming, worker and IOPS tuning, staging cleanup, audit and troubleshooting, UI operations, large-file choices, and cross-file ordering constraints.
+- [Technical deployment and operations guide](docs/technical-details.md)
+- [CSV-to-HeatWave ingestion design](blog/csv-ingestion-to-heatwave.md)
+- [Large-file technical architecture](blog/technical-architecture-large-csv-heatwave.md)
+- [Security assessment and remediation plan](reports/security_assessment_20260719.html)
+- [Performance reports](reports/)

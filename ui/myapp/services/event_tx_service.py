@@ -49,7 +49,7 @@ class EventTransactionService:
             cursor.execute(f"""SELECT tx.id, tx.mapping_id, tx.event_action, tx.event_status,
                 tx.target_database, tx.target_table, tx.bucket_name, tx.resource_name,
                 tx.message, tx.created_at, COALESCE(m.invocation_mode, 'SYNC') AS invocation_mode,
-                COALESCE(m.worker_threads, 4) AS worker_threads, COALESCE(m.timeout_seconds, 300) AS timeout_seconds
+                COALESCE(m.worker_threads, 4) AS worker_threads
                 FROM {control}.event_tx_log tx LEFT JOIN {control}.object_storage_mappings m ON m.id=tx.mapping_id
                 WHERE m.invocation_mode='DETACHED' ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""", (limit,))
             return cursor.fetchall()

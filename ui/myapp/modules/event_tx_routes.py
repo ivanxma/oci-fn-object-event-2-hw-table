@@ -111,7 +111,7 @@ def list_event_transactions():
         if selected_object_database and selected_object_database not in object_databases:
             raise ValueError("Select an available object_event table.")
         object_page = _page(request.args.get("object_page"))
-        object_page_size = 25
+        object_page_size = _limit(request.args.get("object_page_size"))
         if selected_object_database:
             object_event_columns, object_event_rows, object_event_total, object_event_sort, object_event_direction = service.object_event_page(
                 selected_object_database,
@@ -140,7 +140,7 @@ def list_event_transactions():
         registered_total, registered_page, registered_page_size, registered_page_count = 0, 1, 10, 1
         stage_tables, stage_cleanup_blocked = [], False
         object_event_tables, selected_object_database, object_event_columns, object_event_rows = [], "", [], []
-        object_event_total, object_event_sort, object_event_direction, object_page, object_page_size, object_event_page_count = 0, "", "desc", 1, 25, 1
+        object_event_total, object_event_sort, object_event_direction, object_page, object_page_size, object_event_page_count = 0, "", "desc", 1, 10, 1
     return render_dashboard(
         "event_transactions.html",
         active_page="event_tx",
@@ -230,7 +230,7 @@ def download_object_events():
                                 registered_total=0, registered_page=1, registered_page_size=10, registered_page_count=1,
                                 active_tab="object-events", object_event_tables=[], selected_object_database="",
                                 object_event_columns=[], object_event_rows=[], object_event_total=0, object_event_sort="",
-                                object_event_direction="desc", object_event_page=1, object_event_page_size=25,
+                                object_event_direction="desc", object_event_page=1, object_event_page_size=10,
                                 object_event_page_count=1)
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer)

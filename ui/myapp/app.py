@@ -28,6 +28,13 @@ def create_app(test_config: dict | None = None) -> Flask:
         SSH_KEY_FOLDER=os.environ.get("SSH_KEY_FOLDER", str(Path(app.instance_path) / "profile_ssh_keys")),
         MAX_CONTENT_LENGTH=25 * 1024 * 1024,
         CONTROL_DATABASE=os.environ.get("CONTROL_DATABASE", "fndb"),
+        OCI_FUNCTION_ID=os.environ.get("OCI_FUNCTION_ID", ""),
+        OCI_COMPARTMENT_ID=os.environ.get("OCI_COMPARTMENT_ID", ""),
+        OCI_REGION=os.environ.get("OCI_REGION", ""),
+        OCI_FUNCTION_CONFIGURATION_ENABLED=os.environ.get("OCI_FUNCTION_CONFIGURATION_ENABLED", "false").lower() in {"1", "true", "yes"},
+        OCI_EVENT_RULE_MANAGEMENT_ENABLED=os.environ.get("OCI_EVENT_RULE_MANAGEMENT_ENABLED", "false").lower() in {"1", "true", "yes"},
+        OCI_EVENT_RULE_PREFIX=os.environ.get("OCI_EVENT_RULE_PREFIX", "object-storage-heatwave"),
+        OCI_OBJECT_STORAGE_NAMESPACE=os.environ.get("OCI_OBJECT_STORAGE_NAMESPACE", ""),
     )
     if test_config:
         app.config.update(test_config)

@@ -12,7 +12,7 @@ set -a
 . "$ENV_FILE"
 set +a
 
-for command in podman sudo systemctl; do
+for command in oci podman sudo systemctl; do
   command -v "$command" >/dev/null || { echo "Missing $command." >&2; exit 1; }
 done
 [[ -n "${FLASK_SECRET_KEY:-}" ]] || { echo "FLASK_SECRET_KEY must be set in $ENV_FILE." >&2; exit 1; }
@@ -22,6 +22,9 @@ UI_CONTAINER_NAME="${UI_CONTAINER_NAME:-$UI_SERVICE_NAME}"
 UI_BIND_PORT="${UI_BIND_PORT:-8080}"
 UI_SERVER_NAME="${UI_SERVER_NAME:-_}"
 CONTROL_DATABASE="${CONTROL_DATABASE:-${DB_NAME:-fndb}}"
+OCI_FUNCTION_CONFIGURATION_ENABLED="${OCI_FUNCTION_CONFIGURATION_ENABLED:-${OCI_TIMEOUT_DEPLOY_ENABLED:-true}}"
+OCI_EVENT_RULE_MANAGEMENT_ENABLED="${OCI_EVENT_RULE_MANAGEMENT_ENABLED:-true}"
+OCI_EVENT_RULE_PREFIX="${OCI_EVENT_RULE_PREFIX:-${FUNCTION_NAME:-object-storage-heatwave}}"
 RUNTIME_ENV="$ROOT_DIR/ui/.ui-runtime.env"
 INSTANCE_DIR="$ROOT_DIR/ui/instance"
 SOURCE_TLS_CERT_FILE="${TLS_CERT_FILE:-}"
@@ -31,6 +34,20 @@ TLS_CERT_FILE="$DEPLOY_TLS_DIR/tls.crt"
 TLS_KEY_FILE="$DEPLOY_TLS_DIR/tls.key"
 CURRENT_USER=$(id -un)
 CURRENT_GROUP=$(id -gn)
+
+OCI_FUNCTION_ID=""
+if [[ "$OCI_FUNCTION_CONFIGURATION_ENABLED" == "true" || "$OCI_EVENT_RULE_MANAGEMENT_ENABLED" == "true" ]]; then
+  for value in COMPARTMENT_ID APP_NAME FUNCTION_NAME REGION; do
+    [[ -n "${!value:-}" ]] || { echo "$value is required when OCI Function or Events management is enabled." >&2; exit 1; }
+  done
+  OCI=(oci --auth instance_principal)
+  APP_ID=$("${OCI[@]}" fn application list --compartment-id "$COMPARTMENT_ID" --all \
+    --query "data[?\"display-name\"=='$APP_NAME'].id | [0]" --raw-output)
+  [[ -n "$APP_ID" && "$APP_ID" != null ]] || { echo "Function application $APP_NAME was not found." >&2; exit 1; }
+  OCI_FUNCTION_ID=$("${OCI[@]}" fn function list --application-id "$APP_ID" --all \
+    --query "data[?\"display-name\"=='$FUNCTION_NAME'].id | [0]" --raw-output)
+  [[ -n "$OCI_FUNCTION_ID" && "$OCI_FUNCTION_ID" != null ]] || { echo "Function $FUNCTION_NAME was not found in $APP_NAME." >&2; exit 1; }
+fi
 
 case "$UI_BIND_PORT" in
   ''|*[!0-9]*) echo "UI_BIND_PORT must be numeric." >&2; exit 1 ;;
@@ -60,8 +77,10 @@ sudo chmod 600 "$TLS_KEY_FILE"
 sudo chmod 644 "$TLS_CERT_FILE"
 
 # The UI keeps database credentials in its server-side session only.  The
-# deployment environment contributes only the Flask signing key and control DB.
-printf 'FLASK_SECRET_KEY=%s\nCONTROL_DATABASE=%s\nSESSION_COOKIE_SECURE=1\n' "$FLASK_SECRET_KEY" "$CONTROL_DATABASE" > "$RUNTIME_ENV"
+# deployment environment contributes the Flask signing key, control DB, and
+# non-secret OCI Function identity used for timeout reconciliation.
+printf 'FLASK_SECRET_KEY=%s\nCONTROL_DATABASE=%s\nSESSION_COOKIE_SECURE=1\nOCI_FUNCTION_CONFIGURATION_ENABLED=%s\nOCI_EVENT_RULE_MANAGEMENT_ENABLED=%s\nOCI_EVENT_RULE_PREFIX=%s\nOCI_FUNCTION_ID=%s\nOCI_COMPARTMENT_ID=%s\nOCI_REGION=%s\nOCI_OBJECT_STORAGE_NAMESPACE=%s\n' \
+  "$FLASK_SECRET_KEY" "$CONTROL_DATABASE" "$OCI_FUNCTION_CONFIGURATION_ENABLED" "$OCI_EVENT_RULE_MANAGEMENT_ENABLED" "$OCI_EVENT_RULE_PREFIX" "$OCI_FUNCTION_ID" "${COMPARTMENT_ID:-}" "${REGION:-}" "${OBJECT_STORAGE_NAMESPACE:-}" > "$RUNTIME_ENV"
 chmod 600 "$RUNTIME_ENV"
 
 # A system service uses the system Podman store/runtime rather than a user's

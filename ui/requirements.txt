@@ -2,3 +2,4 @@ Flask>=3.0,<4
 mysql-connector-python>=9.7,<10
 sshtunnel>=0.4,<1
 paramiko>=3.4,<4
+oci>=2.156,<3

@@ -43,7 +43,7 @@ The Resource Mapping is the runtime contract. It associates a compartment, bucke
 | --- | --- |
 | `invocation_mode` | Selects `SYNC` or `DETACHED` dynamically. |
 | `worker_threads` | Selects the number of concurrent MySQL writers for that mapping. |
-| `timeout_seconds` | Records the intended processing budget for operations and the UI. It does not, by itself, change the OCI Function resource timeout. |
+| `timeout_seconds` | Records the per-mapping processing budget. The UI reconciles the maximum required Sync and Detached values to the global OCI Function timeout properties. |
 | `resource_name_pattern` | Limits the mapping to the intended Object Storage prefix and filename pattern. |
 | `target_database`, `target_table` | Defines the governed MySQL destination. |
 
@@ -261,12 +261,12 @@ sequenceDiagram
 
 Oracle currently supports a Detached invocation timeout from 5 to 3,600 seconds. If `detachedModeTimeoutInSeconds` is not configured on the Function resource, Detached mode falls back to the synchronous `timeoutInSeconds` value. See [Changing Default Memory and Timeout Settings](https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionscustomizing.htm) and [Invoking Functions](https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionsinvokingfunctions.htm).
 
-This distinction matters in the current deployment:
+This distinction is handled explicitly by the deployment and UI:
 
-- `DETACHED_TIMEOUT_SECONDS=3600` is injected as application configuration;
-- the UI records timeout metadata up to 3,600 seconds;
-- neither setting changes the OCI Function resource by itself;
-- deployment must also set `detachedModeTimeoutInSeconds`.
+- `deploy.sh` applies `FUNCTION_TIMEOUT` to `timeoutInSeconds` and `DETACHED_TIMEOUT_SECONDS` to `detachedModeTimeoutInSeconds`;
+- `deploy_ui.sh` discovers the Function OCID and supplies it to the protected UI runtime;
+- mapping saves compute the maximum timeout required by all mappings in each mode;
+- the UI uses the deployment Compute instance principal to update the Function resource.
 
 For example, after resolving the Function OCID:
 
@@ -537,7 +537,7 @@ From an operator's perspective, the ideal flow is:
 7. inspect residual staging tables and clean them only when processing is terminal;
 8. use the Detached Processes view for long-running work and correlate it with the original event.
 
-The UI should never imply that a mapping's `timeout_seconds` value changed the OCI Function resource. Display both the requested mapping budget and the effective Function Sync and Detached timeout properties so operators can detect configuration drift.
+The UI should distinguish the per-mapping budget from the Function-level maximum. Saving a mapping deploys the maximum required Sync and Detached values across all mappings, and reports a detailed error if OCI reconciliation fails.
 
 ## Recommended production evolution
 

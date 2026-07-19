@@ -7,6 +7,7 @@ dependencies = [
   "mysql-connector-python>=9.7,<10",
   "sshtunnel>=0.4,<1",
   "paramiko>=3.4,<4",
+  "oci>=2.156,<3",
 ]
 
 [tool.pytest.ini_options]

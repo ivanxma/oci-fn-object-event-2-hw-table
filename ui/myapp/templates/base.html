@@ -35,19 +35,20 @@
   </main>
   <script>
   (() => {
-    const icon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3"/></svg>';
-    const resetIcon = '↺';
+    const downloadIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3"/></svg>';
+    const resetIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V4m0 0h4M4 4l4 4a7 7 0 1 1-1.5 10.5"/></svg>';
     const dialog = document.getElementById('table-value-dialog') || (() => {
       const element = document.createElement('dialog');
       element.id = 'table-value-dialog'; element.className = 'value-dialog';
       element.innerHTML = '<form method="dialog"><div class="value-dialog-heading"><h2 id="table-value-title">Table value</h2><button class="secondary-button compact icon-button" type="submit" aria-label="Close value dialog" title="Close">×</button></div><pre id="table-value-content"></pre></form>';
       document.body.append(element); return element;
     })();
-    const showValue = (cell, column) => {
+    const showValue = (value, column) => {
       document.getElementById('table-value-title').textContent = column || 'Table value';
-      document.getElementById('table-value-content').textContent = cell.innerText;
+      document.getElementById('table-value-content').textContent = value == null ? '' : String(value);
       dialog.showModal();
     };
+    window.tableValueDialog = { show: showValue };
     const csvValue = (value) => (/^[=+\-@]/.test(value) ? `'${value}` : value);
     const downloadTable = (table) => {
       const rows = [...table.rows].map((row) => [...row.cells].map((cell) => `"${csvValue((cell.innerText || '').replaceAll('"', '""'))}"`).join(',')).join('\r\n');
@@ -110,22 +111,46 @@
       [...table.tBodies].forEach((body) => body.addEventListener('click', (event) => {
         const cell = event.target.closest('td');
         if (!cell || event.target.closest('a,button,input,select,textarea,label,form')) return;
-        showValue(cell, table.tHead.rows[0].cells[cell.cellIndex]?.innerText.replace(/[▲▼]/g, '').trim());
+        showValue(cell.dataset.value ?? cell.innerText, cell.dataset.column || table.tHead.rows[0].cells[cell.cellIndex]?.innerText.replace(/[▲▼]/g, '').trim());
       }));
       [...table.tBodies].forEach((body) => body.addEventListener('keydown', (event) => {
         const cell = event.target.closest('td');
-        if (cell && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); showValue(cell, table.tHead.rows[0].cells[cell.cellIndex]?.innerText.replace(/[▲▼]/g, '').trim()); }
+        if (cell && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); showValue(cell.dataset.value ?? cell.innerText, cell.dataset.column || table.tHead.rows[0].cells[cell.cellIndex]?.innerText.replace(/[▲▼]/g, '').trim()); }
       }));
       [...table.tBodies].flatMap((body) => [...body.rows]).forEach((row) => [...row.cells].forEach((cell) => { if (!cell.querySelector('a,button,input,select,textarea,label,form')) { cell.tabIndex = 0; cell.classList.add('table-value-cell'); cell.title = 'Click to view full value'; } }));
       applyLayout(table);
       const wrap = table.closest('.table-wrap');
-      const toolbarIcons = wrap?.closest('.table-page-view')?.querySelector('.table-toolbar-icons');
-      if (wrap && table.dataset.managedTableTools !== 'true' && !(toolbarIcons || wrap.previousElementSibling)?.classList.contains('table-grid-actions')) {
+      const editableForm = table.closest('form:not(.table-page-view)');
+      let toolbar = wrap?.closest('.table-page-view')?.querySelector(':scope > .table-page-toolbar');
+      if (wrap && !editableForm && !toolbar) {
+        toolbar = document.createElement('div'); toolbar.className = 'table-page-toolbar'; wrap.before(toolbar);
+      }
+      let toolbarIcons = toolbar?.querySelector('.table-toolbar-icons');
+      if (toolbar && !toolbarIcons) { toolbarIcons = document.createElement('div'); toolbarIcons.className = 'table-toolbar-icons'; toolbar.append(toolbarIcons); }
+      if (toolbar && !editableForm && !toolbar.querySelector('.server-table-controls,.client-table-controls')) {
+        let left = toolbar.querySelector('.table-toolbar-left');
+        if (!left) {
+          left = document.createElement('div'); left.className = 'table-toolbar-left';
+          [...toolbar.children].filter((child) => child !== toolbarIcons).forEach((child) => left.append(child));
+          toolbar.prepend(left);
+        }
+        const controls = document.createElement('div'); controls.className = 'client-table-controls';
+        controls.innerHTML = '<label>Show <input type="number" min="1" max="500" value="10" aria-label="Rows to show"></label><button class="secondary-button compact" type="button">Refresh</button>';
+        const input = controls.querySelector('input');
+        const applyLimit = () => {
+          const maximum = Math.min(500, Math.max(1, Number.parseInt(input.value, 10) || 10)); input.value = String(maximum);
+          [...table.tBodies].flatMap((body) => [...body.rows]).forEach((row, rowIndex) => { row.hidden = rowIndex >= maximum; });
+        };
+        input.addEventListener('change', applyLimit);
+        controls.querySelector('button').addEventListener('click', () => window.location.reload());
+        left.append(controls); applyLimit();
+      }
+      if (wrap && table.dataset.managedTableTools !== 'true' && toolbarIcons && !toolbarIcons.querySelector('.table-grid-actions')) {
         const actions = document.createElement('div'); actions.className = 'table-grid-actions';
-        actions.innerHTML = `<button class="secondary-button compact icon-button" type="button" title="Reset column layout" aria-label="Reset column layout">${resetIcon}</button><button class="secondary-button compact icon-button" type="button" title="Download CSV" aria-label="Download CSV">${icon}</button>`;
+        actions.innerHTML = `<button class="secondary-button compact icon-button" type="button" title="Reset column layout" aria-label="Reset column layout">${resetIcon}</button><button class="secondary-button compact icon-button" type="button" title="Download CSV" aria-label="Download CSV">${downloadIcon}</button>`;
         actions.querySelectorAll('button')[0].addEventListener('click', () => { localStorage.removeItem(table.dataset.layoutKey); window.location.reload(); });
         actions.querySelectorAll('button')[1].addEventListener('click', () => downloadTable(table));
-        if (toolbarIcons) toolbarIcons.append(actions); else wrap.before(actions);
+        toolbarIcons.append(actions);
       }
     });
   })();

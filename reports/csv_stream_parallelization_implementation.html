@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diskless parallel CSV streaming implementation</title>
+  <style>
+    :root { --ink:#172b3a; --muted:#526778; --line:#d7e0e5; --blue:#eaf3fb; --green:#eaf7ef; --amber:#fff5df; }
+    body { margin:0; background:#f7fafc; color:var(--ink); font:16px/1.55 system-ui,-apple-system,sans-serif; }
+    main { max-width:1100px; margin:0 auto; padding:36px 24px 64px; background:white; }
+    h1 { margin-top:0; font-size:2.1rem; line-height:1.15; }
+    h2 { margin-top:2.1rem; border-bottom:2px solid var(--line); padding-bottom:6px; }
+    h3 { margin-top:1.5rem; }
+    p, li { max-width:92ch; }
+    .lede { color:var(--muted); font-size:1.08rem; }
+    .callout { border-left:5px solid #3978a9; background:var(--blue); padding:14px 18px; margin:20px 0; }
+    .warning { border-left-color:#c58a16; background:var(--amber); }
+    .success { border-left-color:#2c8650; background:var(--green); }
+    .flow { display:flex; flex-wrap:wrap; align-items:stretch; gap:10px; margin:18px 0; }
+    .step { flex:1 1 150px; min-width:140px; border:1px solid #b9cbd8; border-radius:8px; padding:13px; background:var(--blue); }
+    .step strong { display:block; color:#1d5a87; }
+    .arrow { align-self:center; font-size:1.5rem; color:#6c8495; }
+    table { border-collapse:collapse; width:100%; margin:12px 0 20px; }
+    th,td { border:1px solid var(--line); padding:9px 10px; vertical-align:top; text-align:left; }
+    th { background:#edf3f6; }
+    code { background:#f0f3f5; border-radius:3px; padding:1px 4px; }
+    pre { overflow:auto; background:#172b3a; color:#eff7fb; border-radius:7px; padding:15px; line-height:1.4; }
+    .small { color:var(--muted); font-size:.92rem; }
+    footer { border-top:1px solid var(--line); color:var(--muted); margin-top:36px; padding-top:14px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Parallel CSV streaming without temporary files</h1>
+  <p class="lede">Implementation report for the OCI Object Storage → OCI Function → MySQL HeatWave partition-loader path. The design imports large CSV objects without copying them to <code>/tmp</code>, while database writes proceed concurrently with CSV parsing.</p>
+
+  <div class="callout success"><strong>Implemented outcome.</strong> The Function uses one sequential CSV reader, a bounded queue of row batches, and multiple MySQL writer workers. Object Storage is read through 32 MiB HTTP Range requests, so a single response cannot expire during a long import. The 500 MB validation run loaded 4,536,966 rows successfully and used no temporary CSV file.</div>
+
+  <h2>1. Why a single download fails for large objects</h2>
+  <p>A long-lived Object Storage response is not a durable local file. The loader must also pause while MySQL commits batches. In the measured environment, a single 500 MB response closed at approximately 120 seconds and surfaced as <code>I/O operation on closed file</code>. Writing the object first avoids that lifetime, but consumes Function filesystem space and adds a second full I/O pass.</p>
+  <p>The implementation therefore uses HTTP byte ranges. It performs a small <code>HEAD</code> request to obtain <code>Content-Length</code>, then opens independent <code>GET</code> requests such as <code>bytes=0-33554431</code>, <code>bytes=33554432-67108863</code>, and so on. Only the active range and the CSV decoder buffer are resident in memory.</p>
+
+  <h2>2. End-to-end flow</h2>
+  <div class="flow" aria-label="Import flow">
+    <div class="step"><strong>1. Event Rule</strong>Object Storage create/update event invokes the Function.</div>
+    <div class="arrow">→</div>
+    <div class="step"><strong>2. Control lease</strong>Resolve mapping and allocate or recover one target batch partition.</div>
+    <div class="arrow">→</div>
+    <div class="step"><strong>3. Range reader</strong>HEAD object, then fetch bounded byte ranges sequentially.</div>
+    <div class="arrow">→</div>
+    <div class="step"><strong>4. CSV reader</strong>Decode rows and validate headers without creating a file.</div>
+    <div class="arrow">→</div>
+    <div class="step"><strong>5. Writer pool</strong>Insert independent row batches into one staging table.</div>
+    <div class="arrow">→</div>
+    <div class="step"><strong>6. One switch</strong>Validate and exchange the staging table with the target partition.</div>
+  </div>
+
+  <h2>3. Implementation components</h2>
+  <table>
+    <tr><th>Component</th><th>Responsibility</th><th>Important property</th></tr>
+    <tr><td><code>ObjectStorageRangeStream</code></td><td>Implements a readable, non-seekable stream over sequential Object Storage ranges.</td><td>At most one range response is open; range size is configurable.</td></tr>
+    <tr><td><code>io.BufferedReader</code> + <code>io.TextIOWrapper</code></td><td>Coalesces byte reads and decodes UTF-8 CSV text for <code>csv.DictReader</code>.</td><td>Decoder state is preserved across range boundaries, including a quoted field split between ranges.</td></tr>
+    <tr><td><code>csv_batches</code></td><td>Validates headers and yields lists of normalized row tuples.</td><td>It accepts either a local <code>Path</code> for offline tests or a live text stream in the Function.</td></tr>
+    <tr><td><code>load_csv_parallel</code></td><td>Submits row batches to a <code>ThreadPoolExecutor</code>.</td><td>The reader remains single and ordered; MySQL inserts are parallel.</td></tr>
+    <tr><td><code>insert_batch</code></td><td>Opens a Connector/Python connection and runs one <code>executemany</code> transaction against the staging table.</td><td>Workers do not share MySQL connections or cursors.</td></tr>
+    <tr><td><code>validate_and_exchange</code></td><td>Checks the invisible <code>batch_num</code>, then exchanges the staging table into the target partition.</td><td>Users see either the old partition or the complete new batch.</td></tr>
+  </table>
+
+  <h2>4. Bounded producer/consumer behavior</h2>
+  <p>The main Function thread is the producer. It reads and parses CSV rows, creates a batch of <code>BATCH_ROWS</code>, and submits that batch to a worker. The producer never submits without limit: when pending work reaches <code>WRITER_WORKERS × 2</code>, it waits for at least one completed future before reading more.</p>
+  <pre><code>pending = set()
+for rows in csv_batches(stream, columns, batch_rows):
+    pending.add(executor.submit(insert_batch, ..., rows))
+    if len(pending) &gt;= workers * 2:
+        done, pending = wait(pending, FIRST_COMPLETED)
+        inserted += sum(job.result() for job in done)
+
+for job in pending:
+    inserted += job.result()</code></pre>
+  <p>This is deliberate back-pressure. It prevents the parser from materializing the entire object as Python lists and bounds memory approximately to the active range, CSV decoder buffer, and at most eight row batches with the default four workers.</p>
+
+  <h2>5. Why the reader is not split across CSV workers</h2>
+  <p>Splitting a CSV at arbitrary byte offsets is unsafe: a range can begin inside a quoted field or a multi-byte UTF-8 character. The safe design has one ordered decoder and parallelizes the expensive database operation. HTTP ranges solve response lifetime, not CSV record framing; the text decoder is intentionally kept above the range layer.</p>
+  <p>If independent CSV readers are ever required, a separate indexing phase must find record-safe newline boundaries while honoring CSV quoting. That would add complexity and another pass, so it is not used by this implementation.</p>
+
+  <h2>6. Transaction and failure semantics</h2>
+  <ol>
+    <li>Each worker commits only to the unique staging table for the leased batch.</li>
+    <li>A worker exception propagates through <code>Future.result()</code>; the loader marks the source batch <code>ERROR</code>.</li>
+    <li>The Function drops the staging table in <code>finally</code>, while the UI can expose any residual table for manual cleanup.</li>
+    <li>Only after every worker succeeds does the Function validate and perform one partition exchange.</li>
+    <li>Successful completion marks the source batch <code>ACTIVE</code> and writes one success transaction event.</li>
+  </ol>
+  <div class="callout warning"><strong>Important boundary.</strong> Parallel inserts are not one transaction across workers. Atomicity is provided by the final partition exchange. A failed load never exchanges a partial staging table into the target.</div>
+
+  <h2>7. Configuration and tuning</h2>
+  <table>
+    <tr><th>Setting</th><th>Current default</th><th>Effect</th></tr>
+    <tr><td><code>OBJECT_STORAGE_RANGE_BYTES</code></td><td>33,554,432 (32 MiB)</td><td>Maximum bytes per HTTP Range response. Smaller values reduce response lifetime and memory; larger values reduce request count.</td></tr>
+    <tr><td><code>BATCH_ROWS</code></td><td>10,000</td><td>Rows per <code>executemany</code> call. Larger values reduce commit overhead but increase per-batch memory and rollback work.</td></tr>
+    <tr><td><code>WRITER_WORKERS</code></td><td>4</td><td>Concurrent MySQL connections. Increase only when HeatWave/MySQL CPU, connection limits, and staging-table write throughput support it.</td></tr>
+    <tr><td><code>OBJECT_STORAGE_READ_TIMEOUT_SECONDS</code></td><td>300</td><td>Per-range SDK read timeout. It does not replace Range reads; it protects an individual range request.</td></tr>
+    <tr><td><code>FUNCTION_MEMORY</code></td><td>2,048 MB in the test deployment</td><td>Controls decoder, bounded buffers, worker overhead, and SDK memory headroom. No 500 MB file-sized disk allocation is required.</td></tr>
+  </table>
+
+  <h2>8. Observability and validation</h2>
+  <ul>
+    <li>Record the Object Storage upload start and completion timestamps.</li>
+    <li>Record Event Rule delivery and Function start/end timestamps from invocation logs.</li>
+    <li>Use <code>event_tx_log</code> for action, status, batch number, row count, and error message.</li>
+    <li>Use <code>source_object_batches</code> to confirm <code>LOADING → ACTIVE</code> or <code>LOADING → ERROR</code>.</li>
+    <li>Check the target partition row count after exchange and verify no unexpected staging tables remain.</li>
+  </ul>
+  <p class="small">Reference implementation: <code>function/func.py</code> (<code>ObjectStorageRangeStream</code>) and <code>function/partition_loader.py</code> (<code>csv_batches</code>, <code>load_csv_parallel</code>, <code>insert_batch</code>).</p>
+
+  <footer>Generated for the OCI Object Storage event-to-HeatWave implementation. The report describes the deployed diskless range-stream and bounded parallel-writer design.</footer>
+</main>
+</body>
+</html>

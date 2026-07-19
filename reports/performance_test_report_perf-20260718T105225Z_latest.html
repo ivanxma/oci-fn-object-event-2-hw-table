@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Performance results</title>
+<style>
+  body { font: 15px system-ui; margin: 32px; color: #172b3a; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border: 1px solid #d7e0e5; padding: 10px; text-align: left; }
+  th { background: #edf3f6; }
+  .ok { color: #176440; font-weight: bold; }
+</style>
+<h1>Performance test — perf-20260718T105225Z</h1>
+<table>
+  <tr><th>Case</th><th>Bytes</th><th>Upload</th><th>Upload-complete</th><th>Terminal event</th><th>Latency</th><th>Result</th></tr>
+  <tr><td>10 KB create</td><td>10,736</td><td>1.358 s</td><td>10:52:56.640Z</td><td>10:53:02Z</td><td>~5.36 s</td><td class="ok">SUCCESS; 100 rows</td></tr>
+  <tr><td>1 MB create</td><td>1,048,661</td><td>1.011 s</td><td>10:56:18.181Z</td><td>10:56:32Z</td><td>~13.82 s</td><td class="ok">SUCCESS; 9,447 rows</td></tr>
+  <tr><td>10 MB create</td><td>10,485,764</td><td>1.226 s</td><td>10:59:34.109Z</td><td>10:59:49Z</td><td>~14.89 s</td><td class="ok">SUCCESS; 91,980 rows</td></tr>
+  <tr><td>100 MB create</td><td>104,857,619</td><td>2.093 s</td><td>11:01:49.531Z</td><td>11:02:31Z</td><td>~41.47 s</td><td class="ok">SUCCESS; 911,805 rows</td></tr>
+  <tr><td>250 MB create</td><td>262,144,039</td><td>3.727 s</td><td>11:04:13.287Z</td><td>11:05:54Z</td><td>~100.71 s</td><td class="ok">SUCCESS; 2,279,513 rows</td></tr>
+  <tr><td>500 MB update; 32 MiB range reader</td><td>524,288,100</td><td>7.000 s</td><td>18:15:16Z</td><td>18:17:35Z</td><td>138.07 s</td><td class="ok">SUCCESS; 4,536,966 rows; Function 123.349 s</td></tr>
+</table>
+<p>Latency = terminal event transaction time minus Object Storage upload-complete time. The 500 MB result includes Event Rule delivery before the Function began at 18:15:31.718Z.</p>
+<p>The Function read the 500 MB object through sixteen independent 32 MiB HTTP Range responses. This keeps only bounded stream buffers in memory and creates no CSV file on the Function filesystem.</p>

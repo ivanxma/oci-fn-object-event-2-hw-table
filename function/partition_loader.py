@@ -114,8 +114,8 @@ def ensure_control_tables(db: Database) -> None:
         # Mapping metadata is owned by the UI, but the Function upgrades older
         # control schemas so runtime resolution remains backward compatible.
         mapping_table = control_table('object_storage_mappings')
-        cursor.execute(f"CREATE TABLE IF NOT EXISTS {mapping_table} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, compartment_name VARCHAR(255) NOT NULL, bucket_name VARCHAR(255) NOT NULL, resource_name_pattern VARCHAR(1024) NOT NULL, target_database VARCHAR(64) NOT NULL, target_table VARCHAR(64) NOT NULL, invocation_mode ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC', worker_threads SMALLINT UNSIGNED NOT NULL DEFAULT 4, timeout_seconds INT UNSIGNED NOT NULL DEFAULT 300, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
-        for column, definition in (("invocation_mode", "ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC'"), ("worker_threads", "SMALLINT UNSIGNED NOT NULL DEFAULT 4"), ("timeout_seconds", "INT UNSIGNED NOT NULL DEFAULT 300")):
+        cursor.execute(f"CREATE TABLE IF NOT EXISTS {mapping_table} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, compartment_name VARCHAR(255) NOT NULL, bucket_name VARCHAR(255) NOT NULL, resource_name_pattern VARCHAR(1024) NOT NULL, target_database VARCHAR(64) NOT NULL, target_table VARCHAR(64) NOT NULL, invocation_mode ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC', worker_threads SMALLINT UNSIGNED NOT NULL DEFAULT 4, event_rule_id VARCHAR(255) NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        for column, definition in (("invocation_mode", "ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC'"), ("worker_threads", "SMALLINT UNSIGNED NOT NULL DEFAULT 4"), ("event_rule_id", "VARCHAR(255) NULL")):
             cursor.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=%s AND table_name='object_storage_mappings' AND column_name=%s", (control_database(), column))
             if not cursor.fetchone()[0]:
                 cursor.execute(f"ALTER TABLE {mapping_table} ADD COLUMN {quote_identifier(column, 'mapping column')} {definition}")
@@ -193,8 +193,7 @@ def resolve_mapping(db: Database, source: dict[str, str]) -> dict[str, Any]:
         cursor.execute(
             f"""SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table,
                       COALESCE(invocation_mode, 'SYNC') AS invocation_mode,
-                      COALESCE(worker_threads, 4) AS worker_threads,
-                      COALESCE(timeout_seconds, 300) AS timeout_seconds
+                      COALESCE(worker_threads, 4) AS worker_threads
                FROM {control_table('object_storage_mappings')}
                WHERE compartment_name = %s AND bucket_name = %s""",
             (source["compartment_name"], source["bucket_name"]),

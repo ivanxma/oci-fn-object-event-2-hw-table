@@ -33,15 +33,23 @@ class MappingService:
     @staticmethod
     def normalize(form: dict[str, Any]) -> dict[str, str]:
         """Validate browser input before it is used in a parameterized statement."""
+        mode = (form.get("invocation_mode") or "SYNC").strip().upper()
+        if mode not in {"SYNC", "DETACHED"}:
+            raise ValueError("Invocation mode must be SYNC or DETACHED.")
+        try:
+            workers = int(form.get("worker_threads") or 4)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Worker threads must be a whole number from 1 to 64.") from error
+        if not 1 <= workers <= 64:
+            raise ValueError("Worker threads must be from 1 to 64.")
         return {
             "compartment_name": _required_text(form.get("compartment_name"), "Compartment name", 255),
             "bucket_name": _required_text(form.get("bucket_name"), "Bucket name", 255),
             "resource_name_pattern": _required_text(form.get("resource_name_pattern"), "Resource name pattern", 1024),
             "target_database": validate_identifier((form.get("target_database") or "").strip(), "target database"),
             "target_table": validate_identifier((form.get("target_table") or "").strip().lstrip("."), "target table"),
-            "invocation_mode": (form.get("invocation_mode") or "SYNC").strip().upper() if (form.get("invocation_mode") or "SYNC").strip().upper() in {"SYNC", "DETACHED"} else (_ for _ in ()).throw(ValueError("Invocation mode must be SYNC or DETACHED.")),
-            "worker_threads": str(max(1, min(64, int(form.get("worker_threads") or 4)))),
-            "timeout_seconds": str(max(1, min(3600, int(form.get("timeout_seconds") or 300)))),
+            "invocation_mode": mode,
+            "worker_threads": str(workers),
         }
 
     def _ensure_schema(self, cursor) -> None:
@@ -58,12 +66,16 @@ class MappingService:
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 invocation_mode ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC',
                 worker_threads SMALLINT UNSIGNED NOT NULL DEFAULT 4,
-                timeout_seconds INT UNSIGNED NOT NULL DEFAULT 300,
+                event_rule_id VARCHAR(255) NULL,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 PRIMARY KEY (id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
         )
-        for column, definition in (("invocation_mode", "ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC'"), ("worker_threads", "SMALLINT UNSIGNED NOT NULL DEFAULT 4"), ("timeout_seconds", "INT UNSIGNED NOT NULL DEFAULT 300")):
+        for column, definition in (
+            ("invocation_mode", "ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC'"),
+            ("worker_threads", "SMALLINT UNSIGNED NOT NULL DEFAULT 4"),
+            ("event_rule_id", "VARCHAR(255) NULL"),
+        ):
             cursor.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=%s AND table_name=%s AND column_name=%s", (database, MAPPING_TABLE, column))
             row = cursor.fetchone()
             count = row[0] if isinstance(row, tuple) else (next(iter(row.values())) if row else 0)
@@ -75,7 +87,7 @@ class MappingService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             self._ensure_schema(cursor)
             cursor.execute(
-                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, timeout_seconds "
+                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, event_rule_id "
                 f"FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} ORDER BY compartment_name, bucket_name, resource_name_pattern"
             )
             return cursor.fetchall()
@@ -101,21 +113,33 @@ class MappingService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             self._ensure_schema(cursor)
             cursor.execute(
-                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, timeout_seconds "
+                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, event_rule_id "
                 f"FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} WHERE id = %s",
                 (mapping_id,),
             )
             return cursor.fetchone()
 
-    def add_mapping(self, values: dict[str, str]) -> None:
+    def get_mapping_by_rule_id(self, rule_id: str) -> dict[str, Any] | None:
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor(dictionary=True, buffered=True)
+            self._ensure_schema(cursor)
+            cursor.execute(
+                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, event_rule_id "
+                f"FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} WHERE event_rule_id = %s LIMIT 1",
+                (rule_id,),
+            )
+            return cursor.fetchone()
+
+    def add_mapping(self, values: dict[str, str]) -> int:
         with self.mysql.connection() as conn:
             cursor = conn.cursor()
             self._ensure_schema(cursor)
             cursor.execute(
                 f"INSERT INTO {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} "
-                "(compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, timeout_seconds) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads", "timeout_seconds")),
+                "(compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads")),
             )
+            return int(cursor.lastrowid)
 
     def update_mapping(self, mapping_id: int, values: dict[str, str]) -> bool:
         with self.mysql.connection() as conn:
@@ -129,8 +153,8 @@ class MappingService:
                 return False
             cursor.execute(
                 f"UPDATE {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} "
-                "SET compartment_name = %s, bucket_name = %s, resource_name_pattern = %s, target_database = %s, target_table = %s, invocation_mode = %s, worker_threads = %s, timeout_seconds = %s WHERE id = %s",
-                (*tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads", "timeout_seconds")), mapping_id),
+                "SET compartment_name = %s, bucket_name = %s, resource_name_pattern = %s, target_database = %s, target_table = %s, invocation_mode = %s, worker_threads = %s WHERE id = %s",
+                (*tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads")), mapping_id),
             )
             return True
 
@@ -143,3 +167,49 @@ class MappingService:
                 (mapping_id,),
             )
             return cursor.rowcount == 1
+
+    def set_event_rule(self, mapping_id: int, rule_id: str | None) -> bool:
+        """Store only the OCI rule identity; live rule details remain OCI-owned."""
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor()
+            self._ensure_schema(cursor)
+            cursor.execute(
+                f"UPDATE {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} "
+                "SET event_rule_id = %s WHERE id = %s",
+                (rule_id, mapping_id),
+            )
+            return cursor.rowcount == 1
+
+    def clear_event_rule_reference(self, rule_id: str) -> int:
+        """Clear mapping ownership after a rule has been removed from OCI."""
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor()
+            self._ensure_schema(cursor)
+            cursor.execute(
+                f"UPDATE {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} "
+                "SET event_rule_id = NULL WHERE event_rule_id = %s",
+                (rule_id,),
+            )
+            return int(cursor.rowcount)
+
+    def exact_pattern_conflict(self, values: dict[str, str], *, exclude_mapping_id: int | None = None) -> int | None:
+        """Return a conflicting exact pattern; broader wildcard overlap remains an operator constraint."""
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor()
+            self._ensure_schema(cursor)
+            sql = (
+                f"SELECT id FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} "
+                "WHERE compartment_name = %s AND bucket_name = %s AND resource_name_pattern = %s"
+            )
+            parameters: list[object] = [
+                values["compartment_name"],
+                values["bucket_name"],
+                values["resource_name_pattern"],
+            ]
+            if exclude_mapping_id is not None:
+                sql += " AND id <> %s"
+                parameters.append(exclude_mapping_id)
+            sql += " LIMIT 1"
+            cursor.execute(sql, tuple(parameters))
+            row = cursor.fetchone()
+            return int(row[0]) if row else None
