@@ -12,6 +12,7 @@ function/  OCI Function source and partition loader
 ui/        Separate Flask UI application
 deploy/    Oracle Linux bootstrap and idempotent OCI deployment scripts
 tests/     Function-focused tests and fixtures
+blog/      Architecture and operational design articles
 ```
 
 ## Event flow
@@ -23,12 +24,17 @@ tests/     Function-focused tests and fixtures
    deterministic for newly received events.
 3. It resolves `fndb.object_storage_mappings` by compartment, bucket, and
    resource-name pattern.
-4. For create/update, it assigns a batch number scoped to the mapped target
-   database/table, downloads the object with a resource principal, loads it
-   into a staging table in parallel, and atomically exchanges the corresponding
-   `batch_num` partition into the target table.
-5. For delete, it finds the mapped batch and truncates that partition.
-6. It records success and failure rows in `fndb.event_tx_log` and
+4. The mapping selects `SYNC` or `DETACHED` execution. Detached intake records
+   the event, invokes the same Function asynchronously, and returns while the
+   worker continues the load.
+5. For create/update, the worker assigns a batch number scoped to the mapped
+   target database/table, streams bounded Object Storage byte ranges with a
+   resource principal, loads parsed row batches into a staging table with
+   parallel database writers, and atomically exchanges the corresponding
+   `batch_num` partition into the target table. It does not create a full CSV
+   copy on the Function file system.
+6. For delete, it finds the mapped batch and truncates that partition.
+7. It records success and failure rows in `fndb.event_tx_log` and
    `fndb.event_errors`.
 
 If a load fails after its batch is allocated, its batch record changes from
@@ -48,6 +54,32 @@ example `employees_stage_a1b2c3d4e5f6`. This prevents concurrent events and
 retries from sharing a staging name. The table is removed after a successful
 partition exchange and is also cleaned up after a failed load. Audit and error
 records remain in the control database after the temporary table is gone.
+If a Function is terminated at its timeout or database cleanup fails, a staging
+table can remain. The Registered Table UI lists this residue and provides
+confirmed individual and Clean all actions. Cleanup remains blocked while the
+target has an active `LOADING` lease.
+
+### Sync, Detached, and large files
+
+- `SYNC` executes the complete stream, staging load, exchange, audit, and
+  cleanup in the Event Rule invocation. OCI limits synchronous Function
+  execution to 300 seconds. The measured 1 GB test reached 300.953 seconds and
+  timed out.
+- `DETACHED` makes the intake Function record the event and self-invoke the
+  same Function asynchronously. OCI supports a detached execution timeout of
+  up to 3,600 seconds when the Function resource's
+  `detachedModeTimeoutInSeconds` property is configured. Setting mapping
+  `timeout_seconds` or Function configuration `DETACHED_TIMEOUT_SECONDS` alone
+  does not change that OCI resource property.
+- Files that approach the detached limit should be split into smaller objects
+  and coordinated with a manifest or durable queue. A set of files is not one
+  transaction.
+
+The Function reads each object with sequential bounded HTTP Range requests,
+decodes one continuous CSV stream, and applies back-pressure when the pending
+writer queue reaches approximately twice the configured worker count. More
+workers can improve throughput only while MySQL connections, CPU, storage
+throughput, and IOPS have headroom.
 
 ## Limitations and assumptions
 
@@ -73,6 +105,11 @@ records remain in the control database after the temporary table is gone.
 - **Events can be retried and can arrive out of order.** The implementation
   records object and batch state to make retries safe, but source publishers
   must avoid simultaneous, conflicting updates to the same logical data set.
+- **Neither invocation mode is FIFO.** Separate Sync events can run
+  concurrently, and Detached workers are independent. Upload or submission
+  order does not guarantee start or completion order. A delete-before-create
+  dependency must wait for the delete transaction to reach `SUCCESS`, or use a
+  durable queue and persisted sequence gate with one active worker per key.
 - **The target table is a pre-approved contract.** It must already exist with
   compatible columns, `LIST` partitioning by the loader batch column, and that
   column included in each unique key. The Function does not infer or create
@@ -168,6 +205,22 @@ limit the rule to matching `data.resourceName` values under that virtual folder.
 OCI Events supports `*` in filter values; leave the setting blank to process
 all object names in the selected bucket.
 
+For mapping-driven Detached execution, set `DETACHED_ENABLED=true`. After
+deployment, `deploy.sh` discovers the Function OCID and invoke endpoint and
+injects them as `FUNCTION_ID` and `FUNCTION_INVOKE_ENDPOINT`; do not hard-code
+either value. The Function runtime dynamic group also needs permission to
+invoke the intended Function. Configure the actual detached execution limit on
+the Function resource, for example:
+
+```sh
+oci fn function update \
+  --function-id "$FUNCTION_ID" \
+  --detached-mode-timeout-in-seconds 3600 \
+  --force
+```
+
+If that property is omitted, Detached execution uses the synchronous timeout.
+
 ### Function invocation logs
 
 Invocation logging is enabled by default when `ENABLE_FUNCTION_LOG='true'` and
@@ -188,7 +241,7 @@ the Function.
 | Principal | Used for | Minimum scope |
 | --- | --- | --- |
 | Deployment Compute instance principal | Builds/pushes the image and creates the Function, Event Rule, and Function log | Function/repository/Event/Logging resources in the deployment compartment |
-| OCI Function resource principal | Downloads the CSV that triggered the event | `read objects` for the specific source bucket |
+| OCI Function resource principal | Streams the CSV and, for Detached mappings, self-invokes the Function | `read objects` for the source bucket plus scoped Function invocation permission |
 | OCI Events service | Delivers an already-matched event to the Function | No extra policy in the normal same-tenancy case |
 
 Replace every `<...>` value; policy examples deliberately use names/OCIDs rather
@@ -311,3 +364,4 @@ state are tracked by Git.
 ## Blog
 
 - [From CSV in Object Storage to HeatWave: an operational ingestion design](blog/csv-ingestion-to-heatwave.md) — event-driven CSV ingestion, partition exchange, lifecycle handling, operations UI, and event tracking.
+- [Designing an operable CSV-to-HeatWave pipeline with OCI Functions](blog/technical-architecture-large-csv-heatwave.md) — diagram-rich technical architecture covering Sync and Detached execution, 300/3,600-second limits, diskless range streaming, worker and IOPS tuning, staging cleanup, audit and troubleshooting, UI operations, large-file choices, and cross-file ordering constraints.
