@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ form_mode }} Queue Entry · CSV Import Console{% endblock %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">ORDERED EVENT PROCESSING</p><h1>{{ form_mode }} queue entry</h1><p>{% if form_mode == 'Create' %}Create an audited Object Storage operation for an existing mapping.{% else %}Change only scheduling metadata for an entry that has not completed.{% endif %}</p></div></section>
+<section class="content-card">
+  {% if form_mode == 'Create' %}
+  <aside class="mapping-assumptions"><strong>Manual queue requirements</strong><ul><li>The object name must match the selected mapping pattern.</li><li>The mapping determines target table, execution mode, worker count, and TABLE or MAPPING binding.</li><li>Use CREATE, UPDATE, and DELETE in the intended order. The queue preserves order inside the resulting binding.</li></ul></aside>
+  <form method="post" class="form-grid mapping-form">
+    <label class="wide">Mapping <span>*</span><select name="mapping_id" required><option value="">Select mapping</option>{% for mapping in mappings %}<option value="{{ mapping.id }}" {{ 'selected' if entry.mapping_id|string == mapping.id|string else '' }}>#{{ mapping.id }} · {{ mapping.bucket_name }}/{{ mapping.resource_name_pattern }} → {{ mapping.target_database }}.{{ mapping.target_table }} · {{ mapping.queue_scope or 'TABLE' }}</option>{% endfor %}</select></label>
+    <label>Event action <span>*</span><select name="event_action" required>{% for action in ['CREATE','UPDATE','DELETE'] %}<option value="{{ action }}" {{ 'selected' if entry.event_action == action else '' }}>{{ action }}</option>{% endfor %}</select></label>
+    <label>Priority <span>*</span><input type="number" name="priority" min="-1000" max="1000" value="{{ entry.priority if entry.priority is not none else 100 }}" required><small>Lower numbers run first; use the default unless performing audited recovery.</small></label>
+    <label class="wide">Object resource name <span>*</span><input name="resource_name" maxlength="1024" required value="{{ entry.resource_name or '' }}" placeholder="folder/employees.csv"></label>
+    <label>Object version / ETag<input name="object_version" maxlength="255" value="{{ entry.object_version or '' }}"><small>A generated manual identity is used when omitted.</small></label>
+    <label>Event time<input type="datetime-local" name="event_time" value="{{ entry.event_time or '' }}"><small>Defaults to the current UTC time.</small></label>
+    <label class="wide">Operator note<input name="operator_note" maxlength="1024" value="{{ entry.operator_note or '' }}" placeholder="Reason for manual queue creation"></label>
+    <label class="checkbox-field wide"><input type="checkbox" name="wake_worker" checked><span>Submit a detached worker wake-up after creation</span></label>
+    <div class="form-actions mapping-actions"><a class="secondary-button" href="{{ url_for('queue.dashboard') }}">Cancel</a><button class="primary-button" type="submit">Create queue entry</button></div>
+  </form>
+  {% else %}
+  <aside class="mapping-assumptions"><strong>Immutable event identity</strong><p>Object, action, mapping, binding, and event time cannot be edited after enqueue. Only pending, retry-wait, or blocked scheduling metadata can change.</p></aside>
+  <form method="post" class="form-grid mapping-form">
+    <label>Queue ID<input value="{{ entry.id }}" readonly></label><label>Status<input value="{{ entry.status }}" readonly></label>
+    <label class="wide">Binding<input value="{{ entry.queue_scope }} · {{ entry.binding_key }}" readonly></label>
+    <label>Priority <span>*</span><input type="number" name="priority" min="-1000" max="1000" value="{{ entry.priority }}" required></label>
+    <label>Available at <span>*</span><input type="datetime-local" name="available_at" value="{{ entry.available_at.strftime('%Y-%m-%dT%H:%M:%S') if entry.available_at else '' }}" required></label>
+    <label class="wide">Operator note<input name="operator_note" maxlength="1024" value="{{ entry.operator_note or '' }}"></label>
+    <div class="form-actions mapping-actions"><a class="secondary-button" href="{{ url_for('queue.dashboard') }}">Cancel</a><button class="primary-button" type="submit">Save queue entry</button></div>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}
+

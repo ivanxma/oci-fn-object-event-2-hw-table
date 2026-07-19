@@ -257,6 +257,8 @@ def edit_mapping(mapping_id: str):
     if request.method == "POST":
         try:
             values = MappingService.normalize(request.form)
+            if service.has_nonterminal_queue_work(existing, values["queue_scope"]):
+                raise ValueError("Queue binding cannot be changed while the current or destination binding has non-terminal work.")
             requested = _rule_requested()
             if requested:
                 _validate_rule_request(service, values, exclude=mapping_key)
@@ -308,6 +310,8 @@ def delete_mapping(mapping_id: str):
         if not mapping:
             flash("That mapping no longer exists.", "warning")
         else:
+            if service.mapping_has_nonterminal_queue_work(mapping_key):
+                raise ValueError("Mapping cannot be deleted while it has non-terminal queue work. Cancel or complete those entries first.")
             rule_id = mapping.get("event_rule_id")
             if rule_id:
                 _rule_service().delete_function_rule(rule_id)
@@ -348,6 +352,8 @@ def delete_selected_mappings():
                 mapping = service.get_mapping(mapping_id)
                 if mapping is None:
                     raise ValueError(f"Mapping {mapping_id} no longer exists.")
+                if service.mapping_has_nonterminal_queue_work(mapping_id):
+                    raise ValueError(f"Mapping {mapping_id} has non-terminal queue work. Cancel or complete it first.")
                 rule_id = mapping.get("event_rule_id")
                 if rule_id:
                     _rule_service().delete_function_rule(rule_id)

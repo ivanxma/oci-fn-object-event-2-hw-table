@@ -25,6 +25,10 @@ class FunctionConfiguration:
     object_storage_read_timeout_seconds: int
     image: str
     time_updated: Any
+    queue_lease_seconds: int = 90
+    queue_reorder_grace_seconds: int = 30
+    queue_shutdown_reserve_seconds: int = 120
+    queue_minimum_start_seconds: int = 180
 
 
 def _integer(form: dict[str, Any], name: str, label: str, minimum: int, maximum: int | None = None) -> int:
@@ -36,6 +40,13 @@ def _integer(form: dict[str, Any], name: str, label: str, minimum: int, maximum:
         limit = f" from {minimum} to {maximum}" if maximum is not None else f" at least {minimum}"
         raise ValueError(f"{label} must be{limit}.")
     return value
+
+
+def _integer_default(form: dict[str, Any], name: str, label: str, default: int, minimum: int, maximum: int) -> int:
+    values = dict(form)
+    if values.get(name) in (None, ""):
+        values[name] = str(default)
+    return _integer(values, name, label, minimum, maximum)
 
 
 def normalize_function_configuration(form: dict[str, Any]) -> dict[str, int]:
@@ -52,6 +63,10 @@ def normalize_function_configuration(form: dict[str, Any]) -> dict[str, int]:
         "object_storage_read_timeout_seconds": _integer(
             form, "object_storage_read_timeout_seconds", "Object Storage read timeout", 1, 300
         ),
+        "queue_lease_seconds": _integer_default(form, "queue_lease_seconds", "Queue lease", 90, 30, 600),
+        "queue_reorder_grace_seconds": _integer_default(form, "queue_reorder_grace_seconds", "Queue reorder grace", 30, 0, 300),
+        "queue_shutdown_reserve_seconds": _integer_default(form, "queue_shutdown_reserve_seconds", "Queue shutdown reserve", 120, 30, 600),
+        "queue_minimum_start_seconds": _integer_default(form, "queue_minimum_start_seconds", "Queue minimum start budget", 180, 15, 900),
     }
     if values["memory_in_mbs"] % 64:
         raise ValueError("Memory must be a multiple of 64 MB.")
@@ -66,6 +81,12 @@ class FunctionConfigurationService:
         "BATCH_ROWS": "batch_rows",
         "OBJECT_STORAGE_RANGE_BYTES": "object_storage_range_bytes",
         "OBJECT_STORAGE_READ_TIMEOUT_SECONDS": "object_storage_read_timeout_seconds",
+        "SYNC_TIMEOUT_SECONDS": "sync_timeout_seconds",
+        "DETACHED_TIMEOUT_SECONDS": "detached_timeout_seconds",
+        "QUEUE_LEASE_SECONDS": "queue_lease_seconds",
+        "QUEUE_REORDER_GRACE_SECONDS": "queue_reorder_grace_seconds",
+        "QUEUE_SHUTDOWN_RESERVE_SECONDS": "queue_shutdown_reserve_seconds",
+        "QUEUE_MINIMUM_START_SECONDS": "queue_minimum_start_seconds",
     }
 
     def __init__(self, *, function_id: str, region: str) -> None:
@@ -104,6 +125,10 @@ class FunctionConfigurationService:
             object_storage_read_timeout_seconds=int(config.get("OBJECT_STORAGE_READ_TIMEOUT_SECONDS", 300)),
             image=function.image,
             time_updated=function.time_updated,
+            queue_lease_seconds=int(config.get("QUEUE_LEASE_SECONDS", 90)),
+            queue_reorder_grace_seconds=int(config.get("QUEUE_REORDER_GRACE_SECONDS", 30)),
+            queue_shutdown_reserve_seconds=int(config.get("QUEUE_SHUTDOWN_RESERVE_SECONDS", 120)),
+            queue_minimum_start_seconds=int(config.get("QUEUE_MINIMUM_START_SECONDS", 180)),
         )
 
     def get(self) -> FunctionConfiguration:

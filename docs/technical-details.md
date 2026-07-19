@@ -24,16 +24,22 @@ reports/   Git-ignored HTML plans and working assessment artifacts
    the Function.
 3. The intake records the raw event in `object_event`, resolves
    `object_storage_mappings`, and records the selected execution mode.
-4. Sync continues in the current invocation. Detached intake self-invokes the
-   same dynamically discovered Function asynchronously and returns.
-5. Create/update allocates or retries a per-target batch lease, streams bounded
+4. The Function inserts an idempotent work entry into a durable queue bound to
+   the target table (default) or mapping (explicit independent ownership).
+5. A Sync worker continues in the intake invocation; Detached intake submits a
+   short self-invocation. Both must atomically own the queue binding before they
+   can claim its first non-terminal entry.
+6. The owner drains entries in event-time/received-time/ID order while the
+   predicted next operation fits within its safe runtime budget. It heartbeats
+   its lease and submits exactly one detached continuation when required.
+7. Create/update allocates or retries a per-target batch lease, streams bounded
    Object Storage ranges, preserves CSV record boundaries, and applies
    back-pressure to parallel MySQL writers.
-6. Writers load a UUID-suffixed staging table. Validation completes before one
+8. Writers load a UUID-suffixed staging table. Validation completes before one
    partition exchange publishes the batch atomically.
-7. Delete locates the file's active batch and truncates or retires its
+9. Delete locates the file's active batch and truncates or retires its
    partition.
-8. The loader records completion timing, transaction audit, and detailed errors
+10. The loader records completion timing, queue attempt/transport, transaction audit, and detailed errors
    and removes the staging table when possible.
 
 The Function never creates a complete local copy of the CSV. OCI Functions use
@@ -44,10 +50,12 @@ keeps memory bounded by the range, parser, queue, and batch configuration.
 ## Control and target data
 
 The control database stores resource mappings, raw Object Storage events,
-per-file batch ownership, transaction audit, and errors. A mapping contains the
-target database/table, resource pattern, Sync/Detached mode, and writer-worker
-setting. Function timeout and memory are global OCI resource properties rather
-than per-mapping values.
+per-file batch ownership, ordered queue lanes/entries/attempts, transaction
+audit, and errors. A mapping contains the target database/table, resource
+pattern, Sync/Detached mode, writer-worker setting, and queue scope. TABLE scope
+serializes every mapping that targets the same table; MAPPING scope is allowed
+only for independent non-overlapping ownership. Function timeout and memory are
+global OCI resource properties rather than per-mapping values.
 
 Each create/update uses a unique staging table such as
 `employees_stage_a1b2c3d4e5f6`. Success and handled failures drop it. A hard
@@ -78,6 +86,11 @@ The Flask UI separates control-plane operations from the Function data plane:
 - **Registered Table / Show Data** server-pages visible target rows and exposes
   staging cleanup.
 - **Detached Processes** provides the operational view for long-running work.
+- **Queue** shows depth, state, table/mapping bindings, leases, heartbeats,
+  completion watermarks, requested mode versus worker transport, attempts, and
+  errors. Operators can manually enqueue matching objects, safely edit pending
+  scheduling metadata, retry blocked entries, cancel/delete pending work while
+  retaining audit history, and wake a detached worker.
 
 This consolidated UI supports operational excellence by making configuration,
 test injection, status, latency, error correlation, target verification, and
@@ -94,6 +107,7 @@ Important protected `deploy/env.sh` values include:
 | OCI | compartment, region, subnet, application, repository, bucket, rule and log group |
 | Database | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, control database |
 | Execution | `FUNCTION_TIMEOUT` (Sync, max 300), `DETACHED_TIMEOUT_SECONDS` (max 3600), `FUNCTION_MEMORY` |
+| Queue | `QUEUE_LEASE_SECONDS`, `QUEUE_REORDER_GRACE_SECONDS`, `QUEUE_SHUTDOWN_RESERVE_SECONDS`, `QUEUE_MINIMUM_START_SECONDS` |
 | Streaming | `BATCH_ROWS`, `WRITER_WORKERS`, `OBJECT_STORAGE_RANGE_BYTES`, `OBJECT_STORAGE_READ_TIMEOUT_SECONDS` |
 | Detached | `DETACHED_ENABLED`; Function OCID and invoke endpoint are discovered and injected by deployment |
 | UI | Flask secret, TLS certificate/key or explicit test-only self-signed setting, OCI-management feature flags |
@@ -175,11 +189,20 @@ com.oraclecloud.objectstorage.deleteobject
 
 ## Ordering, retries, and file ownership
 
-OCI Events is at-least-once. Sync invocations can overlap, and Detached
-invocations are independent; neither is FIFO. A delete-before-create dependency
-must wait for the delete transaction to reach `SUCCESS`, or be enforced by a
-durable queue and persisted sequence gate with one active worker per ownership
-key.
+OCI Events is at-least-once. Sync invocations can overlap and Detached
+invocations are independent, so Function arrival order is never used as the
+mutation order. Every event is inserted idempotently into a durable queue. One
+heartbeated lease owner per binding claims the first non-terminal entry by event
+time, received time, priority tie-break, and queue ID. A blocked earlier entry
+is not bypassed. Completion advances a binding watermark; a later-delivered
+event older than that watermark is blocked for review rather than applied.
+
+TABLE binding is the safe default and coordinates all mappings targeting one
+table. MAPPING binding increases concurrency only when mappings own independent
+partitions and cannot interact through keys, moves, or delete/create order.
+Changing scope or deleting a mapping is blocked while it has non-terminal work.
+Event timestamps cannot reveal a producer operation that has not arrived, so
+strict cross-file business order still requires a producer manifest or sequence.
 
 A mapping may associate many files with one table, but every active file must
 own a disjoint set of business records. Partition exchange makes one file

@@ -114,8 +114,8 @@ def ensure_control_tables(db: Database) -> None:
         # Mapping metadata is owned by the UI, but the Function upgrades older
         # control schemas so runtime resolution remains backward compatible.
         mapping_table = control_table('object_storage_mappings')
-        cursor.execute(f"CREATE TABLE IF NOT EXISTS {mapping_table} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, compartment_name VARCHAR(255) NOT NULL, bucket_name VARCHAR(255) NOT NULL, resource_name_pattern VARCHAR(1024) NOT NULL, target_database VARCHAR(64) NOT NULL, target_table VARCHAR(64) NOT NULL, invocation_mode ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC', worker_threads SMALLINT UNSIGNED NOT NULL DEFAULT 4, event_rule_id VARCHAR(255) NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
-        for column, definition in (("invocation_mode", "ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC'"), ("worker_threads", "SMALLINT UNSIGNED NOT NULL DEFAULT 4"), ("event_rule_id", "VARCHAR(255) NULL")):
+        cursor.execute(f"CREATE TABLE IF NOT EXISTS {mapping_table} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, compartment_name VARCHAR(255) NOT NULL, bucket_name VARCHAR(255) NOT NULL, resource_name_pattern VARCHAR(1024) NOT NULL, target_database VARCHAR(64) NOT NULL, target_table VARCHAR(64) NOT NULL, invocation_mode ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC', worker_threads SMALLINT UNSIGNED NOT NULL DEFAULT 4, queue_scope ENUM('TABLE','MAPPING') NOT NULL DEFAULT 'TABLE', event_rule_id VARCHAR(255) NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        for column, definition in (("invocation_mode", "ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC'"), ("worker_threads", "SMALLINT UNSIGNED NOT NULL DEFAULT 4"), ("queue_scope", "ENUM('TABLE','MAPPING') NOT NULL DEFAULT 'TABLE'"), ("event_rule_id", "VARCHAR(255) NULL")):
             cursor.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=%s AND table_name='object_storage_mappings' AND column_name=%s", (control_database(), column))
             if not cursor.fetchone()[0]:
                 cursor.execute(f"ALTER TABLE {mapping_table} ADD COLUMN {quote_identifier(column, 'mapping column')} {definition}")
@@ -204,7 +204,8 @@ def resolve_mapping(db: Database, source: dict[str, str]) -> dict[str, Any]:
         cursor.execute(
             f"""SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table,
                       COALESCE(invocation_mode, 'SYNC') AS invocation_mode,
-                      COALESCE(worker_threads, 4) AS worker_threads
+                      COALESCE(worker_threads, 4) AS worker_threads,
+                      COALESCE(queue_scope, 'TABLE') AS queue_scope
                FROM {control_table('object_storage_mappings')}
                WHERE compartment_name = %s AND bucket_name = %s""",
             (source["compartment_name"], source["bucket_name"]),
@@ -530,15 +531,10 @@ def run_load(event_path: Path, csv_path: Path, *, create: bool, batch_rows: int,
                 pass
 
 
-def run_delete(event_path: Path) -> dict[str, Any]:
-    event = json.loads(event_path.read_text(encoding="utf-8"))
-    if not isinstance(event, dict):
-        raise ValueError("Event JSON must be an object.")
-    db, mapping, record = Database(), None, None
-    source, action = event_source(event), "DELETE"
+def delete_object(db: Database, mapping: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    """Delete one mapped object directly without creating a temporary event file."""
+    record, action = None, "DELETE"
     try:
-        ensure_control_tables(db)
-        mapping = resolve_mapping(db, source)
         target_definition(db, mapping)
         with db.connection() as connection:
             cursor = connection.cursor(dictionary=True, buffered=True)
@@ -555,7 +551,19 @@ def run_delete(event_path: Path) -> dict[str, Any]:
         return {"event": "delete", "batch_num": record["batch_num"], "target": f"{record['target_database']}.{record['target_table']}"}
     except Exception as error:
         log_error(db, source, action, error, mapping, record.get("batch_num") if record else None)
+        setattr(error, "event_logged", True)
         raise
+
+
+def run_delete(event_path: Path) -> dict[str, Any]:
+    event = json.loads(event_path.read_text(encoding="utf-8"))
+    if not isinstance(event, dict):
+        raise ValueError("Event JSON must be an object.")
+    db = Database()
+    source = event_source(event)
+    ensure_control_tables(db)
+    mapping = resolve_mapping(db, source)
+    return delete_object(db, mapping, source)
 
 
 def load_arguments(description: str, *, csv_required: bool) -> argparse.ArgumentParser:

@@ -71,11 +71,18 @@ def main() -> None:
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 invocation_mode ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC',
                 worker_threads SMALLINT UNSIGNED NOT NULL DEFAULT 4,
+                queue_scope ENUM('TABLE','MAPPING') NOT NULL DEFAULT 'TABLE',
                 event_rule_id VARCHAR(255) NULL,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 PRIMARY KEY (id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
         )
+        cursor.execute(
+            "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=%s AND table_name='object_storage_mappings' AND column_name='queue_scope'",
+            (control,),
+        )
+        if not cursor.fetchone()[0]:
+            cursor.execute(f"ALTER TABLE {mapping_table} ADD COLUMN queue_scope ENUM('TABLE','MAPPING') NOT NULL DEFAULT 'TABLE'")
 
         if args.reset:
             # Reset mutable loader state but retain event_tx_log/event_errors.
@@ -90,6 +97,22 @@ def main() -> None:
             if table_exists(cursor, control, "target_batch_sequences"):
                 cursor.execute(
                     f"DELETE FROM `{control}`.`target_batch_sequences` WHERE target_database=%s AND target_table=%s",
+                    (target_db, target_table),
+                )
+            if table_exists(cursor, control, "event_work_queue"):
+                cursor.execute(
+                    f"""UPDATE `{control}`.`event_work_queue`
+                           SET status='CANCELLED',completed_at=UTC_TIMESTAMP(6),lease_token=NULL,lease_expires_at=NULL,
+                               operator_note='Cancelled by performance-test reset.'
+                         WHERE target_database=%s AND target_table=%s
+                           AND status NOT IN ('SUCCESS','CANCELLED','DEAD_LETTER')""",
+                    (target_db, target_table),
+                )
+            if table_exists(cursor, control, "queue_lane"):
+                cursor.execute(
+                    f"""UPDATE `{control}`.`queue_lane`
+                           SET owner_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,dispatch_requested=FALSE
+                         WHERE target_database=%s AND target_table=%s""",
                     (target_db, target_table),
                 )
             cursor.execute(f"DROP TABLE IF EXISTS `{target_db}`.`{target_table}`")
@@ -121,21 +144,22 @@ def main() -> None:
             target_table,
             os.environ.get("INVOCATION_MODE", "SYNC"),
             int(os.environ.get("WRITER_WORKERS", "4")),
+            os.environ.get("QUEUE_SCOPE", "TABLE"),
             event_rule_id,
         )
         if ids:
             mapping_id = ids[0]
             cursor.execute(
                 f"""UPDATE {mapping_table} SET target_database=%s, target_table=%s,
-                    invocation_mode=%s, worker_threads=%s, event_rule_id=%s WHERE id=%s""",
+                    invocation_mode=%s, worker_threads=%s, queue_scope=%s, event_rule_id=%s WHERE id=%s""",
                 (*values, mapping_id),
             )
         else:
             cursor.execute(
                 f"""INSERT INTO {mapping_table}
                     (compartment_name,bucket_name,resource_name_pattern,target_database,target_table,
-                     invocation_mode,worker_threads,event_rule_id)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                     invocation_mode,worker_threads,queue_scope,event_rule_id)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     os.environ["COMPARTMENT_NAME"],
                     os.environ["BUCKET_NAME"],

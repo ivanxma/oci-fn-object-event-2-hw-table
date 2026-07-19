@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Ordered Queue · CSV Import Console{% endblock %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">ORDERED EVENT PROCESSING</p><h1>Queue operations</h1><p>Monitor table- and mapping-bound work, recover blocked entries, and wake the detached worker.</p></div><a class="primary-button compact" href="{{ url_for('queue.create_entry') }}">Create queue entry <span>+</span></a></section>
+
+<section class="queue-summary" aria-label="Queue status summary">
+  {% for status in ['PENDING','RUNNING','RETRY_WAIT','BLOCKED','SUCCESS','CANCELLED','DEAD_LETTER'] %}<div><small>{{ status|replace('_',' ') }}</small><strong>{{ counts.get(status, 0) }}</strong></div>{% endfor %}
+</section>
+
+<section class="content-card">
+  <div class="panel-heading"><div><h2>Queue entries</h2><p>The first non-terminal entry in each binding controls progress. A blocked entry is never bypassed silently.</p></div><a class="secondary-button compact" href="{{ url_for('queue.dashboard') }}">Refresh</a></div>
+  <form method="get" class="queue-filter form-grid">
+    <label>Status<select name="status"><option value="">All</option>{% for status in ['PENDING','LEASED','RUNNING','RETRY_WAIT','BLOCKED','SUCCESS','CANCELLED','DEAD_LETTER'] %}<option value="{{ status }}" {{ 'selected' if filters.status == status else '' }}>{{ status|replace('_',' ') }}</option>{% endfor %}</select></label>
+    <label>Queue binding<select name="queue_scope"><option value="">All</option><option value="TABLE" {{ 'selected' if filters.queue_scope == 'TABLE' else '' }}>Per table</option><option value="MAPPING" {{ 'selected' if filters.queue_scope == 'MAPPING' else '' }}>Per mapping</option></select></label>
+    <label>Binding key<input name="binding_key" value="{{ filters.binding_key }}" placeholder="table:fntestdb.employees"></label>
+    <label>Object contains<input name="resource_name" value="{{ filters.resource_name }}" placeholder="folder/file.csv"></label>
+    <div class="form-actions queue-filter-actions"><button class="secondary-button" type="submit">Filter</button><a class="text-link" href="{{ url_for('queue.dashboard') }}">Clear</a></div>
+  </form>
+  <form method="post" class="table-page-view queue-selection-form">
+    <div class="table-page-toolbar"><div class="selection-actions"><button class="secondary-button compact" type="submit" formaction="{{ url_for('queue.edit_selected') }}">Edit</button><button class="secondary-button compact" type="submit" formaction="{{ url_for('queue.retry_selected') }}" onclick="return confirm('Retry the selected blocked queue entries?');">Retry</button><button class="secondary-button compact danger-button" type="submit" formaction="{{ url_for('queue.cancel_selected') }}" onclick="return confirm('Cancel/delete the selected pending queue entries? History and audit records will be retained.');">Cancel / delete</button><input type="hidden" name="reason" value="Queue dashboard operator action."></div><div class="table-toolbar-icons"></div></div>
+    <div class="table-wrap"><table class="unified-data-table queue-table"><thead><tr><th class="selection-column"><label class="checkbox-field"><input id="select-all-queue" type="checkbox" aria-label="Select all visible queue entries"><span>Select</span></label></th><th>ID</th><th>Status</th><th>Action</th><th>Requested mode</th><th>Worker transport</th><th>Binding</th><th>Mapping</th><th>Target</th><th>Object</th><th>Event time</th><th>Attempts</th><th>Priority</th><th>Error / note</th></tr></thead><tbody>
+      {% for entry in entries %}<tr class="{{ 'queue-row-blocked' if entry.status == 'BLOCKED' else '' }}"><td class="selection-column"><label class="checkbox-field"><input class="queue-row-select" type="checkbox" name="queue_id" value="{{ entry.id }}" aria-label="Select queue entry {{ entry.id }}"><span class="visually-hidden">Select {{ entry.id }}</span></label></td><td>{{ entry.id }}</td><td><span class="lifecycle-badge queue-{{ entry.status|lower }}">{{ entry.status }}</span></td><td>{{ entry.event_action }}</td><td>{{ entry.invocation_mode }}</td><td>{{ entry.latest_transport_mode or '—' }}{% if entry.latest_attempt_duration_ms is not none %} · {{ '%.3f'|format(entry.latest_attempt_duration_ms / 1000) }} s{% endif %}</td><td class="table-value-cell" tabindex="0" title="Click to view full value">{{ entry.queue_scope }} · {{ entry.binding_key }}</td><td>#{{ entry.mapping_id }}</td><td><code>{{ entry.target_database }}.{{ entry.target_table }}</code></td><td class="table-value-cell" tabindex="0" title="Click to view full value">{{ entry.bucket_name }}/{{ entry.resource_name }}</td><td>{{ entry.event_time }}</td><td>{{ entry.attempt_count }}</td><td>{{ entry.priority }}</td><td class="table-value-cell" tabindex="0" title="Click to view full value">{{ entry.last_error or entry.operator_note or '—' }}</td></tr>
+      {% else %}<tr><td colspan="14" class="empty-state">No queue entries match the selected filters.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </form>
+</section>
+
+<section class="content-card">
+  <div class="panel-heading"><div><h2>Queue bindings and worker leases</h2><p>Only one Function invocation can own a binding. Redundant invocations become harmless wake-up attempts.</p></div></div>
+  <div class="table-wrap"><table class="unified-data-table queue-lane-table"><thead><tr><th>Binding</th><th>Scope</th><th>Target</th><th>Pending</th><th>Running</th><th>Blocked</th><th>Lease expires</th><th>Heartbeat</th><th>Watermark</th><th>Generation</th><th>Action</th></tr></thead><tbody>
+    {% for lane in lanes %}<tr><td class="table-value-cell" tabindex="0" title="Click to view full value"><code>{{ lane.binding_key }}</code></td><td>{{ lane.queue_scope }}</td><td><code>{{ lane.target_database }}.{{ lane.target_table }}</code></td><td>{{ lane.pending_count or 0 }}</td><td>{{ lane.running_count or 0 }}</td><td>{{ lane.blocked_count or 0 }}</td><td>{{ lane.lease_expires_at or '—' }}</td><td>{{ lane.heartbeat_at or '—' }}</td><td>{{ lane.last_completed_event_time or '—' }}{% if lane.last_completed_queue_id %} · #{{ lane.last_completed_queue_id }}{% endif %}</td><td>{{ lane.generation }}</td><td><form method="post" action="{{ url_for('queue.wake') }}"><input type="hidden" name="binding_key" value="{{ lane.binding_key }}"><button class="secondary-button compact" type="submit" title="Submit one detached worker wake-up">Wake worker</button></form></td></tr>
+    {% else %}<tr><td colspan="11" class="empty-state">No queue bindings exist yet.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const all = document.getElementById('select-all-queue');
+  const rows = [...document.querySelectorAll('.queue-row-select')];
+  all?.addEventListener('change', () => rows.forEach((row) => { row.checked = all.checked; }));
+  rows.forEach((row) => row.addEventListener('change', () => {
+    all.checked = rows.length > 0 && rows.every((item) => item.checked);
+    all.indeterminate = rows.some((item) => item.checked) && !all.checked;
+  }));
+});
+</script>
+{% endblock %}

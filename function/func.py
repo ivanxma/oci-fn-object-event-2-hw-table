@@ -5,9 +5,8 @@ from __future__ import annotations
 import io
 import json
 import os
-import tempfile
+import time
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import oci
@@ -33,6 +32,23 @@ from partition_loader import (
     resolve_mapping,
     target_definition,
     validate_and_exchange,
+    delete_object,
+)
+from work_queue import (
+    LeaseHeartbeat,
+    acquire_lane,
+    block_entry,
+    claim_next,
+    complete_entry,
+    defer_entry,
+    enqueue_event,
+    ensure_queue_tables,
+    has_start_budget,
+    invocation_owner,
+    monotonic_deadline,
+    queue_binding,
+    release_lane,
+    start_attempt,
 )
 
 
@@ -125,6 +141,18 @@ def _set_object_event_mode(db: Database, object_event_id: int, invocation_mode: 
         )
 
 
+def _complete_duplicate_object_event(db: Database, object_event_id: int) -> None:
+    """Close the raw audit row for an at-least-once duplicate delivery."""
+    with db.connection() as connection:
+        connection.cursor().execute(
+            f"""UPDATE {control_table('object_event')}
+                   SET completed_at=UTC_TIMESTAMP(6),
+                       duration_ms=TIMESTAMPDIFF(MICROSECOND,received_at,UTC_TIMESTAMP(6))/1000
+                 WHERE id=%s""",
+            (object_event_id,),
+        )
+
+
 class ObjectStorageRangeStream(io.RawIOBase):
     """A diskless, seek-free Object Storage reader using bounded HTTP ranges.
 
@@ -214,10 +242,17 @@ def _object_stream(event: dict[str, Any], source: dict[str, str]) -> ObjectStora
     )
 
 
-def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, create: bool) -> dict[str, Any]:
+def _run_load(
+    db: Database,
+    event: dict[str, Any],
+    source: dict[str, str],
+    *,
+    create: bool,
+    mapping_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     action, mapping, record, stage = "CREATE" if create else "UPDATE", None, None, None
     try:
-        mapping = resolve_mapping(db, source)
+        mapping = mapping_override or resolve_mapping(db, source)
         columns = target_definition(db, mapping)
         record = allocate_or_get_batch(db, mapping, source, create=create)
         ensure_partition(db, mapping, record["batch_num"])
@@ -256,20 +291,161 @@ def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, cr
                 pass
 
 
-def _run_delete(db: Database, event: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
-    # Retain the established prototype's deletion semantics, including an idempotent no-op.
-    from partition_loader import run_delete
+def _run_delete(
+    db: Database,
+    event: dict[str, Any],
+    source: dict[str, Any],
+    *,
+    mapping_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    mapping = mapping_override or resolve_mapping(db, source)
+    return delete_object(db, mapping, source)
 
-    delete_event = dict(event)
-    delete_event["_object_event_id"] = source["object_event_id"]
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as event_file:
-        json.dump(delete_event, event_file)
-        event_file.flush()
+
+def _invoke_detached(binding_key: str) -> None:
+    function_id = os.environ.get("FUNCTION_ID", "")
+    invoke_endpoint = os.environ.get("FUNCTION_INVOKE_ENDPOINT", "")
+    if not function_id or not invoke_endpoint or os.environ.get("DETACHED_ENABLED", "false").lower() != "true":
+        raise ValueError("Detached queue processing requires DETACHED_ENABLED, FUNCTION_ID, and FUNCTION_INVOKE_ENDPOINT.")
+    signer = oci.auth.signers.get_resource_principals_signer()
+    client = oci.functions.FunctionsInvokeClient(
+        {"region": os.environ.get("OCI_REGION", "")},
+        signer=signer,
+        service_endpoint=invoke_endpoint,
+    )
+    worker_event = {"_queue_worker": True, "_queue_binding_key": binding_key}
+    last_error: Exception | None = None
+    for attempt in range(3):
         try:
-            return run_delete(Path(event_file.name))
+            client.invoke_function(
+                function_id=function_id,
+                invoke_function_body=json.dumps(worker_event).encode(),
+                fn_intent="cloudevent",
+                fn_invoke_type="detached",
+            )
+            return
         except Exception as error:
-            setattr(error, "event_logged", True)
-            raise
+            last_error = error
+            status = int(getattr(error, "status", 0) or 0)
+            if status not in {429, 500, 502, 503, 504} or attempt == 2:
+                raise
+            time.sleep(0.5 * (2**attempt))
+    if last_error:
+        raise last_error
+
+
+def _mapping_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": int(entry["mapping_id"]),
+        "target_database": entry["target_database"],
+        "target_table": entry["target_table"],
+        "invocation_mode": entry["invocation_mode"],
+        "worker_threads": int(entry["worker_threads"]),
+        "queue_scope": entry["queue_scope"],
+    }
+
+
+def _payload(entry: dict[str, Any]) -> dict[str, Any]:
+    value = entry["event_payload"]
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, dict):
+        raise ValueError("Queued event payload is not a JSON object.")
+    return value
+
+
+def _execute_queue_entry(db: Database, entry: dict[str, Any]) -> dict[str, Any]:
+    event = _payload(entry)
+    source = event_source(event)
+    source["object_event_id"] = entry.get("object_event_id")
+    source["invocation_mode"] = entry["invocation_mode"]
+    mapping = _mapping_from_entry(entry)
+    action = entry["event_action"]
+    if action == "DELETE":
+        return _run_delete(db, event, source, mapping_override=mapping)
+    return _run_load(db, event, source, create=action == "CREATE", mapping_override=mapping)
+
+
+def _log_queue_error(db: Database, entry: dict[str, Any], error: Exception) -> None:
+    event = _payload(entry)
+    source = event_source(event)
+    source["object_event_id"] = entry.get("object_event_id")
+    source["invocation_mode"] = entry["invocation_mode"]
+    log_error(db, source, entry["event_action"], error, _mapping_from_entry(entry))
+
+
+def _invocation_id(ctx: Any) -> str:
+    for name in ("CallID", "call_id"):
+        value = getattr(ctx, name, None)
+        try:
+            result = value() if callable(value) else value
+        except Exception:
+            result = None
+        if result:
+            return str(result)
+    return invocation_owner()
+
+
+def _drain_binding(db: Database, ctx: Any, binding_key: str, transport_mode: str) -> dict[str, Any]:
+    owner = invocation_owner()
+    lease_seconds = max(30, int(os.environ.get("QUEUE_LEASE_SECONDS", "90")))
+    grace_seconds = max(0, int(os.environ.get("QUEUE_REORDER_GRACE_SECONDS", "30")))
+    started, maximum = monotonic_deadline(transport_mode)
+    if not acquire_lane(db, binding_key, owner, lease_seconds):
+        return {"status": "queue_wakeup_coalesced", "binding_key": binding_key, "processed": 0}
+    processed = 0
+    needs_continuation = False
+    stop_reason = "empty"
+    try:
+        while True:
+            entry, reason = claim_next(db, binding_key, owner, lease_seconds, grace_seconds)
+            if entry is None:
+                stop_reason = reason
+                if reason == "not_ready" and time.monotonic() - started + 5 < maximum:
+                    time.sleep(min(5, max(1, grace_seconds)))
+                    continue
+                needs_continuation = reason in {"not_ready", "busy", "race"}
+                break
+            if reason == "late_event":
+                error = ValueError(entry.get("last_error") or "Late queue event requires operator review.")
+                _log_queue_error(db, entry, error)
+                stop_reason = "blocked"
+                break
+            remaining = maximum - (time.monotonic() - started)
+            if not has_start_budget(entry, remaining, transport_mode):
+                if transport_mode == "DETACHED" and processed == 0:
+                    attempt_id = start_attempt(db, entry, owner, _invocation_id(ctx), transport_mode)
+                    error = ValueError("Object is projected to exceed the safe detached Function runtime and must be split or processed by an external job.")
+                    _log_queue_error(db, entry, error)
+                    block_entry(db, entry, owner, attempt_id, error)
+                    stop_reason = "blocked_runtime_limit"
+                    break
+                defer_entry(db, entry, owner, "Deferred because the safe Function runtime budget is insufficient.")
+                needs_continuation = True
+                stop_reason = "runtime_budget"
+                break
+            attempt_id = start_attempt(db, entry, owner, _invocation_id(ctx), transport_mode)
+            try:
+                with LeaseHeartbeat(db, binding_key, int(entry["id"]), owner, lease_seconds):
+                    _execute_queue_entry(db, entry)
+                complete_entry(db, entry, owner, attempt_id)
+                processed += 1
+            except Exception as error:
+                block_entry(db, entry, owner, attempt_id, error)
+                stop_reason = "blocked"
+                break
+    finally:
+        pending = release_lane(db, binding_key, owner)
+        needs_continuation = needs_continuation or pending
+    if needs_continuation and stop_reason != "blocked":
+        _invoke_detached(binding_key)
+    return {
+        "status": "queue_drained" if stop_reason == "empty" else "queue_paused",
+        "binding_key": binding_key,
+        "processed": processed,
+        "reason": stop_reason,
+        "continuation_submitted": bool(needs_continuation and stop_reason != "blocked"),
+    }
 
 
 def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
@@ -282,49 +458,33 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
             raise ValueError("Expected an Object Storage CloudEvent JSON object.")
         db = Database()
         ensure_control_tables(db)
-        detached_worker = bool(event.get("_detached_worker")) or os.environ.get("DETACHED_WORKER", "false").lower() == "true"
-        inherited_object_event_id = event.get("_object_event_id") if detached_worker else None
-        if inherited_object_event_id is not None:
-            object_event_id = int(inherited_object_event_id)
-            if object_event_id < 1:
-                raise ValueError("Detached worker received an invalid Object Storage event identifier.")
-        else:
-            object_event_id = _write_event_audit(db, event)
+        ensure_queue_tables(db)
+        if event.get("_queue_worker"):
+            binding_key = str(event.get("_queue_binding_key") or "")
+            if not binding_key:
+                raise ValueError("Queue worker invocation is missing its binding key.")
+            result = _drain_binding(db, ctx, binding_key, "DETACHED")
+            return response.Response(ctx, response_data=json.dumps(result), headers={"Content-Type": "application/json"}, status_code=200)
+        object_event_id = _write_event_audit(db, event)
         source = event_source(event)
         source["object_event_id"] = object_event_id
         action = _event_action(event)
-        # Event Rules arrive synchronously.  A mapping can hand the same
-        # CloudEvent back to this Function as a detached invocation, allowing
-        # large objects to run beyond the 300-second synchronous ceiling.
-        mapping = None if detached_worker else resolve_mapping(db, source)
-        if detached_worker:
-            source["invocation_mode"] = str(event.get("_invocation_mode") or "DETACHED").upper()
+        mapping = resolve_mapping(db, source)
+        source["invocation_mode"] = str(mapping.get("invocation_mode") or "SYNC").upper()
+        _set_object_event_mode(db, object_event_id, source["invocation_mode"])
+        queued = enqueue_event(db, event, source, mapping, action, _event_time(event))
+        if queued.get("object_event_id") and int(queued["object_event_id"]) != object_event_id:
+            _complete_duplicate_object_event(db, object_event_id)
+        _scope, binding_key = queue_binding(mapping)
+        if source["invocation_mode"] == "DETACHED":
+            _invoke_detached(binding_key)
+            result = {"status": "queued", "queue_id": queued["id"], "binding_key": binding_key, "detached_submitted": True}
+            status_code = 202
         else:
-            source["invocation_mode"] = str(mapping.get("invocation_mode") or "SYNC").upper()
-            _set_object_event_mode(db, object_event_id, source["invocation_mode"])
-        if mapping and mapping.get("invocation_mode", "SYNC") == "DETACHED":
-            function_id = os.environ.get("FUNCTION_ID", "")
-            if not function_id or os.environ.get("DETACHED_ENABLED", "false").lower() != "true":
-                raise ValueError("Mapping requests DETACHED mode but detached execution is not enabled or FUNCTION_ID is missing.")
-            # A Function invocation runs with a resource-principal identity;
-            # instance principals are only available on Compute instances.
-            signer = oci.auth.signers.get_resource_principals_signer()
-            invoke_endpoint = os.environ.get("FUNCTION_INVOKE_ENDPOINT", "")
-            if not invoke_endpoint:
-                raise ValueError("Mapping requests DETACHED mode but FUNCTION_INVOKE_ENDPOINT is missing.")
-            client = oci.functions.FunctionsInvokeClient(
-                {"region": os.environ.get("OCI_REGION", "")},
-                signer=signer,
-                service_endpoint=invoke_endpoint,
-            )
-            worker_event = dict(event)
-            worker_event["_detached_worker"] = True
-            worker_event["_object_event_id"] = object_event_id
-            worker_event["_invocation_mode"] = source["invocation_mode"]
-            client.invoke_function(function_id=function_id, invoke_function_body=json.dumps(worker_event).encode(), fn_intent="cloudevent", fn_invoke_type="detached")
-            return response.Response(ctx, response_data=json.dumps({"status": "detached_submitted", "mapping_id": mapping["id"], "worker_threads": mapping.get("worker_threads", 4)}), headers={"Content-Type": "application/json"}, status_code=202)
-        result = _run_delete(db, event, source) if action == "DELETE" else _run_load(db, event, source, create=action == "CREATE")
-        return response.Response(ctx, response_data=json.dumps({"status": "success", **result}), headers={"Content-Type": "application/json"}, status_code=200)
+            result = _drain_binding(db, ctx, binding_key, "SYNC")
+            result["queue_id"] = queued["id"]
+            status_code = 200 if result["status"] == "queue_drained" else 202
+        return response.Response(ctx, response_data=json.dumps(result), headers={"Content-Type": "application/json"}, status_code=status_code)
     except Exception as error:
         if db is not None and source is not None and not getattr(error, "event_logged", False):
             action = "UNKNOWN"

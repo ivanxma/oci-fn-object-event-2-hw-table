@@ -8,7 +8,7 @@
       <li>One managed OCI Events rule belongs to one mapping entry and invokes the configured OCI Function.</li>
       <li>Patterns in the same compartment and bucket must be mutually exclusive. Overlap can invoke the Function more than once for one object.</li>
       <li>The configured compartment OCID must represent the compartment name below. Object Storage folders are prefixes in the object name.</li>
-      <li>OCI rule conditions support literal characters and <code>*</code> wildcards. Ordering across different object files is not transactional.</li>
+      <li>OCI rule conditions support literal characters and <code>*</code> wildcards. Queue order is enforced within the selected table or mapping binding; cross-binding operations are not transactional.</li>
     </ul>
   </aside>
   <form method="post" class="form-grid mapping-form">
@@ -19,6 +19,7 @@
     <label>Target table <span>*</span><select id="target-table" name="target_table" required {% if not mapping.target_database %}disabled{% endif %}><option value="">Select table</option>{% for table in target_tables %}<option value="{{ table }}" {{ 'selected' if table == mapping.target_table else '' }}>{{ table }}</option>{% endfor %}</select><small>Tables are loaded from the selected database.</small></label>
     <label>Execution mode <span>*</span><select id="invocation-mode" name="invocation_mode"><option value="SYNC" {{ 'selected' if (mapping.invocation_mode or 'SYNC') == 'SYNC' else '' }}>Synchronous</option><option value="DETACHED" {{ 'selected' if mapping.invocation_mode == 'DETACHED' else '' }}>Detached</option></select><small>Timeouts and global capacity are maintained under OCI Function Configuration.</small></label>
     <label>Worker threads<input type="number" name="worker_threads" min="1" max="64" value="{{ mapping.worker_threads or 4 }}"><small>Per-mapping database writer concurrency.</small></label>
+    <label>Queue binding <span>*</span><select name="queue_scope"><option value="TABLE" {{ 'selected' if (mapping.queue_scope or 'TABLE') == 'TABLE' else '' }}>Per target table (recommended)</option><option value="MAPPING" {{ 'selected' if mapping.queue_scope == 'MAPPING' else '' }}>Per mapping</option></select><small>Table scope serializes every mapping that mutates the same table. Mapping scope is only safe for independent, non-overlapping partitions.</small></label>
     <label class="checkbox-field wide create-rule-option"><input type="checkbox" name="create_rule" {{ 'checked' if mapping.create_rule else '' }}><span>Create and manage an OCI Events rule for this mapping</span><small>{% if form_mode == 'Edit' %}Saving updates the associated live OCI rule. Uncheck to delete that rule while retaining this mapping.{% else %}The rule matches this bucket and object-name pattern and invokes the configured OCI Function.{% endif %}</small></label>
     <div class="form-actions mapping-actions"><a class="secondary-button" href="{{ url_for('mappings.list_mappings') }}">Cancel</a><button class="primary-button" type="submit">{{ form_mode }} mapping</button></div>
   </form>

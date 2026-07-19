@@ -3,8 +3,11 @@
 This application turns OCI Object Storage CSV lifecycle events into controlled,
 auditable MySQL table updates. OCI Events routes object create, update, and
 delete events to an OCI Function. A mapping selects the target table and either
-Sync or Detached execution. CSV rows are streamed into parallel staging-table
-writers, then a partition exchange publishes one file's data atomically.
+  Sync or Detached execution. Every event first enters a durable TABLE- or
+  MAPPING-bound queue, so overlapping Function invocations cannot reorder
+  mutations for the same ownership boundary. CSV rows are streamed into
+  parallel staging-table writers, then a partition exchange publishes one
+  file's data atomically.
 
 The Flask operations UI provides one place to create and maintain mappings,
 manage live OCI Events rules, configure Function capacity, upload or remove test
@@ -26,8 +29,8 @@ flowchart LR
     Bucket --> Events[OCI Events rule]
     Events --> Intake[OCI Function intake]
     Intake --> Control
-    Intake -->|Sync| Loader[Streaming CSV loader]
-    Intake -->|Detached self-invocation| Loader
+    Intake --> Queue[(Ordered MySQL work queue)]
+    Queue -->|leased Sync or Detached worker| Loader[Streaming CSV loader]
     Loader --> Bucket
     Loader --> Stage[(Parallel staging tables)]
     Stage -->|Atomic partition exchange| Target
@@ -43,11 +46,16 @@ flowchart LR
 - Publishes one file atomically with MySQL partition exchange; delete events
   retire the corresponding partition.
 - Chooses Sync or Detached processing dynamically from each mapping.
+- Binds ordering per target table by default, with an explicit per-mapping
+  option for independently owned, non-overlapping partitions.
+- Uses a heartbeated lane lease, deterministic event order, completion
+  watermark, retry/block states, and safe detached continuation handoff.
 - Records raw events, execution mode, lifecycle status, timing, transaction
-  audit, and actionable error detail.
+  audit, queue attempts, worker transport, and actionable error detail.
 - Provides operational UI workflows for mappings, live OCI Rules, Function
   configuration, Object Storage testing, registered-table data, stage cleanup,
-  Event TX, and detached-process monitoring.
+  Event TX, detached-process monitoring, and queue operations including manual
+  enqueue, edit, retry, cancel, and worker wake-up.
 
 ## Deployment and configuration
 
@@ -94,8 +102,9 @@ troubleshooting, and validation commands.
 - One CSV file is one complete logical partition of a mapped table. Many files
   may map to one table, but active files must not contain overlapping business
   records.
-- Atomicity is limited to one file. Multiple object operations are not one
-  transaction and neither Sync nor Detached processing guarantees FIFO order.
+- Atomicity is limited to one file. Queue binding serializes observed events
+  within one table or mapping, but operations across bindings are not one
+  transaction.
 - Move records between files by completing removal from the source file before
   adding them to the destination, or use an external sequenced publication
   workflow.
@@ -105,8 +114,9 @@ troubleshooting, and validation commands.
   configured up to 3,600 seconds, but it is still bounded; split very large
   files into ordered, independently owned chunks or use a durable queue.
 - OCI Events is at-least-once and may retry or deliver conflicting operations
-  out of order. Publishers must avoid simultaneous updates to the same logical
-  data set.
+  out of order. Queue idempotency, reorder grace, and a completion watermark
+  protect observed work, but a producer manifest/sequence is still required
+  when intent cannot be inferred from arrival and event timestamps.
 - A timeout can leave a staging table behind. The UI exposes confirmed cleanup,
   while protecting a target that still has an active loading lease.
 - More worker threads help only while MySQL CPU, connection capacity, storage

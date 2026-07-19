@@ -36,6 +36,9 @@ class MappingService:
         mode = (form.get("invocation_mode") or "SYNC").strip().upper()
         if mode not in {"SYNC", "DETACHED"}:
             raise ValueError("Invocation mode must be SYNC or DETACHED.")
+        queue_scope = (form.get("queue_scope") or "TABLE").strip().upper()
+        if queue_scope not in {"TABLE", "MAPPING"}:
+            raise ValueError("Queue scope must be TABLE or MAPPING.")
         try:
             workers = int(form.get("worker_threads") or 4)
         except (TypeError, ValueError) as error:
@@ -50,6 +53,7 @@ class MappingService:
             "target_table": validate_identifier((form.get("target_table") or "").strip().lstrip("."), "target table"),
             "invocation_mode": mode,
             "worker_threads": str(workers),
+            "queue_scope": queue_scope,
         }
 
     def _ensure_schema(self, cursor) -> None:
@@ -66,6 +70,7 @@ class MappingService:
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 invocation_mode ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC',
                 worker_threads SMALLINT UNSIGNED NOT NULL DEFAULT 4,
+                queue_scope ENUM('TABLE','MAPPING') NOT NULL DEFAULT 'TABLE',
                 event_rule_id VARCHAR(255) NULL,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 PRIMARY KEY (id)
@@ -74,6 +79,7 @@ class MappingService:
         for column, definition in (
             ("invocation_mode", "ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC'"),
             ("worker_threads", "SMALLINT UNSIGNED NOT NULL DEFAULT 4"),
+            ("queue_scope", "ENUM('TABLE','MAPPING') NOT NULL DEFAULT 'TABLE'"),
             ("event_rule_id", "VARCHAR(255) NULL"),
         ):
             cursor.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=%s AND table_name=%s AND column_name=%s", (database, MAPPING_TABLE, column))
@@ -87,7 +93,7 @@ class MappingService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             self._ensure_schema(cursor)
             cursor.execute(
-                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, event_rule_id "
+                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, queue_scope, event_rule_id "
                 f"FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} ORDER BY compartment_name, bucket_name, resource_name_pattern"
             )
             return cursor.fetchall()
@@ -113,7 +119,7 @@ class MappingService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             self._ensure_schema(cursor)
             cursor.execute(
-                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, event_rule_id "
+                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, queue_scope, event_rule_id "
                 f"FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} WHERE id = %s",
                 (mapping_id,),
             )
@@ -124,7 +130,7 @@ class MappingService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             self._ensure_schema(cursor)
             cursor.execute(
-                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, event_rule_id "
+                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, queue_scope, event_rule_id "
                 f"FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} WHERE event_rule_id = %s LIMIT 1",
                 (rule_id,),
             )
@@ -136,8 +142,8 @@ class MappingService:
             self._ensure_schema(cursor)
             cursor.execute(
                 f"INSERT INTO {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} "
-                "(compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads")),
+                "(compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, queue_scope) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads", "queue_scope")),
             )
             return int(cursor.lastrowid)
 
@@ -153,10 +159,48 @@ class MappingService:
                 return False
             cursor.execute(
                 f"UPDATE {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} "
-                "SET compartment_name = %s, bucket_name = %s, resource_name_pattern = %s, target_database = %s, target_table = %s, invocation_mode = %s, worker_threads = %s WHERE id = %s",
-                (*tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads")), mapping_id),
+                "SET compartment_name = %s, bucket_name = %s, resource_name_pattern = %s, target_database = %s, target_table = %s, invocation_mode = %s, worker_threads = %s, queue_scope = %s WHERE id = %s",
+                (*tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads", "queue_scope")), mapping_id),
             )
             return True
+
+    def has_nonterminal_queue_work(self, mapping: dict[str, Any], new_scope: str) -> bool:
+        """Prevent a scope change from splitting an active ordered lane."""
+        old_scope = str(mapping.get("queue_scope") or "TABLE").upper()
+        if old_scope == new_scope:
+            return False
+        keys = [f"mapping:{int(mapping['id'])}", f"table:{mapping['target_database']}.{mapping['target_table']}"]
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=%s AND table_name='event_work_queue'",
+                (control_database(),),
+            )
+            if not cursor.fetchone()[0]:
+                return False
+            cursor.execute(
+                f"""SELECT COUNT(*) FROM {quote_identifier(control_database(), 'mapping database')}.`event_work_queue`
+                     WHERE binding_key IN (%s,%s)
+                       AND status NOT IN ('SUCCESS','CANCELLED','DEAD_LETTER')""",
+                tuple(keys),
+            )
+            return bool(cursor.fetchone()[0])
+
+    def mapping_has_nonterminal_queue_work(self, mapping_id: int) -> bool:
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=%s AND table_name='event_work_queue'",
+                (control_database(),),
+            )
+            if not cursor.fetchone()[0]:
+                return False
+            cursor.execute(
+                f"""SELECT COUNT(*) FROM {quote_identifier(control_database(), 'mapping database')}.`event_work_queue`
+                     WHERE mapping_id=%s AND status NOT IN ('SUCCESS','CANCELLED','DEAD_LETTER')""",
+                (mapping_id,),
+            )
+            return bool(cursor.fetchone()[0])
 
     def delete_mapping(self, mapping_id: int) -> bool:
         with self.mysql.connection() as conn:
