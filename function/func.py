@@ -83,6 +83,7 @@ def _write_event_audit(db: Database, event: dict[str, Any]) -> int:
                 received_at DATETIME(6) NOT NULL,
                 completed_at DATETIME(6) NULL,
                 duration_ms DECIMAL(16,3) NULL,
+                invocation_mode ENUM('SYNC','DETACHED') NULL,
                 KEY ix_object_event_time (event_date)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
         )
@@ -90,6 +91,7 @@ def _write_event_audit(db: Database, event: dict[str, Any]) -> int:
             ("received_at", "DATETIME(6) NULL"),
             ("completed_at", "DATETIME(6) NULL"),
             ("duration_ms", "DECIMAL(16,3) NULL"),
+            ("invocation_mode", "ENUM('SYNC','DETACHED') NULL"),
         ):
             cursor.execute(
                 """SELECT 1 FROM information_schema.columns
@@ -109,6 +111,18 @@ def _write_event_audit(db: Database, event: dict[str, Any]) -> int:
             ),
         )
         return int(cursor.lastrowid)
+
+
+def _set_object_event_mode(db: Database, object_event_id: int, invocation_mode: str) -> None:
+    """Persist the mapping mode selected for this immutable event execution."""
+    mode = str(invocation_mode or "").upper()
+    if mode not in {"SYNC", "DETACHED"}:
+        raise ValueError("Resolved mapping has an unsupported invocation mode.")
+    with db.connection() as connection:
+        connection.cursor().execute(
+            f"UPDATE {control_table('object_event')} SET invocation_mode = %s WHERE id = %s",
+            (mode, object_event_id),
+        )
 
 
 class ObjectStorageRangeStream(io.RawIOBase):
@@ -283,6 +297,11 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
         # CloudEvent back to this Function as a detached invocation, allowing
         # large objects to run beyond the 300-second synchronous ceiling.
         mapping = None if detached_worker else resolve_mapping(db, source)
+        if detached_worker:
+            source["invocation_mode"] = str(event.get("_invocation_mode") or "DETACHED").upper()
+        else:
+            source["invocation_mode"] = str(mapping.get("invocation_mode") or "SYNC").upper()
+            _set_object_event_mode(db, object_event_id, source["invocation_mode"])
         if mapping and mapping.get("invocation_mode", "SYNC") == "DETACHED":
             function_id = os.environ.get("FUNCTION_ID", "")
             if not function_id or os.environ.get("DETACHED_ENABLED", "false").lower() != "true":
@@ -301,6 +320,7 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
             worker_event = dict(event)
             worker_event["_detached_worker"] = True
             worker_event["_object_event_id"] = object_event_id
+            worker_event["_invocation_mode"] = source["invocation_mode"]
             client.invoke_function(function_id=function_id, invoke_function_body=json.dumps(worker_event).encode(), fn_intent="cloudevent", fn_invoke_type="detached")
             return response.Response(ctx, response_data=json.dumps({"status": "detached_submitted", "mapping_id": mapping["id"], "worker_threads": mapping.get("worker_threads", 4)}), headers={"Content-Type": "application/json"}, status_code=202)
         result = _run_delete(db, event, source) if action == "DELETE" else _run_load(db, event, source, create=action == "CREATE")

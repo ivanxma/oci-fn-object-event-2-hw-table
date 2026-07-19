@@ -40,6 +40,23 @@ class UIConsistencySourceTest(unittest.TestCase):
         self.assertIn('value="10" aria-label="Rows to show"', base)
         self.assertIn("client-table-controls", base)
 
+    def test_registered_table_uses_one_toolbar_with_download_on_the_right(self) -> None:
+        source = (TEMPLATES / "event_transactions.html").read_text(encoding="utf-8")
+        registered = source.split('id="registered-panel"', 1)[1].split(
+            'id="object-events-panel"', 1
+        )[0]
+        self.assertEqual(registered.count('class="table-page-toolbar"'), 1)
+        self.assertEqual(registered.count("server-table-controls"), 1)
+        self.assertIn(
+            '<div class="table-page-view"><div class="table-page-toolbar">',
+            registered,
+        )
+        self.assertLess(
+            registered.index("server-table-controls"),
+            registered.index('class="table-toolbar-icons"'),
+        )
+        self.assertIn('aria-label="Download CSV"', registered)
+
 
 if __name__ == "__main__":
     unittest.main()

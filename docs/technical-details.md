@@ -242,4 +242,5 @@ session state should be committed.
 - [Large-file technical architecture](../blog/technical-architecture-large-csv-heatwave.md)
 - [Parallel CSV streaming implementation](csv-stream-parallelization-implementation.md)
 - [Diskless parallel CSV streaming implementation](diskless-parallel-csv-streaming-implementation.md)
-- [Final sync and detached performance report](../external-reports/performance-test-report-20260719-sync-detached.md)
+- [Current VM 6 performance report — MySQL.8 with 1.3 TB storage](../external-reports/performance-test-report-vm6-20260719.md)
+- [Prior performance baseline — MySQL.8 with 50 GB storage](../external-reports/performance-test-report-20260719-sync-detached.md)

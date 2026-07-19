@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CSV to HeatWave performance test — VM 6</title>
+<style>
+:root{--ink:#152b3a;--muted:#62717c;--line:#d9e2e7;--soft:#f4f7f9;--card:#fff;--red:#bd2737;--green:#147a50;--blue:#2168a8;--orange:#c56a16;--purple:#7651a8}*{box-sizing:border-box}body{margin:0;background:var(--soft);color:var(--ink);font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}header{background:linear-gradient(125deg,#102a39,#1c475d);color:#fff;padding:42px max(28px,6vw)}header h1{font-size:34px;line-height:1.15;margin:4px 0 10px}header p{color:#d3e0e6;margin:0;max-width:980px}.eyebrow{color:#ff9aa2;font-size:11px;font-weight:800;letter-spacing:1.3px;text-transform:uppercase}main{margin:auto;max-width:1480px;padding:28px}.cards{display:grid;gap:14px;grid-template-columns:repeat(5,minmax(150px,1fr));margin-top:-54px}.card,section{background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 5px 18px #132b3710}.card{padding:18px}.card small{color:var(--muted);font-weight:700;text-transform:uppercase}.card strong{display:block;font-size:25px;margin-top:5px}.card span{color:var(--muted);font-size:12px}section{margin-top:22px;padding:25px}h2{font-size:22px;margin:0 0 14px}h3{font-size:16px;margin:23px 0 8px}p{margin:8px 0}code{background:#edf2f5;border-radius:4px;padding:2px 5px}.notice{border-left:4px solid var(--orange);background:#fff8ed;padding:13px 15px}.success{border-left-color:var(--green);background:#eef9f3}.grid2{display:grid;gap:20px;grid-template-columns:repeat(2,minmax(0,1fr))}.flow{align-items:center;display:flex;gap:8px;overflow:auto;padding:10px 0}.node{background:#f4f8fa;border:1px solid #ccd9e0;border-radius:8px;min-width:155px;padding:14px;text-align:center}.arrow{color:#8797a1;font-size:22px}.table-wrap{overflow:auto}table{border-collapse:collapse;min-width:850px;width:100%}th{background:#edf3f6;color:#4d606c;font-size:11px;letter-spacing:.3px;padding:10px;text-align:left;text-transform:uppercase}td{border-top:1px solid #e1e8ec;padding:10px;vertical-align:top}tr:hover td{background:#fafcfd}.num{text-align:right;white-space:nowrap}.badge{border-radius:15px;display:inline-block;font-size:11px;font-weight:800;padding:4px 8px}.sync{background:#eaf2f9;color:#225b88}.detached{background:#f1ebfa;color:#644495}.ok{background:#e7f6ed;color:#17653f}.charts{display:grid;gap:18px;grid-template-columns:repeat(2,minmax(0,1fr))}.chart{border:1px solid var(--line);border-radius:8px;padding:14px}.chart h3{margin:0 0 5px}.chart p{color:var(--muted);font-size:12px;margin:0 0 10px}.chart canvas{height:310px;width:100%}.projection{display:grid;gap:8px}.bar-row{align-items:center;display:grid;gap:10px;grid-template-columns:190px 1fr 75px}.track{background:#eaf0f3;border-radius:6px;height:22px;overflow:hidden}.fill{height:100%}.metric-grid{display:grid;gap:12px;grid-template-columns:repeat(4,minmax(150px,1fr))}.metric{background:#f5f8fa;border-radius:8px;padding:14px}.metric strong{display:block;font-size:20px}.metric small{color:var(--muted)}ul{padding-left:21px}.foot{color:var(--muted);font-size:12px}.delta-good{color:var(--green);font-weight:800}@media(max-width:900px){.cards,.grid2,.charts,.metric-grid{grid-template-columns:1fr 1fr}.cards{margin-top:16px}.bar-row{grid-template-columns:125px 1fr 60px}}@media(max-width:600px){main{padding:15px}.cards,.grid2,.charts,.metric-grid{grid-template-columns:1fr}section{padding:18px}}
+</style>
+</head>
+<body>
+<header><div class="eyebrow">Measured performance report · 19 July 2026</div><h1>Object Storage CSV ingestion to HeatWave — VM 6</h1><p>Sequential ingestion through OCI Events and OCI Function, using mapping-driven synchronous and detached execution, streaming Object Storage ranges, four MySQL writers, staging tables, and atomic partition exchange.</p></header>
+<main>
+<div class="cards">
+  <div class="card"><small>Primary cases</small><strong>6 / 6</strong><span>Successful create and delete</span></div>
+  <div class="card"><small>Largest measured</small><strong>5 GiB</strong><span>Detached, 10,076,665 rows</span></div>
+  <div class="card"><small>5 GiB processing</small><strong>343.368 s</strong><span>14.91 MiB/s</span></div>
+  <div class="card"><small>New DB storage</small><strong>1.3 TB</strong><span>Prior environment: 50 GB</span></div>
+  <div class="card"><small>Final residue</small><strong>0</strong><span>Rows, stages, batches, live objects</span></div>
+</div>
+
+<section>
+<h2>Executive result</h2>
+<p class="notice success"><strong>Outcome:</strong> synchronous ingestion passed at 10, 100, and 500 MiB. Detached ingestion passed at 1, 2, and 5 GiB. Every case validated the exact row count, completed partition exchange, deleted its source object, truncated the mapped partition, and left no staging table.</p>
+<ul>
+  <li>The wide-row workload sustained approximately <strong>14.9 MiB/s</strong> from 500 MiB through 5 GiB. A tenfold increase from 500 MiB to 5 GiB increased processing time by 10.26×, showing near-linear scaling.</li>
+  <li>A controlled 500 MiB narrow-row comparison closely matched the prior row count: 8,096,895 rows now versus 8,080,750 previously. Processing improved from 117.454 to 108.640 seconds: <span class="delta-good">7.50% less time</span> and <span class="delta-good">8.09% more MiB/s</span>.</li>
+  <li>The 1.3 TB allocation is consistent with higher usable storage activity, but storage allocation is not isolated as the sole cause. Database load, cache state, object delivery, row width, batching, and monitoring aggregation also affect results.</li>
+</ul>
+</section>
+
+<section>
+<h2>Environment and architecture</h2>
+<div class="flow"><div class="node"><strong>testvm05</strong><br>Generate + multipart upload</div><div class="arrow">→</div><div class="node"><strong>Object Storage</strong><br>ivanma-bucket</div><div class="arrow">→</div><div class="node"><strong>OCI Events</strong><br>VM 6 prefix filter</div><div class="arrow">→</div><div class="node"><strong>OCI Function</strong><br>Sync or detached</div><div class="arrow">→</div><div class="node"><strong>MySQL.8</strong><br>Stage + partition exchange</div></div>
+<div class="table-wrap"><table>
+<thead><tr><th>Component</th><th>Measured/configured value</th><th>Evidence</th></tr></thead>
+<tbody>
+<tr><td>Test VM</td><td><code>testvm05</code>; VM.Standard.E5.Flex; 1 OCPU; 12 GB memory; Oracle Linux 9.8; 30 GB root volume</td><td>OCI instance metadata and host commands</td></tr>
+<tr><td>Function</td><td><code>object-storage-heatwave-app6/object-storage-heatwave6</code>; 2,048 MB; sync 300 s; detached 3,600 s</td><td>Live OCI Function lookup</td></tr>
+<tr><td>Function image/runtime</td><td><code>object-storage-heatwave6:0.1.1</code>; Python 3.13; Connector/Python 9.7+</td><td>Deployment and container metadata</td></tr>
+<tr><td>Streaming</td><td>32 MiB Object Storage ranges; no Function-local CSV file</td><td><code>OBJECT_STORAGE_RANGE_BYTES=33554432</code></td></tr>
+<tr><td>Database writers</td><td>4 workers; 10,000-row batches</td><td>Function configuration and mapping snapshot</td></tr>
+<tr><td>Database service</td><td>MySQL.8 shape; MySQL 9.7.1-cloud; 1.3 TB storage allocation</td><td>Shape/storage operator-confirmed; server version queried directly</td></tr>
+<tr><td>Database runtime</td><td>48 GiB InnoDB buffer pool; 4,000 max connections; <code>innodb_flush_log_at_trx_commit=1</code>; <code>sync_binlog=1</code></td><td>Live MySQL variables</td></tr>
+<tr><td>Control and target</td><td><code>fndb6</code>; <code>fntestdb.perf_t_001</code>; invisible <code>batch_num</code>; LIST partitioning</td><td>Live schema validation</td></tr>
+<tr><td>Rule and mapping</td><td><code>object-storage-heatwave6-events</code>; <code>performance/vm6/perf_t_001/*</code>; mapping 1</td><td>Live OCI rule and control schema</td></tr>
+<tr><td>Source revision</td><td>Base commit <code>1992ebb</code>, plus deployed execution-mode snapshot and performance-runner changes in the working tree</td><td>Git and deployment output</td></tr>
+</tbody></table></div>
+<p class="foot">The VM instance principal could not list MySQL DB systems. Shape and storage allocation are therefore operator-confirmed; credentials, private endpoints, tokens, and full OCIDs are excluded.</p>
+</section>
+
+<section>
+<h2>Method</h2>
+<ol>
+<li>Reset only mapping 1 and <code>fntestdb.perf_t_001</code>; create the target, seed partition, UI profile, and exact resource mapping.</li>
+<li>Generate deterministic CSV with valid <code>record_id,event_ts,category,payload,amount</code> columns. Primary rows used a 480-byte payload and averaged about 533 bytes per row.</li>
+<li>Upload one unique object at a time through OCI CLI multipart upload. Use sync through 500 MiB, then dynamically switch the mapping to detached for 1–5 GiB.</li>
+<li>Measure delivery latency from CloudEvent time to Function receipt and processing duration from Function receipt to its terminal transaction record.</li>
+<li>Verify exact rows, terminal success, immutable mode snapshot, and zero staging residue. Delete the object and wait for successful partition cleanup before advancing.</li>
+<li>Run an additional 500 MiB comparison with a 12-byte payload, averaging 64.75 bytes per row, to match the prior 50 GB-storage workload.</li>
+</ol>
+</section>
+
+<section>
+<h2>Measured results</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Case</th><th>Mode</th><th class="num">Rows</th><th class="num">Generate</th><th class="num">Upload</th><th class="num">Delivery</th><th class="num">Processing</th><th class="num">MiB/s</th><th class="num">Seconds / 100 rows</th><th class="num">Delete</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>10 MiB</td><td><span class="badge sync">SYNC</span></td><td class="num">19,773</td><td class="num">1.475 s</td><td class="num">1.718 s</td><td class="num">6.133 s</td><td class="num">1.691 s</td><td class="num">5.914</td><td class="num">0.008551</td><td class="num">0.166 s</td><td><span class="badge ok">SUCCESS</span></td></tr>
+<tr><td>100 MiB</td><td><span class="badge sync">SYNC</span></td><td class="num">197,352</td><td class="num">1.150 s</td><td class="num">2.468 s</td><td class="num">12.490 s</td><td class="num">7.571 s</td><td class="num">13.208</td><td class="num">0.003836</td><td class="num">0.164 s</td><td><span class="badge ok">SUCCESS</span></td></tr>
+<tr><td>500 MiB</td><td><span class="badge sync">SYNC</span></td><td class="num">985,920</td><td class="num">2.666 s</td><td class="num">6.678 s</td><td class="num">8.452 s</td><td class="num">33.474 s</td><td class="num">14.937</td><td class="num">0.003395</td><td class="num">0.164 s</td><td><span class="badge ok">SUCCESS</span></td></tr>
+<tr><td>1 GiB</td><td><span class="badge detached">DETACHED</span></td><td class="num">2,017,031</td><td class="num">14.196 s</td><td class="num">11.880 s</td><td class="num">11.123 s</td><td class="num">69.076 s</td><td class="num">14.824</td><td class="num">0.003425</td><td class="num">1.035 s</td><td><span class="badge ok">SUCCESS</span></td></tr>
+<tr><td>2 GiB</td><td><span class="badge detached">DETACHED</span></td><td class="num">4,031,976</td><td class="num">36.706 s</td><td class="num">20.475 s</td><td class="num">6.962 s</td><td class="num">137.089 s</td><td class="num">14.939</td><td class="num">0.003400</td><td class="num">1.207 s</td><td><span class="badge ok">SUCCESS</span></td></tr>
+<tr><td>5 GiB</td><td><span class="badge detached">DETACHED</span></td><td class="num">10,076,665</td><td class="num">108.720 s</td><td class="num">46.199 s</td><td class="num">4.932 s</td><td class="num">343.368 s</td><td class="num">14.911</td><td class="num">0.003408</td><td class="num">1.896 s</td><td><span class="badge ok">SUCCESS</span></td></tr>
+<tr><td>500 MiB narrow comparison</td><td><span class="badge sync">SYNC</span></td><td class="num">8,096,895</td><td class="num">12.487 s</td><td class="num">6.407 s</td><td class="num">12.025 s</td><td class="num">108.640 s</td><td class="num">4.602</td><td class="num">0.001342</td><td class="num">0.182 s</td><td><span class="badge ok">SUCCESS</span></td></tr>
+</tbody></table></div>
+</section>
+
+<section>
+<h2>Charts</h2>
+<div class="charts">
+  <div class="chart"><h3>Processing duration by primary file size</h3><p>Measured Function duration; 500 MiB–5 GiB regression is almost linear.</p><canvas id="durationChart" aria-label="Processing duration chart"></canvas></div>
+  <div class="chart"><h3>Primary workload throughput</h3><p>MiB/s; small files include a larger fixed setup share.</p><canvas id="throughputChart" aria-label="Throughput chart"></canvas></div>
+</div>
+</section>
+
+<section>
+<h2>Storage allocation comparison: 1.3 TB versus 50 GB</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Controlled 500 MiB narrow case</th><th class="num">Prior MySQL.8 / 50 GB</th><th class="num">New MySQL.8 / 1.3 TB</th><th class="num">Change</th></tr></thead>
+<tbody>
+<tr><td>Actual rows</td><td class="num">8,080,750</td><td class="num">8,096,895</td><td class="num">+0.20%</td></tr>
+<tr><td>Processing duration</td><td class="num">117.454 s</td><td class="num">108.640 s</td><td class="num delta-good">−7.50%</td></tr>
+<tr><td>Throughput</td><td class="num">4.258 MiB/s</td><td class="num">4.602 MiB/s</td><td class="num delta-good">+8.09%</td></tr>
+<tr><td>Rows per second</td><td class="num">68,799</td><td class="num">74,529</td><td class="num delta-good">+8.33%</td></tr>
+<tr><td>Storage context</td><td>50 GB; one LUN; approximately 3,750 configured maximum IOPS; prior observed monitoring peak about 496.508 operations</td><td>1.3 TB allocation; higher storage capacity; current observed peak 1,936.5 operations</td><td>Current observed peak 3.90× prior observed peak, across different cases</td></tr>
+</tbody></table></div>
+<p class="notice"><strong>Interpretation boundary:</strong> the controlled row count makes the 500 MiB duration comparison useful, but this is still one sequential sample per environment—not a storage benchmark. The primary new 5 GiB result cannot be compared directly with the prior 5 GiB result because the prior file contained 82.7 million narrow rows, versus 10.1 million wider rows now. Per-row parsing, inserts, indexes, and commits materially change throughput per byte.</p>
+</section>
+
+<section>
+<h2>Database monitoring evidence</h2>
+<p>All metrics below were supplied from OCI database monitoring at one-minute timestamps. The displayed aggregation statistic was not provided, so values retain the console’s labels and are not automatically interpreted as hard service limits.</p>
+<div class="metric-grid">
+  <div class="metric"><small>CPU, overlap 14:08–14:32</small><strong>9.284% avg</strong><span>p95 26.17%; peak 34.35%</span></div>
+  <div class="metric"><small>5 GiB receive plateau</small><strong>15.989 MiB</strong><span>average reported sample; peak 16.164 MiB</span></div>
+  <div class="metric"><small>5 GiB transmit plateau</small><strong>76.661 MiB</strong><span>average reported sample; peak 86.534 MiB</span></div>
+  <div class="metric"><small>Disk write operations</small><strong>1,936.5 peak</strong><span>5 GiB phase average 1,249.826; peak 1,870.048</span></div>
+</div>
+<h3>What the plateau means</h3>
+<ul>
+<li>At 14:30–14:34, database receive averaged 16.765 million bytes per reported sample, or 15.989 MiB if the statistic is bytes/second. That is about 7.2% above the measured 14.911 MiB/s CSV rate, a plausible protocol and SQL overhead relationship.</li>
+<li>This correlation establishes a steady end-to-end pipeline rate. It does <strong>not</strong> prove the database NIC or OCI network is maxed out. A network limit requires the metric aggregation, shape bandwidth limit, and a concurrency test that attempts to push above the plateau.</li>
+<li>Database transmit reached substantially higher values than receive. That traffic cannot safely be attributed only to Function responses; it may include MySQL service, replication, or internal traffic represented by the metric.</li>
+<li>CPU remained mostly well below saturation while disk operations and network traffic increased. The result is consistent with an I/O/pipeline-bound workload rather than a CPU-bound MySQL.8 workload.</li>
+</ul>
+</section>
+
+<section>
+<h2>Projected maximum file size</h2>
+<p>The bulk wide-row points from 500 MiB through 5 GiB fit <code>duration seconds = 0.0782 + 0.067038 × MiB</code> with R² = 0.999996. Projection uses Function processing time only; Object Storage event delivery occurs before the Function timer. “80% budget” reserves 20% for variance. These are planning estimates, not OCI service guarantees.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Scenario</th><th class="num">Basis</th><th class="num">Sync hard 300 s</th><th class="num">Sync 80% / 240 s</th><th class="num">Detached hard 3,600 s</th><th class="num">Detached 80% / 2,880 s</th></tr></thead>
+<tbody>
+<tr><td>New wide-row regression</td><td class="num">14.917 MiB/s fitted</td><td class="num">4.37 GiB</td><td class="num">3.50 GiB</td><td class="num">52.44 GiB</td><td class="num">41.95 GiB</td></tr>
+<tr><td>New wide-row conservative</td><td class="num">13.208 MiB/s lowest bulk point</td><td class="num">3.87 GiB</td><td class="num">3.10 GiB</td><td class="num">46.44 GiB</td><td class="num">37.15 GiB</td></tr>
+<tr><td>New narrow-row single point</td><td class="num">4.602 MiB/s at 500 MiB</td><td class="num">1.35 GiB</td><td class="num">1.08 GiB</td><td class="num">16.18 GiB</td><td class="num">12.94 GiB</td></tr>
+<tr><td>Prior narrow-row sustained</td><td class="num">3.634 MiB/s at 5 GiB</td><td class="num">1.06 GiB</td><td class="num">0.85 GiB</td><td class="num">12.78 GiB</td><td class="num">10.22 GiB</td></tr>
+</tbody></table></div>
+<h3>Projection chart — hard timeout envelope</h3>
+<div class="projection">
+  <div class="bar-row"><span>New wide · sync</span><div class="track"><div class="fill" style="width:8.3%;background:var(--blue)"></div></div><strong>4.37 GiB</strong></div>
+  <div class="bar-row"><span>New wide · detached</span><div class="track"><div class="fill" style="width:99.9%;background:var(--purple)"></div></div><strong>52.44 GiB</strong></div>
+  <div class="bar-row"><span>New narrow · sync</span><div class="track"><div class="fill" style="width:2.6%;background:var(--blue)"></div></div><strong>1.35 GiB</strong></div>
+  <div class="bar-row"><span>New narrow · detached</span><div class="track"><div class="fill" style="width:30.9%;background:var(--purple)"></div></div><strong>16.18 GiB</strong></div>
+  <div class="bar-row"><span>Prior narrow · sync</span><div class="track"><div class="fill" style="width:2.0%;background:#7d919d"></div></div><strong>1.06 GiB</strong></div>
+  <div class="bar-row"><span>Prior narrow · detached</span><div class="track"><div class="fill" style="width:24.4%;background:#9aa8b0"></div></div><strong>12.78 GiB</strong></div>
+</div>
+<p class="notice"><strong>Operational threshold:</strong> the demonstrated safe sizes remain 500 MiB sync and 5 GiB detached until repeated warm/cold, concurrent, degraded-I/O, and p95 tests validate larger thresholds. Split large logical sources into ordered, disjoint objects when practical.</p>
+</section>
+
+<section>
+<h2>Execution-mode logging defect found and fixed</h2>
+<p>During the run, the UI relabeled historical rows from the mapping’s current mode and showed a newly submitted detached event as sync until its worker completed. The database did not previously store an immutable execution-mode snapshot.</p>
+<ul>
+<li>Added nullable <code>invocation_mode</code> snapshots to <code>object_event</code> and <code>event_tx_log</code>.</li>
+<li>The parent Function records the resolved mode immediately; detached self-invocation carries the snapshot to the worker; terminal transaction rows persist it.</li>
+<li>UI Event TX, Object Storage Event, Registered Table, Recent TX, Audit Log, and Detached Process queries now use event snapshots rather than mutable mapping state.</li>
+<li>Known VM 6 performance rows were safely backfilled from their unambiguous test object names: 10 sync and 2 detached records before the fix. A post-deployment canary persisted <code>DETACHED</code> on both create and delete in both tables.</li>
+<li>Legacy records without reliable evidence display <code>UNKNOWN</code>, avoiding a false mode assignment.</li>
+</ul>
+</section>
+
+<section>
+<h2>Final state and limitations</h2>
+<div class="metric-grid">
+  <div class="metric"><small>Target rows</small><strong>0</strong></div><div class="metric"><small>Staging tables</small><strong>0</strong></div><div class="metric"><small>Active/loading batches</small><strong>0</strong></div><div class="metric"><small>Live test objects</small><strong>0</strong></div>
+</div>
+<ul>
+<li>One sequential measurement per primary size; no median, p95, p99, variance, or concurrent-event matrix.</li>
+<li>Primary files used wide deterministic rows. Complex quoting, multibyte text, secondary indexes, conversions, and duplicate detection can reduce throughput.</li>
+<li>The controlled storage comparison uses closely matched bytes and row counts but was not run under identical cache, tenancy, or monitoring conditions.</li>
+<li>OCI database monitoring samples were operator-provided. The aggregation statistic and bandwidth ceiling were not captured, so plateau values are correlation evidence rather than proven saturation.</li>
+<li>Detached projections above 5 GiB and sync projections above 500 MiB are extrapolations. Function, database, Object Storage, connection, and retry behavior may become nonlinear.</li>
+<li>Deleted live objects may remain in bucket version history depending on versioning and retention policy.</li>
+</ul>
+<p class="foot">Test window: 2026-07-19 14:08–14:37 UTC. Raw machine-readable results: <code>performance-test-vm6-20260719-results.jsonl</code>. Report generated from terminal measurements, control-schema audit rows, live configuration, and operator-supplied OCI database monitoring. No secrets are included.</p>
+</section>
+</main>
+<script>
+const sizes=[10/1024,100/1024,500/1024,1,2,5], durations=[1.690839,7.571044,33.474402,69.076044,137.089299,343.368256], rates=[5.914462,13.208269,14.936801,14.824248,14.939168,14.911105], labels=['10 MiB','100 MiB','500 MiB','1 GiB','2 GiB','5 GiB'];
+function setup(canvas){const d=devicePixelRatio||1,r=canvas.getBoundingClientRect();canvas.width=r.width*d;canvas.height=310*d;const c=canvas.getContext('2d');c.scale(d,d);return [c,r.width,310]}
+function axes(c,w,h,ymax,ylabel){c.strokeStyle='#a9b7bf';c.lineWidth=1;c.beginPath();c.moveTo(52,15);c.lineTo(52,h-42);c.lineTo(w-12,h-42);c.stroke();c.fillStyle='#63737d';c.font='11px system-ui';for(let i=0;i<=4;i++){const y=15+(h-57)*i/4,v=ymax*(1-i/4);c.fillText(v.toFixed(ymax<20?1:0),4,y+4);c.strokeStyle='#e3e9ec';c.beginPath();c.moveTo(52,y);c.lineTo(w-12,y);c.stroke()}c.fillText(ylabel,4,11)}
+function lineChart(){const [c,w,h]=setup(document.getElementById('durationChart')),max=360;axes(c,w,h,max,'seconds');const xs=labels.map((_,i)=>52+(w-75)*i/(labels.length-1));c.strokeStyle='#bd2737';c.lineWidth=2.5;c.beginPath();durations.forEach((v,i)=>{const y=15+(h-57)*(1-v/max);i?c.lineTo(xs[i],y):c.moveTo(xs[i],y)});c.stroke();durations.forEach((v,i)=>{const y=15+(h-57)*(1-v/max);c.fillStyle='#bd2737';c.beginPath();c.arc(xs[i],y,4,0,Math.PI*2);c.fill();c.fillStyle='#445864';c.font='10px system-ui';c.save();c.translate(xs[i]-3,h-27);c.rotate(-.45);c.fillText(labels[i],0,0);c.restore()})}
+function barChart(){const [c,w,h]=setup(document.getElementById('throughputChart')),max=16;axes(c,w,h,max,'MiB/s');const area=w-75,bw=Math.max(18,area/labels.length*.55);rates.forEach((v,i)=>{const x=60+area*i/labels.length+(area/labels.length-bw)/2,y=15+(h-57)*(1-v/max);c.fillStyle=i<3?'#2168a8':'#7651a8';c.fillRect(x,y,bw,h-42-y);c.fillStyle='#344b58';c.font='10px system-ui';c.fillText(v.toFixed(2),x,y-4);c.save();c.translate(x+3,h-27);c.rotate(-.45);c.fillText(labels[i],0,0);c.restore()})}
+function draw(){lineChart();barChart()}addEventListener('load',draw);addEventListener('resize',()=>{clearTimeout(window.__chartTimer);window.__chartTimer=setTimeout(draw,100)});
+</script>
+</body>
+</html>

@@ -156,6 +156,7 @@ def ensure_control_tables(db: Database) -> None:
                 bucket_name VARCHAR(255) NULL,
                 resource_name VARCHAR(1024) NULL,
                 object_version VARCHAR(255) NULL,
+                invocation_mode ENUM('SYNC','DETACHED') NULL,
                 message TEXT NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 KEY ix_event_object_event (object_event_id),
@@ -171,6 +172,16 @@ def ensure_control_tables(db: Database) -> None:
         if cursor.fetchone() is None:
             cursor.execute(f"ALTER TABLE {control_table('event_tx_log')} ADD COLUMN object_event_id BIGINT UNSIGNED NULL AFTER id")
             cursor.execute(f"ALTER TABLE {control_table('event_tx_log')} ADD KEY ix_event_object_event (object_event_id)")
+        cursor.execute(
+            """SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = %s AND table_name = 'event_tx_log'
+                   AND column_name = 'invocation_mode'""",
+            (control_database(),),
+        )
+        if cursor.fetchone() is None:
+            cursor.execute(
+                f"ALTER TABLE {control_table('event_tx_log')} ADD COLUMN invocation_mode ENUM('SYNC','DETACHED') NULL AFTER object_version"
+            )
         cursor.execute(
             f"""CREATE TABLE IF NOT EXISTS {control_table('event_errors')} (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -440,9 +451,9 @@ def log_event(db: Database, source: dict[str, Any], action: str, status: str, ma
         cursor = connection.cursor()
         cursor.execute(
             f"""INSERT INTO {control_table('event_tx_log')}
-               (object_event_id, mapping_id, target_database, target_table, batch_num, event_action, event_status, bucket_name, resource_name, object_version, message)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (source.get("object_event_id"), mapping.get("id") if mapping else None, mapping.get("target_database") if mapping else None, mapping.get("target_table") if mapping else None, batch_num, action, status, source["bucket_name"], source["resource_name"], source["object_version"], message),
+               (object_event_id, mapping_id, target_database, target_table, batch_num, event_action, event_status, bucket_name, resource_name, object_version, invocation_mode, message)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (source.get("object_event_id"), mapping.get("id") if mapping else None, mapping.get("target_database") if mapping else None, mapping.get("target_table") if mapping else None, batch_num, action, status, source["bucket_name"], source["resource_name"], source["object_version"], source.get("invocation_mode") or (mapping.get("invocation_mode") if mapping else None), message),
         )
         if source.get("object_event_id"):
             cursor.execute(

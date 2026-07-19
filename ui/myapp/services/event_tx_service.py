@@ -28,6 +28,23 @@ class EventTransactionService:
         )
         return cursor.fetchone() is not None
 
+    @staticmethod
+    def _column_exists(cursor, table_name: str, column_name: str) -> bool:
+        cursor.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_schema = %s AND table_name = %s AND column_name = %s",
+            (control_database(), table_name, column_name),
+        )
+        return cursor.fetchone() is not None
+
+    def _transaction_mode_sql(self, cursor, *, include_object_event: bool = False, alias: str = "tx") -> str:
+        """Return the immutable mode snapshot, never the mapping's current mode."""
+        candidates: list[str] = []
+        if self._column_exists(cursor, EVENT_LOG_TABLE, "invocation_mode"):
+            candidates.append(f"{alias}.invocation_mode")
+        if include_object_event and self._table_exists(cursor, OBJECT_EVENT_TABLE) and self._column_exists(cursor, OBJECT_EVENT_TABLE, "invocation_mode"):
+            candidates.append("object_event.invocation_mode")
+        return f"COALESCE({', '.join(candidates)}, 'UNKNOWN')" if candidates else "'UNKNOWN'"
+
     def _event_timing_sql(self, cursor, alias: str = "tx") -> tuple[str, str]:
         """Return optional Object Storage timing projection and join."""
         if not self._table_exists(cursor, OBJECT_EVENT_TABLE):
@@ -46,12 +63,13 @@ class EventTransactionService:
         with self.mysql.connection() as conn:
             cursor = conn.cursor(dictionary=True, buffered=True)
             control = quote_identifier(control_database(), "control database")
+            invocation_mode = self._transaction_mode_sql(cursor)
             cursor.execute(f"""SELECT tx.id, tx.mapping_id, tx.event_action, tx.event_status,
                 tx.target_database, tx.target_table, tx.bucket_name, tx.resource_name,
-                tx.message, tx.created_at, COALESCE(m.invocation_mode, 'SYNC') AS invocation_mode,
+                tx.message, tx.created_at, {invocation_mode} AS invocation_mode,
                 COALESCE(m.worker_threads, 4) AS worker_threads
                 FROM {control}.event_tx_log tx LEFT JOIN {control}.object_storage_mappings m ON m.id=tx.mapping_id
-                WHERE m.invocation_mode='DETACHED' ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""", (limit,))
+                WHERE {invocation_mode}='DETACHED' ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""", (limit,))
             return cursor.fetchall()
 
     def registered_tables(self) -> tuple[list[dict[str, Any]], bool]:
@@ -197,9 +215,10 @@ class EventTransactionService:
             if not self._table_exists(cursor, EVENT_LOG_TABLE):
                 return []
             timing, timing_join = self._event_timing_sql(cursor)
+            invocation_mode = self._transaction_mode_sql(cursor, include_object_event=bool(timing_join))
             cursor.execute(
                 f"""SELECT tx.id, tx.mapping_id, tx.batch_num, tx.event_action, tx.event_status, tx.bucket_name,
-                              tx.resource_name, tx.object_version, tx.message, tx.created_at, COALESCE((SELECT m2.invocation_mode FROM {quote_identifier(control_database(), "control database")}.`object_storage_mappings` m2 WHERE m2.id = tx.mapping_id), 'SYNC') AS invocation_mode{timing}
+                              tx.resource_name, tx.object_version, tx.message, tx.created_at, {invocation_mode} AS invocation_mode{timing}
                        FROM {quote_identifier(control_database(), 'control database')}.`event_tx_log`
                        AS tx{timing_join}
                        WHERE tx.target_database = %s AND tx.target_table = %s
@@ -221,6 +240,7 @@ class EventTransactionService:
                 return [], 0
             control = quote_identifier(control_database(), "control database")
             timing, timing_join = self._event_timing_sql(cursor)
+            invocation_mode = self._transaction_mode_sql(cursor, include_object_event=bool(timing_join))
             cursor.execute(
                 f"SELECT COUNT(*) AS total FROM {control}.`event_tx_log` WHERE target_database = %s AND target_table = %s",
                 (database, table),
@@ -228,7 +248,7 @@ class EventTransactionService:
             total = int(cursor.fetchone()["total"])
             cursor.execute(
                 f"""SELECT tx.id, tx.mapping_id, tx.batch_num, tx.event_action, tx.event_status, tx.bucket_name,
-                              tx.resource_name, tx.object_version, tx.message, tx.created_at, COALESCE((SELECT m2.invocation_mode FROM {quote_identifier(control_database(), "control database")}.`object_storage_mappings` m2 WHERE m2.id = tx.mapping_id), 'SYNC') AS invocation_mode{timing}
+                              tx.resource_name, tx.object_version, tx.message, tx.created_at, {invocation_mode} AS invocation_mode{timing}
                        FROM {control}.`event_tx_log`
                        AS tx{timing_join}
                        WHERE tx.target_database = %s AND tx.target_table = %s
@@ -276,9 +296,10 @@ class EventTransactionService:
             if not self._table_exists(cursor, EVENT_LOG_TABLE):
                 return []
             timing, timing_join = self._event_timing_sql(cursor)
+            invocation_mode = self._transaction_mode_sql(cursor, include_object_event=bool(timing_join))
             cursor.execute(
                 f"""SELECT tx.id, tx.mapping_id, tx.target_database, tx.target_table, tx.batch_num, tx.event_action,
-                              tx.event_status, tx.bucket_name, tx.resource_name, tx.object_version, tx.message, tx.created_at, COALESCE((SELECT m2.invocation_mode FROM {quote_identifier(control_database(), "control database")}.`object_storage_mappings` m2 WHERE m2.id = tx.mapping_id), 'SYNC') AS invocation_mode{timing}
+                              tx.event_status, tx.bucket_name, tx.resource_name, tx.object_version, tx.message, tx.created_at, {invocation_mode} AS invocation_mode{timing}
                        FROM {quote_identifier(control_database(), 'control database')}.`event_tx_log`
                        AS tx{timing_join}
                        ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""",
@@ -339,7 +360,7 @@ class EventTransactionService:
             cursor.execute(
                 """SELECT column_name AS column_name
                      FROM information_schema.columns
-                     WHERE table_schema = %s AND table_name = %s
+                     WHERE table_schema = %s AND table_name = %s AND column_name <> 'invocation_mode'
                      ORDER BY ordinal_position""",
                 (database, OBJECT_EVENT_TABLE),
             )
@@ -388,18 +409,12 @@ class EventTransactionService:
         """
         event_log_exists = self._table_exists(cursor, EVENT_LOG_TABLE)
         error_log_exists = self._table_exists(cursor, EVENT_ERROR_TABLE)
-        mapping_table_exists = self._table_exists(cursor, MAPPING_TABLE)
         control = quote_identifier(control_database(), "control database")
-        invocation_mode = (
-            f"COALESCE((SELECT m.invocation_mode FROM {control}.`object_storage_mappings` AS m "
-            "WHERE m.id = tx.mapping_id), 'SYNC') AS invocation_mode"
-            if mapping_table_exists
-            else "'SYNC' AS invocation_mode"
-        )
+        invocation_mode = f"{self._transaction_mode_sql(cursor)} AS invocation_mode"
         for row in rows:
             row["_lifecycle_status"] = "RECEIVED"
             row["_error_id"] = None
-            row["_invocation_mode"] = "SYNC"
+            row["_invocation_mode"] = row.get("invocation_mode") or "UNKNOWN"
             if not event_log_exists:
                 continue
             error_join = f"LEFT JOIN {control}.`event_errors` AS err ON err.event_log_id = tx.id" if error_log_exists else ""
@@ -430,7 +445,7 @@ class EventTransactionService:
             if linked:
                 row["_lifecycle_status"] = linked["event_status"]
                 row["_error_id"] = linked["error_id"]
-                row["_invocation_mode"] = linked["invocation_mode"] or "SYNC"
+                row["_invocation_mode"] = linked["invocation_mode"] or row["_invocation_mode"]
 
     @staticmethod
     def _event_action(event_type: Any) -> str | None:

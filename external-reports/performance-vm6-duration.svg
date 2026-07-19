@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="440" viewBox="0 0 900 440" role="img" aria-labelledby="title desc">
+  <title id="title">Processing duration by file size</title>
+  <desc id="desc">Processing duration grows from 1.691 seconds at 10 MiB to 343.368 seconds at 5 GiB.</desc>
+  <rect width="900" height="440" rx="12" fill="#ffffff"/>
+  <text x="54" y="32" font-family="system-ui,sans-serif" font-size="20" font-weight="700" fill="#152b3a">Processing duration by primary file size</text>
+  <g stroke="#dce5ea" stroke-width="1">
+    <line x1="72" y1="340" x2="850" y2="340"/><line x1="72" y1="270" x2="850" y2="270"/>
+    <line x1="72" y1="200" x2="850" y2="200"/><line x1="72" y1="130" x2="850" y2="130"/><line x1="72" y1="60" x2="850" y2="60"/>
+  </g>
+  <g fill="#62717c" font-family="system-ui,sans-serif" font-size="12" text-anchor="end">
+    <text x="62" y="344">0</text><text x="62" y="274">90</text><text x="62" y="204">180</text><text x="62" y="134">270</text><text x="62" y="64">360 s</text>
+  </g>
+  <polyline points="110,338.7 250,334.1 390,314.0 530,286.3 670,233.4 810,72.9" fill="none" stroke="#bd2737" stroke-width="4"/>
+  <g fill="#bd2737" stroke="#fff" stroke-width="2">
+    <circle cx="110" cy="338.7" r="6"/><circle cx="250" cy="334.1" r="6"/><circle cx="390" cy="314" r="6"/>
+    <circle cx="530" cy="286.3" r="6"/><circle cx="670" cy="233.4" r="6"/><circle cx="810" cy="72.9" r="6"/>
+  </g>
+  <g fill="#334b58" font-family="system-ui,sans-serif" font-size="12" text-anchor="middle">
+    <text x="110" y="374">10 MiB</text><text x="250" y="374">100 MiB</text><text x="390" y="374">500 MiB</text>
+    <text x="530" y="374">1 GiB</text><text x="670" y="374">2 GiB</text><text x="810" y="374">5 GiB</text>
+    <text x="110" y="324">1.69</text><text x="250" y="320">7.57</text><text x="390" y="299">33.47</text>
+    <text x="530" y="271">69.08</text><text x="670" y="218">137.09</text><text x="810" y="57">343.37</text>
+  </g>
+  <text x="450" y="416" text-anchor="middle" font-family="system-ui,sans-serif" font-size="12" fill="#62717c">Function processing duration; 500 MiB–5 GiB scaling is nearly linear.</text>
+</svg>
