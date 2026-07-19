@@ -266,14 +266,20 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
             raise ValueError("Expected an Object Storage CloudEvent JSON object.")
         db = Database()
         ensure_control_tables(db)
-        object_event_id = _write_event_audit(db, event)
+        detached_worker = bool(event.get("_detached_worker")) or os.environ.get("DETACHED_WORKER", "false").lower() == "true"
+        inherited_object_event_id = event.get("_object_event_id") if detached_worker else None
+        if inherited_object_event_id is not None:
+            object_event_id = int(inherited_object_event_id)
+            if object_event_id < 1:
+                raise ValueError("Detached worker received an invalid Object Storage event identifier.")
+        else:
+            object_event_id = _write_event_audit(db, event)
         source = event_source(event)
         source["object_event_id"] = object_event_id
         action = _event_action(event)
         # Event Rules arrive synchronously.  A mapping can hand the same
         # CloudEvent back to this Function as a detached invocation, allowing
         # large objects to run beyond the 300-second synchronous ceiling.
-        detached_worker = bool(event.get("_detached_worker")) or os.environ.get("DETACHED_WORKER", "false").lower() == "true"
         mapping = None if detached_worker else resolve_mapping(db, source)
         if mapping and mapping.get("invocation_mode", "SYNC") == "DETACHED":
             function_id = os.environ.get("FUNCTION_ID", "")
@@ -292,6 +298,7 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
             )
             worker_event = dict(event)
             worker_event["_detached_worker"] = True
+            worker_event["_object_event_id"] = object_event_id
             client.invoke_function(function_id=function_id, invoke_function_body=json.dumps(worker_event).encode(), fn_intent="cloudevent", fn_invoke_type="detached")
             return response.Response(ctx, response_data=json.dumps({"status": "detached_submitted", "mapping_id": mapping["id"], "worker_threads": mapping.get("worker_threads", 4)}), headers={"Content-Type": "application/json"}, status_code=202)
         result = _run_delete(db, event, source) if action == "DELETE" else _run_load(db, event, source, create=action == "CREATE")
