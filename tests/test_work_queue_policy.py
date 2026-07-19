@@ -5,6 +5,8 @@ import os
 import sys
 import types
 import unittest
+from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -63,7 +65,43 @@ class WorkQueuePolicyTest(unittest.TestCase):
         with patch.dict(os.environ, {"QUEUE_EXPECTED_BYTES_PER_SECOND": str(4 * 1024 * 1024)}, clear=False):
             self.assertFalse(QUEUE.has_start_budget(entry, 3600, "DETACHED"))
 
+    def test_claim_next_reads_named_result_from_dictionary_cursor(self):
+        entry = {
+            "id": 11,
+            "status": "PENDING",
+            "attempt_count": 0,
+            "received_at": datetime(2026, 7, 19, 12, 0, 0),
+            "available_at": datetime(2026, 7, 19, 12, 0, 0),
+            "event_time": datetime(2026, 7, 19, 12, 0, 0),
+        }
+
+        class Cursor:
+            rowcount = 1
+
+            def execute(self, sql, _params=()):
+                if "SELECT owner_token" in sql:
+                    self.result = {"owner_token": "owner", "last_completed_event_time": None, "last_completed_queue_id": None}
+                elif "SELECT * FROM" in sql:
+                    self.result = dict(entry)
+                elif "AS is_ready" in sql:
+                    self.result = {"is_ready": 1}
+
+            def fetchone(self):
+                return self.result
+
+        class Connection:
+            def cursor(self, **_kwargs):
+                return Cursor()
+
+        class Database:
+            @contextmanager
+            def connection(self):
+                yield Connection()
+
+        claimed, reason = QUEUE.claim_next(Database(), "table:fntestdb.employees", "owner", 90, 30)
+        self.assertEqual(reason, "claimed")
+        self.assertEqual(claimed["status"], "RUNNING")
+
 
 if __name__ == "__main__":
     unittest.main()
-

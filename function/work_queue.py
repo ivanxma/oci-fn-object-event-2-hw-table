@@ -288,10 +288,12 @@ def claim_next(
         if entry["status"] in {"LEASED", "RUNNING"}:
             return None, "busy"
         cursor.execute(
-            "SELECT UTC_TIMESTAMP(6) >= DATE_ADD(%s, INTERVAL %s SECOND) AND UTC_TIMESTAMP(6) >= %s",
+            "SELECT UTC_TIMESTAMP(6) >= DATE_ADD(%s, INTERVAL %s SECOND) "
+            "AND UTC_TIMESTAMP(6) >= %s AS is_ready",
             (entry["received_at"], reorder_grace_seconds, entry["available_at"]),
         )
-        if not bool(cursor.fetchone()[0]):
+        readiness = cursor.fetchone()
+        if not bool(readiness["is_ready"]):
             return None, "not_ready"
         attempt = int(entry["attempt_count"] or 0) + 1
         cursor.execute(
