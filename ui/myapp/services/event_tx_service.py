@@ -388,16 +388,24 @@ class EventTransactionService:
         """
         event_log_exists = self._table_exists(cursor, EVENT_LOG_TABLE)
         error_log_exists = self._table_exists(cursor, EVENT_ERROR_TABLE)
+        mapping_table_exists = self._table_exists(cursor, MAPPING_TABLE)
         control = quote_identifier(control_database(), "control database")
+        invocation_mode = (
+            f"COALESCE((SELECT m.invocation_mode FROM {control}.`object_storage_mappings` AS m "
+            "WHERE m.id = tx.mapping_id), 'SYNC') AS invocation_mode"
+            if mapping_table_exists
+            else "'SYNC' AS invocation_mode"
+        )
         for row in rows:
             row["_lifecycle_status"] = "RECEIVED"
             row["_error_id"] = None
+            row["_invocation_mode"] = "SYNC"
             if not event_log_exists:
                 continue
             error_join = f"LEFT JOIN {control}.`event_errors` AS err ON err.event_log_id = tx.id" if error_log_exists else ""
             error_id = "err.id AS error_id" if error_log_exists else "NULL AS error_id"
             cursor.execute(
-                f"""SELECT tx.event_status, {error_id}
+                f"""SELECT tx.event_status, {error_id}, {invocation_mode}
                        FROM {control}.`event_tx_log` AS tx
                        {error_join}
                       WHERE tx.object_event_id = %s
@@ -409,7 +417,7 @@ class EventTransactionService:
                 action = self._event_action(row.get("event_type"))
                 if action:
                     cursor.execute(
-                        f"""SELECT tx.event_status, {error_id}
+                        f"""SELECT tx.event_status, {error_id}, {invocation_mode}
                                FROM {control}.`event_tx_log` AS tx
                                {error_join}
                               WHERE tx.object_event_id IS NULL
@@ -422,6 +430,7 @@ class EventTransactionService:
             if linked:
                 row["_lifecycle_status"] = linked["event_status"]
                 row["_error_id"] = linked["error_id"]
+                row["_invocation_mode"] = linked["invocation_mode"] or "SYNC"
 
     @staticmethod
     def _event_action(event_type: Any) -> str | None:
