@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import wraps
 
-from flask import current_app, flash, redirect, render_template, session, url_for
+from flask import current_app, flash, make_response, redirect, render_template, session, url_for
 
 from ..services.mysql_service import MySQLService
 
@@ -42,10 +42,16 @@ def mysql_for_request() -> MySQLService:
 def render_dashboard(template: str, *, active_page: str, **context):
     """Render authenticated pages with consistent dashboard context."""
     state = connection_state()
-    return render_template(
-        template,
-        active_page=active_page,
-        selected_profile=state.profile if state else {},
-        current_username=state.username if state else "",
-        **context,
+    response = make_response(
+        render_template(
+            template,
+            active_page=active_page,
+            selected_profile=state.profile if state else {},
+            current_username=state.username if state else "",
+            **context,
+        )
     )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
