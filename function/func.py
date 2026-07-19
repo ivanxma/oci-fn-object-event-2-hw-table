@@ -281,7 +281,14 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
             # A Function invocation runs with a resource-principal identity;
             # instance principals are only available on Compute instances.
             signer = oci.auth.signers.get_resource_principals_signer()
-            client = oci.functions.FunctionsInvokeClient({"region": os.environ.get("OCI_REGION", "")}, signer=signer)
+            invoke_endpoint = os.environ.get("FUNCTION_INVOKE_ENDPOINT", "")
+            if not invoke_endpoint:
+                raise ValueError("Mapping requests DETACHED mode but FUNCTION_INVOKE_ENDPOINT is missing.")
+            client = oci.functions.FunctionsInvokeClient(
+                {"region": os.environ.get("OCI_REGION", "")},
+                signer=signer,
+                service_endpoint=invoke_endpoint,
+            )
             worker_event = dict(event)
             worker_event["_detached_worker"] = True
             client.invoke_function(function_id=function_id, invoke_function_body=json.dumps(worker_event).encode(), fn_intent="cloudevent", fn_invoke_type="detached")
