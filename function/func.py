@@ -259,6 +259,7 @@ def _run_delete(db: Database, event: dict[str, Any], source: dict[str, str]) -> 
 def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
     db: Database | None = None
     source: dict[str, str] | None = None
+    mapping: dict[str, Any] | None = None
     try:
         event = json.loads(data.getvalue().decode("utf-8") if data else "{}")
         if not isinstance(event, dict):
@@ -303,6 +304,6 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
                     action = _event_action(event)
                 except ValueError:
                     pass
-            log_error(db, source, action, error)
+            log_error(db, source, action, error, mapping)
         message = "Target table is not ready for partition exchange." if isinstance(error, TargetTableError) else str(error)
         return response.Response(ctx, response_data=json.dumps({"status": "error", "message": message}), headers={"Content-Type": "application/json"}, status_code=500)
