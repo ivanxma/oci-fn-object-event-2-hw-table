@@ -242,12 +242,14 @@ def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, cr
                 pass
 
 
-def _run_delete(db: Database, event: dict[str, Any], source: dict[str, str]) -> dict[str, Any]:
+def _run_delete(db: Database, event: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
     # Retain the established prototype's deletion semantics, including an idempotent no-op.
     from partition_loader import run_delete
 
+    delete_event = dict(event)
+    delete_event["_object_event_id"] = source["object_event_id"]
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as event_file:
-        json.dump(event, event_file)
+        json.dump(delete_event, event_file)
         event_file.flush()
         try:
             return run_delete(Path(event_file.name))

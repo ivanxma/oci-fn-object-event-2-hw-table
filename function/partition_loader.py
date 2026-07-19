@@ -70,7 +70,7 @@ class Database:
             connection.close()
 
 
-def event_source(event: dict[str, Any]) -> dict[str, str]:
+def event_source(event: dict[str, Any]) -> dict[str, Any]:
     data = event.get("data") or {}
     details = data.get("additionalDetails") or {}
     compartment = str(data.get("compartmentName") or "")
@@ -78,12 +78,15 @@ def event_source(event: dict[str, Any]) -> dict[str, str]:
     resource = str(data.get("resourceName") or details.get("objectName") or "")
     if not compartment or not bucket or not resource:
         raise ValueError("Event must contain data.compartmentName, bucketName, and resourceName/objectName.")
-    return {
+    source = {
         "compartment_name": compartment,
         "bucket_name": bucket,
         "resource_name": resource,
         "object_version": str(details.get("versionId") or details.get("eTag") or event.get("eventID") or ""),
     }
+    if event.get("_object_event_id") is not None:
+        source["object_event_id"] = int(event["_object_event_id"])
+    return source
 
 
 def table_name(schema: str, table: str) -> str:
