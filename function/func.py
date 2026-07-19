@@ -201,7 +201,7 @@ def _object_stream(event: dict[str, Any], source: dict[str, str]) -> ObjectStora
 
 
 def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, create: bool) -> dict[str, Any]:
-    action, mapping, record = "CREATE" if create else "UPDATE", None, None
+    action, mapping, record, stage = "CREATE" if create else "UPDATE", None, None, None
     try:
         mapping = resolve_mapping(db, source)
         columns = target_definition(db, mapping)
