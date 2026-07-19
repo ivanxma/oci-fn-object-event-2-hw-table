@@ -25,7 +25,8 @@
 <ul>
   <li>The wide-row workload sustained approximately <strong>14.9 MiB/s</strong> from 500 MiB through 5 GiB. A tenfold increase from 500 MiB to 5 GiB increased processing time by 10.26×, showing near-linear scaling.</li>
   <li>A controlled 500 MiB narrow-row comparison closely matched the prior row count: 8,096,895 rows now versus 8,080,750 previously. Processing improved from 117.454 to 108.640 seconds: <span class="delta-good">7.50% less time</span> and <span class="delta-good">8.09% more MiB/s</span>.</li>
-  <li>The 1.3 TB allocation is consistent with higher usable storage activity, but storage allocation is not isolated as the sole cause. Database load, cache state, object delivery, row width, batching, and monitoring aggregation also affect results.</li>
+  <li>At 5 GiB, processing improved from 1,408.743 to 343.368 seconds: <strong>75.63% less time</strong> and <strong>4.10× higher byte throughput</strong>. The two files used different row sizes, so this is an end-to-end result rather than an isolated storage benchmark.</li>
+  <li>The 1.3 TB allocation provides a higher potential storage envelope, but the wide-row workload did not demonstrate that the 50 GB allocation’s IOPS ceiling would have been reached. Storage allocation is not isolated as a cause.</li>
 </ul>
 </section>
 
@@ -85,17 +86,35 @@
 </section>
 
 <section>
-<h2>Storage allocation comparison: 1.3 TB versus 50 GB</h2>
+<h2>Storage allocation context: 1.3 TB versus 50 GB</h2>
+<p>The primary test series used different row widths. The table below isolates the only closely matched workload: both 500 MiB files contained approximately 8.1 million narrow rows, with average row size differing by only 0.21%.</p>
 <div class="table-wrap"><table>
 <thead><tr><th>Controlled 500 MiB narrow case</th><th class="num">Prior MySQL.8 / 50 GB</th><th class="num">New MySQL.8 / 1.3 TB</th><th class="num">Change</th></tr></thead>
 <tbody>
+<tr><td>Actual bytes</td><td class="num">524,357,793</td><td class="num">524,288,491</td><td class="num">−0.01%</td></tr>
 <tr><td>Actual rows</td><td class="num">8,080,750</td><td class="num">8,096,895</td><td class="num">+0.20%</td></tr>
+<tr><td>Average bytes per row</td><td class="num">64.890</td><td class="num">64.752</td><td class="num">−0.21%</td></tr>
 <tr><td>Processing duration</td><td class="num">117.454 s</td><td class="num">108.640 s</td><td class="num delta-good">−7.50%</td></tr>
 <tr><td>Throughput</td><td class="num">4.258 MiB/s</td><td class="num">4.602 MiB/s</td><td class="num delta-good">+8.09%</td></tr>
 <tr><td>Rows per second</td><td class="num">68,799</td><td class="num">74,529</td><td class="num delta-good">+8.33%</td></tr>
 <tr><td>Storage context</td><td>50 GB; one LUN; approximately 3,750 configured maximum IOPS; prior observed monitoring peak about 496.508 operations</td><td>1.3 TB allocation; higher storage capacity; current observed peak 1,936.5 operations</td><td>Current observed peak 3.90× prior observed peak, across different cases</td></tr>
 </tbody></table></div>
-<p class="notice"><strong>Interpretation boundary:</strong> the controlled row count makes the 500 MiB duration comparison useful, but this is still one sequential sample per environment—not a storage benchmark. The primary new 5 GiB result cannot be compared directly with the prior 5 GiB result because the prior file contained 82.7 million narrow rows, versus 10.1 million wider rows now. Per-row parsing, inserts, indexes, and commits materially change throughput per byte.</p>
+<h3>IOPS interpretation</h3>
+<p>Larger rows reduce the number of rows processed for a fixed file size. With 10,000-row batches, the 5 GiB files represent approximately 8,274 loader transactions in the prior narrow-row run versus 1,008 in the new wide-row run—about <strong>8.21× fewer row batches and commits</strong>. The byte volume is similar, so this does not guarantee 8.21× fewer physical writes, but it can materially reduce transaction, index, log, and commit-related I/O operations.</p>
+<p>The wide-row workload may therefore remain below the 50 GB, one-LUN allocation’s approximately 3,750-IOPS ceiling. The new database’s reported monitoring peak of 1,936.5 operations is below 3,750 <strong>if</strong> the console statistic represents the same unit and interval. Because the monitoring aggregation was not captured, this is indicative only and does not prove spare IOPS.</p>
+<p class="notice"><strong>Storage conclusion:</strong> there is no evidence that the 4.10× 5 GiB improvement was caused by the larger storage allocation. Isolating storage requires the same generated file—identical bytes, rows, row width, indexes, batch size, workers, and cache protocol—on both allocations while collecting IOPS, throughput, latency, CPU, and Function timing with the same aggregation.</p>
+<h3>Observed 5 GiB result</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>5 GiB detached case</th><th class="num">Prior MySQL.8 / 50 GB</th><th class="num">New MySQL.8 / 1.3 TB</th><th class="num">Observed change</th></tr></thead>
+<tbody>
+<tr><td>Processing duration</td><td class="num">1,408.743 s</td><td class="num">343.368 s</td><td class="num delta-good">−75.63%; 4.10× faster</td></tr>
+<tr><td>Time saved</td><td class="num">—</td><td class="num">1,065.375 s</td><td class="num delta-good">17 minutes 45.375 seconds</td></tr>
+<tr><td>Byte throughput</td><td class="num">3.634 MiB/s</td><td class="num">14.911 MiB/s</td><td class="num delta-good">+310.32%; 4.10×</td></tr>
+<tr><td>Rows</td><td class="num">82,736,033</td><td class="num">10,076,665</td><td>Different row-density workload</td></tr>
+<tr><td>Seconds per 100 rows</td><td class="num">0.001703</td><td class="num">0.003408</td><td>Not comparable per row</td></tr>
+</tbody></table></div>
+<p class="notice success"><strong>Large observed improvement:</strong> the same nominal 5 GiB object size completed in approximately 5.72 minutes instead of 23.48 minutes—a 75.63% duration reduction with 4.10× higher byte throughput. This leaves materially more headroom inside the 3,600-second detached timeout.</p>
+<p class="notice"><strong>Interpretation boundary:</strong> apart from the deliberately matched 500 MiB narrow case, row size differs across the old and new test series. The 5 GiB comparison is therefore not a controlled storage benchmark. The prior object averaged about 64.89 bytes per row and contained 82.7 million rows; the new object averaged about 532.79 bytes per row and contained 10.1 million rows. Row parsing, SQL statement count, indexes, batching, cache state, and service load differ. Treat the 4.10× result as an observed environment-and-workload improvement, not as proof that storage allocation alone caused it. The closely matched 500 MiB narrow-row test is the stronger storage comparison and measured an 8.09% throughput gain in one sequential run.</p>
 </section>
 
 <section>
