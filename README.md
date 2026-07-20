@@ -314,6 +314,7 @@ troubleshooting, and validation commands.
 
 ## More information
 
+- [Object event ordering problem and resolution alternatives](docs/object-event-ordering-problem-and-alternatives.md)
 - [Ordered event queue design, workflow, UI, and validation](docs/ordered-event-queue-design.md)
 - [Queue reorder-grace test: 10 seconds versus 30 seconds](docs/queue-reorder-grace-test-10s-vs-30s.md)
 - [Technical deployment and operations guide](docs/technical-details.md)
