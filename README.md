@@ -3,11 +3,11 @@
 This application turns OCI Object Storage CSV lifecycle events into controlled,
 auditable MySQL table updates. OCI Events routes object create, update, and
 delete events to an OCI Function. A mapping selects the target table and either
-  Sync or Detached execution. Every event first enters a durable TABLE- or
-  MAPPING-bound queue, so overlapping Function invocations cannot reorder
-  mutations for the same ownership boundary. CSV rows are streamed into
-  parallel staging-table writers, then a partition exchange publishes one
-  file's data atomically.
+Sync or Detached execution. Every event first enters a durable TABLE- or
+MAPPING-bound queue, so overlapping Function invocations cannot reorder
+mutations for the same ownership boundary. CSV rows are streamed into parallel
+staging-table writers, then a partition exchange publishes one file's data
+atomically.
 
 The Flask operations UI provides one place to create and maintain mappings,
 manage live OCI Events rules, configure Function capacity, upload or remove test
@@ -16,6 +16,28 @@ status, detached work, and errors. This operational view makes setup,
 verification, troubleshooting, retry decisions, and orphaned-stage cleanup
 available without requiring operators to join OCI Console and control-schema
 data manually.
+
+## Queuing branch summary
+
+The ordered-queue implementation is maintained on the `main-with-queue` branch.
+The `v0.1` tag remains the earlier release baseline. This branch adds:
+
+- a durable MySQL queue for every accepted Object Storage event;
+- TABLE-bound serialization by default, with explicit MAPPING-bound concurrency
+  for independently owned data;
+- one heartbeated worker lease per binding, expired-lease recovery, completion
+  watermarks, deterministic ordering, and idempotent event intake;
+- mapping-driven Sync or Detached execution with safe Detached continuation
+  before the Function runtime budget is exhausted;
+- immutable requested-mode snapshots and actual worker-transport attempts;
+- a Queue UI for depth, status, lane leases, heartbeats, attempts, errors,
+  manual enqueue, scheduling edits, retry, cancel, and worker wake-up; and
+- ordered CREATE, UPDATE, and DELETE handling without bypassing a blocked head
+  entry.
+
+Queueing preserves the order of events already received inside one binding. It
+does not make multiple files one transaction and cannot fetch an object version
+that a producer deleted before its queued CREATE or UPDATE was processed.
 
 ## Application components
 
@@ -62,38 +84,140 @@ flowchart LR
 The supported runtime is Python 3.13 or later. The UI uses Flask and Oracle
 MySQL Connector/Python `>=9.7,<10`.
 
-On an Oracle Linux deployment host configured with an OCI instance principal:
+### Prerequisites
+
+Before deployment, prepare:
+
+- an Oracle Linux 9 Compute instance with an OCI instance principal;
+- a pre-created MySQL control database and target database reachable from the
+  Function subnet and deployment VM;
+- a database account with the required DDL and DML privileges on both schemas;
+- an Object Storage bucket with object events enabled;
+- a Function dynamic group and policies that allow the Function resource
+  principal to read the configured bucket and invoke the intended Function;
+- a deployment/UI dynamic group with scoped access to Functions, OCIR, Events,
+  Logging, and any Object Storage test operations used by the UI; and
+- an OCI subnet, container repository prefix, OCIR username/auth token, TLS
+  choice, and a protected Flask secret.
+
+Target tables must be compatible with the loader contract: LIST partitioning
+by the invisible `batch_num` ownership column and `batch_num` included in every
+unique key. The UI Data Import workflow can create a compatible table from a
+reviewed CSV.
+
+### Fresh setup from `main-with-queue`
+
+Clone the queuing branch and create the protected environment file once:
 
 ```sh
+cd /home/opc
+git clone --branch main-with-queue \
+  https://github.com/ivanxma/oci-fn-object-event-2-hw-table.git \
+  oci-object-event-2-table
 cd /home/opc/oci-object-event-2-table
-./deploy/bootstrap.sh
 cp deploy/env.sh.example deploy/env.sh
 chmod 600 deploy/env.sh
-# Set OCI, database, Function, rule, logging, HTTPS, and UI values in env.sh.
+# Edit deploy/env.sh locally. Never commit it.
+./deploy/setup.sh
+```
+
+The one-command setup performs the package bootstrap, Function deployment, base
+Events-rule reconciliation, UI/nginx HTTPS deployment, and read-only
+post-deployment validation. The bootstrap installs OCI/Fn prerequisites,
+Podman, nginx, OpenSSL, SELinux helpers, firewalld, jq, and archive/core tools.
+The Function and UI use Python 3.13 containers; the older Oracle Linux system
+Python is host tooling only.
+
+At minimum, review these queue and execution settings in `deploy/env.sh`:
+
+| Setting | Recommended starting value | Purpose |
+| --- | ---: | --- |
+| `DETACHED_ENABLED` | `true` | Allows Detached mappings, worker wake-up, and safe continuation from a Sync invocation. |
+| `FUNCTION_TIMEOUT` | `300` | Sync Function timeout in seconds. |
+| `DETACHED_TIMEOUT_SECONDS` | `3600` | Detached Function timeout in seconds. |
+| `QUEUE_LEASE_SECONDS` | `90` | Lane and running-entry lease renewed by heartbeat. |
+| `QUEUE_REORDER_GRACE_SECONDS` | `30` | Wait before the first newly received event becomes eligible. |
+| `QUEUE_SHUTDOWN_RESERVE_SECONDS` | `120` | Detached runtime held back for safe release and continuation. |
+| `QUEUE_MINIMUM_START_SECONDS` | `180` | Minimum remaining Detached budget for another entry. |
+| `BATCH_ROWS` | `10000` | Rows per database writer batch. |
+| `WRITER_WORKERS` | `4` | Default parallel MySQL writers. |
+| `OBJECT_STORAGE_RANGE_BYTES` | `33554432` | Bounded Object Storage range size; 32 MiB. |
+
+Also set the compartment, subnet, region, application/Function names,
+repository, database connection, control database, bucket, rule/logging, UI,
+and TLS values shown in `deploy/env.sh.example`. `deploy.sh` discovers the
+deployed Function OCID and invoke endpoint dynamically and injects both into
+the Function configuration.
+
+The control tables are idempotent. On the first Function invocation or first
+Queue/Mapping UI access, the application creates or upgrades
+`object_storage_mappings`, `queue_lane`, `event_work_queue`, `queue_attempt`,
+`queue_transition_audit`, and the event/batch audit tables. Existing mappings
+receive safe `TABLE` queue scope by default. No separate queue SQL migration is
+required, but the configured database user must be allowed to perform those
+control-schema changes.
+
+### Complete setup in the UI
+
+After the deployment validator passes:
+
+1. Open the HTTPS UI and create or select a non-secret connection profile.
+2. Authenticate with the approved MySQL account; the password remains in
+   server-owned session state and is not saved in the profile.
+3. Create or confirm the compatible target table in **Data Import**.
+4. Create a **Resource Mapping** for the compartment, bucket, mutually
+   exclusive object pattern, target table, requested Sync/Detached mode, writer
+   count, and TABLE/MAPPING queue scope.
+5. Create or associate an **OCI Rule** that sends create, update, and delete
+   events for that mapping to the deployed Function.
+6. Use **Object Storage Upload** for a small CSV verification, then confirm the
+   result in **Queue**, **Event TX**, **Registered Table**, and **Show Data**.
+
+Use TABLE scope unless separate mappings are guaranteed to own disjoint records
+and have no cross-file key, move, update, or deletion dependencies.
+
+### Upgrade an existing deployment
+
+Preserve the existing protected `deploy/env.sh`; do not copy the example over
+it. Switch to the queue branch, add/review the queue settings above, enable
+Detached execution and its Function-invoke IAM policy, then rerun setup:
+
+```sh
+git fetch origin
+git switch main-with-queue
+git pull --ff-only origin main-with-queue
+chmod 600 deploy/env.sh
+./deploy/setup.sh
+```
+
+The rerun is idempotent and reuses existing generated TLS material. It updates
+the Function, its current OCID/invoke endpoint, timeouts/configuration, Events
+rule target, UI image, systemd service, nginx configuration, and runtime
+validation. Existing non-terminal business work should be allowed to finish or
+be reviewed before changing a mapping's queue scope.
+
+### Validation and repeatable reruns
+
+Run the read-only validator independently at any time:
+
+```sh
+./deploy/validate.sh
+```
+
+It checks the active Function, rule-to-Function association, bucket events,
+UI/nginx/container health, protected file modes, Python and Connector/Python
+versions, and DB endpoint reachability. For subsequent deployment reruns where
+host packages are already known to be current, use:
+
+```sh
 ./deploy/setup.sh --skip-bootstrap
 ```
 
-For later reruns, `./deploy/setup.sh` performs the idempotent package bootstrap,
-Function deployment, UI deployment, and post-deployment validation in one
-command. Add `--smoke-test` to prepare the configured performance target and run
-a 100-row Object Storage create/delete check; add `--reset-performance` only
-when the mutable performance target should be reset first.
-
-`bootstrap.sh` installs the complete Oracle Linux host set: OCI/Fn prerequisites,
-Podman, nginx, OpenSSL, SELinux helpers, firewalld, jq, and archive/core tools.
-The Function and UI run in Python 3.13 containers, so the older Oracle Linux
-system Python is not used as an application runtime. Every deployment script
-sets the user-local OCI/Fn PATH before checking prerequisites.
-
-`deploy.sh` builds and deploys the Function, discovers its OCID and invoke
-endpoint, applies Function timeouts/capacity, and creates or updates the base
-Object Storage rule. It also enables bucket object events by default when a
-bucket is configured. `deploy_ui.sh` deploys the Flask container behind nginx
-HTTPS, reuses existing generated TLS material on reruns, and waits for a bounded
-HTTPS health check. `deploy/validate.sh` is a read-only post-deployment check for
-OCI resource wiring, bucket events, service health, protected file modes,
-runtime versions, and DB endpoint reachability. Keep `deploy/env.sh`, database
-passwords, OCIR tokens, TLS private keys, and Flask secrets out of Git.
+After explicitly setting `PERF_TARGET_DATABASE`, `PERF_TARGET_TABLE`, and the
+matching performance prefix/rule values, `--smoke-test` prepares that dedicated
+target and runs a 100-row Object Storage create/delete check. Use
+`--reset-performance` only when the configured performance target's mutable
+state is intended to be reset.
 
 Before use, confirm:
 
@@ -126,7 +250,8 @@ troubleshooting, and validation commands.
   LIST partitioning by `batch_num`, and `batch_num` in every unique key.
 - Sync execution is limited to 300 seconds. Detached execution can be
   configured up to 3,600 seconds, but it is still bounded; split very large
-  files into ordered, independently owned chunks or use a durable queue.
+  files into ordered, independently owned chunks or use an external long-running
+  import service.
 - OCI Events is at-least-once and may retry or deliver conflicting operations
   out of order. Queue idempotency, reorder grace, and a completion watermark
   protect observed work, but a producer manifest/sequence is still required
@@ -138,6 +263,7 @@ troubleshooting, and validation commands.
 
 ## More information
 
+- [Ordered event queue design, workflow, UI, and validation](docs/ordered-event-queue-design.md)
 - [Technical deployment and operations guide](docs/technical-details.md)
 - [Repeatable performance-test setup and runner](performance_test/README.md)
 - [Parallel CSV streaming implementation](docs/csv-stream-parallelization-implementation.md)
