@@ -608,12 +608,13 @@ does not invalidate the queue-capacity result.
 | --- | ---: | --- |
 | `QUEUE_LEASE_SECONDS` | 90 s | Lane and entry ownership lifetime; heartbeat extends it. |
 | `QUEUE_REORDER_GRACE_SECONDS` | 30 s | Delay before a newly received head entry becomes eligible. |
+| `QUEUE_SYNC_RESERVE_SECONDS` | 15 s | Sync time retained for state recording, release, and continuation. |
+| `QUEUE_SYNC_MINIMUM_START_SECONDS` | 15 s | Minimum remaining Sync budget before another entry starts. |
 | `QUEUE_SHUTDOWN_RESERVE_SECONDS` | 120 s | Detached time retained for safe shutdown and handoff. |
 | `QUEUE_MINIMUM_START_SECONDS` | 180 s | Minimum Detached budget before starting another job. |
-| `QUEUE_SYNC_RESERVE_SECONDS` | 15 s | Sync handoff reserve when configured. |
-| `QUEUE_SYNC_MINIMUM_START_SECONDS` | 15 s | Minimum Sync budget when configured. |
 | `QUEUE_EXPECTED_BYTES_PER_SECOND` | 4 MiB/s | Conservative admission estimate for known object sizes. |
 | `QUEUE_PREDICTION_SAFETY_FACTOR` | 1.35 | Multiplier applied to estimated processing duration. |
+| `LOAD_LEASE_SECONDS` | 120 s | Age after which an abandoned LOADING batch can be recovered. |
 | `FUNCTION_TIMEOUT` | 300 s maximum | Sync invocation budget. |
 | `DETACHED_TIMEOUT_SECONDS` | 3,600 s maximum | Detached invocation budget. |
 | `OBJECT_STORAGE_RANGE_BYTES` | 32 MiB | Maximum range response and an important memory bound. |

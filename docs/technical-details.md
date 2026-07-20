@@ -73,9 +73,12 @@ The Flask UI separates control-plane operations from the Function data plane:
 - **Resource Mappings / OCI Rules** reads live rules from OCI, identifies rules
   targeting the configured Function, and supports enable/disable, edit, and
   confirmed delete.
-- **OCI Function Configuration** reads and updates Sync/Detached timeout,
-  memory, provisioned concurrency, default workers, batch rows, range bytes,
-  and range-read timeout without discarding unrelated configuration.
+- **OCI Function Configuration** reads and updates the database endpoint and
+  control schema, a write-only optional password replacement, TLS mode,
+  Sync/Detached timeout, Detached enablement, memory, provisioned concurrency,
+  default workers, batch rows, load lease, range settings, queue wait/lease
+  timing, runtime reserves, and admission prediction without returning stored
+  secrets or discarding unrelated configuration.
 - **Object Storage Upload** selects a mapping, derives its bucket/prefix,
   uploads CSV test objects, creates virtual folders by prefix, lists matches,
   and deletes selected objects.
@@ -106,7 +109,7 @@ Important protected `deploy/env.sh` values include:
 | OCI | compartment, region, subnet, application, repository, bucket, rule and log group |
 | Database | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, control database |
 | Execution | `FUNCTION_TIMEOUT` (Sync, max 300), `DETACHED_TIMEOUT_SECONDS` (max 3600), `FUNCTION_MEMORY` |
-| Queue | `QUEUE_LEASE_SECONDS`, `QUEUE_REORDER_GRACE_SECONDS`, `QUEUE_SHUTDOWN_RESERVE_SECONDS`, `QUEUE_MINIMUM_START_SECONDS` |
+| Queue | `QUEUE_LEASE_SECONDS`, `QUEUE_REORDER_GRACE_SECONDS`, Sync/Detached reserve and minimum-start values, unknown-job estimate, expected byte rate, prediction safety factor |
 | Streaming | `BATCH_ROWS`, `WRITER_WORKERS`, `OBJECT_STORAGE_RANGE_BYTES`, `OBJECT_STORAGE_READ_TIMEOUT_SECONDS` |
 | Detached | `DETACHED_ENABLED`; Function OCID and invoke endpoint are discovered and injected by deployment |
 | UI | Flask secret, TLS certificate/key or explicit test-only self-signed setting, OCI-management feature flags |

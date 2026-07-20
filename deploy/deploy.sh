@@ -41,6 +41,15 @@ require_integer() {
   (( value >= minimum && value <= maximum )) || { echo "$name must be from $minimum to $maximum." >&2; exit 1; }
 }
 
+require_decimal() {
+  local name=$1 minimum=$2 maximum=$3 value=${!1:-}
+  jq -en --arg value "$value" --argjson minimum "$minimum" --argjson maximum "$maximum" \
+    '($value | tonumber) as $number | ($number >= $minimum and $number <= $maximum)' >/dev/null 2>&1 || {
+    echo "$name must be a number from $minimum to $maximum." >&2
+    exit 1
+  }
+}
+
 require_integer DB_PORT 1 65535
 
 OCI=(oci --auth instance_principal)
@@ -85,24 +94,39 @@ FUNCTION_TIMEOUT="${FUNCTION_TIMEOUT:-300}"
 DETACHED_TIMEOUT_SECONDS="${DETACHED_TIMEOUT_SECONDS:-3600}"
 BATCH_ROWS="${BATCH_ROWS:-10000}"
 WRITER_WORKERS="${WRITER_WORKERS:-4}"
+LOAD_LEASE_SECONDS="${LOAD_LEASE_SECONDS:-120}"
 OBJECT_STORAGE_READ_TIMEOUT_SECONDS="${OBJECT_STORAGE_READ_TIMEOUT_SECONDS:-300}"
 OBJECT_STORAGE_RANGE_BYTES="${OBJECT_STORAGE_RANGE_BYTES:-33554432}"
 QUEUE_LEASE_SECONDS="${QUEUE_LEASE_SECONDS:-90}"
 QUEUE_REORDER_GRACE_SECONDS="${QUEUE_REORDER_GRACE_SECONDS:-30}"
+QUEUE_SYNC_RESERVE_SECONDS="${QUEUE_SYNC_RESERVE_SECONDS:-15}"
+QUEUE_SYNC_MINIMUM_START_SECONDS="${QUEUE_SYNC_MINIMUM_START_SECONDS:-15}"
 QUEUE_SHUTDOWN_RESERVE_SECONDS="${QUEUE_SHUTDOWN_RESERVE_SECONDS:-120}"
 QUEUE_MINIMUM_START_SECONDS="${QUEUE_MINIMUM_START_SECONDS:-180}"
+QUEUE_UNKNOWN_JOB_SECONDS="${QUEUE_UNKNOWN_JOB_SECONDS:-60}"
+QUEUE_EXPECTED_BYTES_PER_SECOND="${QUEUE_EXPECTED_BYTES_PER_SECOND:-4194304}"
+QUEUE_PREDICTION_SAFETY_FACTOR="${QUEUE_PREDICTION_SAFETY_FACTOR:-1.35}"
 require_integer FUNCTION_MEMORY 128 3072
 (( FUNCTION_MEMORY % 64 == 0 )) || { echo "FUNCTION_MEMORY must use a 64 MB increment." >&2; exit 1; }
 require_integer FUNCTION_TIMEOUT 1 300
 require_integer DETACHED_TIMEOUT_SECONDS 5 3600
 require_integer BATCH_ROWS 1 1000000
 require_integer WRITER_WORKERS 1 64
+require_integer LOAD_LEASE_SECONDS 30 3600
 require_integer OBJECT_STORAGE_READ_TIMEOUT_SECONDS 1 300
 require_integer OBJECT_STORAGE_RANGE_BYTES 1048576 268435456
 require_integer QUEUE_LEASE_SECONDS 30 3600
 require_integer QUEUE_REORDER_GRACE_SECONDS 0 3600
+require_integer QUEUE_SYNC_RESERVE_SECONDS 0 299
+require_integer QUEUE_SYNC_MINIMUM_START_SECONDS 1 299
 require_integer QUEUE_SHUTDOWN_RESERVE_SECONDS 0 1800
 require_integer QUEUE_MINIMUM_START_SECONDS 1 1800
+require_integer QUEUE_UNKNOWN_JOB_SECONDS 1 3600
+require_integer QUEUE_EXPECTED_BYTES_PER_SECOND 1 1073741824
+require_decimal QUEUE_PREDICTION_SAFETY_FACTOR 1 10
+[[ "${DETACHED_ENABLED:-false}" == "true" || "${DETACHED_ENABLED:-false}" == "false" ]] || { echo "DETACHED_ENABLED must be true or false." >&2; exit 1; }
+(( QUEUE_SYNC_RESERVE_SECONDS + QUEUE_SYNC_MINIMUM_START_SECONDS < FUNCTION_TIMEOUT )) || { echo "Sync queue reserve plus minimum start budget must be less than FUNCTION_TIMEOUT." >&2; exit 1; }
+(( QUEUE_SHUTDOWN_RESERVE_SECONDS + QUEUE_MINIMUM_START_SECONDS < DETACHED_TIMEOUT_SECONDS )) || { echo "Detached queue reserve plus minimum start budget must be less than DETACHED_TIMEOUT_SECONDS." >&2; exit 1; }
 cp "$ROOT_DIR/function/Dockerfile" "$ROOT_DIR/function/func.py" "$ROOT_DIR/function/partition_loader.py" "$ROOT_DIR/function/work_queue.py" "$ROOT_DIR/function/requirements.txt" "$BUILD_DIR/"
 sed -e "s/^name:.*/name: $FUNCTION_NAME/" -e "s/^memory:.*/memory: $FUNCTION_MEMORY/" -e "s/^timeout:.*/timeout: $FUNCTION_TIMEOUT/" "$ROOT_DIR/function/func.yaml" > "$BUILD_DIR/func.yaml"
 (cd "$BUILD_DIR" && fn deploy --app "$APP_NAME")
@@ -110,7 +134,7 @@ FUNCTION_ID=$("${OCI[@]}" fn function list --application-id "$APP_ID" --all --qu
 [[ -n "$FUNCTION_ID" && "$FUNCTION_ID" != null ]] || { echo "Function $FUNCTION_NAME was not found after deployment." >&2; exit 1; }
 FUNCTION_INVOKE_ENDPOINT=$("${OCI[@]}" fn function get --function-id "$FUNCTION_ID" --query 'data."invoke-endpoint"' --raw-output)
 [[ -n "$FUNCTION_INVOKE_ENDPOINT" && "$FUNCTION_INVOKE_ENDPOINT" != null ]] || { echo "Function invoke endpoint was not resolved." >&2; exit 1; }
-jq -n --arg host "$DB_HOST" --arg port "${DB_PORT:-3306}" --arg user "$DB_USER" --arg password "$DB_PASSWORD" --arg ssl "${DB_SSL_DISABLED:-false}" --arg namespace "${OBJECT_STORAGE_NAMESPACE:-}" --arg batch "${BATCH_ROWS:-10000}" --arg workers "${WRITER_WORKERS:-4}" --arg read_timeout "${OBJECT_STORAGE_READ_TIMEOUT_SECONDS:-300}" --arg range_bytes "${OBJECT_STORAGE_RANGE_BYTES:-33554432}" --arg control "$CONTROL_DATABASE" --arg function_id "$FUNCTION_ID" --arg invoke_endpoint "$FUNCTION_INVOKE_ENDPOINT" --arg region "$REGION" --arg detached "${DETACHED_ENABLED:-false}" --arg detached_timeout "${DETACHED_TIMEOUT_SECONDS:-3600}" --arg sync_timeout "$FUNCTION_TIMEOUT" --arg lease_seconds "${QUEUE_LEASE_SECONDS:-90}" --arg reorder_grace "${QUEUE_REORDER_GRACE_SECONDS:-30}" --arg shutdown_reserve "${QUEUE_SHUTDOWN_RESERVE_SECONDS:-120}" --arg minimum_start "${QUEUE_MINIMUM_START_SECONDS:-180}" '{DB_HOST:$host,DB_PORT:$port,DB_USER:$user,DB_PASSWORD:$password,DB_SSL_DISABLED:$ssl,OBJECT_STORAGE_NAMESPACE:$namespace,BATCH_ROWS:$batch,WRITER_WORKERS:$workers,OBJECT_STORAGE_READ_TIMEOUT_SECONDS:$read_timeout,OBJECT_STORAGE_RANGE_BYTES:$range_bytes,CONTROL_DATABASE:$control,FUNCTION_ID:$function_id,FUNCTION_INVOKE_ENDPOINT:$invoke_endpoint,OCI_REGION:$region,DETACHED_ENABLED:$detached,DETACHED_TIMEOUT_SECONDS:$detached_timeout,SYNC_TIMEOUT_SECONDS:$sync_timeout,QUEUE_LEASE_SECONDS:$lease_seconds,QUEUE_REORDER_GRACE_SECONDS:$reorder_grace,QUEUE_SHUTDOWN_RESERVE_SECONDS:$shutdown_reserve,QUEUE_MINIMUM_START_SECONDS:$minimum_start}' > "$CONFIG_FILE"
+jq -n --arg host "$DB_HOST" --arg port "${DB_PORT:-3306}" --arg user "$DB_USER" --arg password "$DB_PASSWORD" --arg ssl "${DB_SSL_DISABLED:-false}" --arg namespace "${OBJECT_STORAGE_NAMESPACE:-}" --arg batch "$BATCH_ROWS" --arg workers "$WRITER_WORKERS" --arg load_lease "$LOAD_LEASE_SECONDS" --arg read_timeout "$OBJECT_STORAGE_READ_TIMEOUT_SECONDS" --arg range_bytes "$OBJECT_STORAGE_RANGE_BYTES" --arg control "$CONTROL_DATABASE" --arg function_id "$FUNCTION_ID" --arg invoke_endpoint "$FUNCTION_INVOKE_ENDPOINT" --arg region "$REGION" --arg detached "${DETACHED_ENABLED:-false}" --arg detached_timeout "$DETACHED_TIMEOUT_SECONDS" --arg sync_timeout "$FUNCTION_TIMEOUT" --arg lease_seconds "$QUEUE_LEASE_SECONDS" --arg reorder_grace "$QUEUE_REORDER_GRACE_SECONDS" --arg sync_reserve "$QUEUE_SYNC_RESERVE_SECONDS" --arg sync_minimum "$QUEUE_SYNC_MINIMUM_START_SECONDS" --arg shutdown_reserve "$QUEUE_SHUTDOWN_RESERVE_SECONDS" --arg minimum_start "$QUEUE_MINIMUM_START_SECONDS" --arg unknown_job "$QUEUE_UNKNOWN_JOB_SECONDS" --arg expected_bps "$QUEUE_EXPECTED_BYTES_PER_SECOND" --arg safety_factor "$QUEUE_PREDICTION_SAFETY_FACTOR" '{DB_HOST:$host,DB_PORT:$port,DB_USER:$user,DB_PASSWORD:$password,DB_SSL_DISABLED:$ssl,OBJECT_STORAGE_NAMESPACE:$namespace,BATCH_ROWS:$batch,WRITER_WORKERS:$workers,LOAD_LEASE_SECONDS:$load_lease,OBJECT_STORAGE_READ_TIMEOUT_SECONDS:$read_timeout,OBJECT_STORAGE_RANGE_BYTES:$range_bytes,CONTROL_DATABASE:$control,FUNCTION_ID:$function_id,FUNCTION_INVOKE_ENDPOINT:$invoke_endpoint,OCI_REGION:$region,DETACHED_ENABLED:$detached,DETACHED_TIMEOUT_SECONDS:$detached_timeout,SYNC_TIMEOUT_SECONDS:$sync_timeout,QUEUE_LEASE_SECONDS:$lease_seconds,QUEUE_REORDER_GRACE_SECONDS:$reorder_grace,QUEUE_SYNC_RESERVE_SECONDS:$sync_reserve,QUEUE_SYNC_MINIMUM_START_SECONDS:$sync_minimum,QUEUE_SHUTDOWN_RESERVE_SECONDS:$shutdown_reserve,QUEUE_MINIMUM_START_SECONDS:$minimum_start,QUEUE_UNKNOWN_JOB_SECONDS:$unknown_job,QUEUE_EXPECTED_BYTES_PER_SECOND:$expected_bps,QUEUE_PREDICTION_SAFETY_FACTOR:$safety_factor}' > "$CONFIG_FILE"
 "${OCI[@]}" fn function update --function-id "$FUNCTION_ID" \
   --timeout-in-seconds "$FUNCTION_TIMEOUT" \
   --detached-mode-timeout-in-seconds "$DETACHED_TIMEOUT_SECONDS" \

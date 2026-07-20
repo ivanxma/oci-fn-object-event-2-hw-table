@@ -35,6 +35,17 @@ FUNCTION_JSON=$("${OCI[@]}" fn function get --function-id "$FUNCTION_ID")
   echo "Function CONTROL_DATABASE does not match $CONTROL_DATABASE." >&2
   exit 1
 }
+for setting in \
+  WRITER_WORKERS LOAD_LEASE_SECONDS QUEUE_LEASE_SECONDS QUEUE_REORDER_GRACE_SECONDS \
+  QUEUE_SYNC_RESERVE_SECONDS QUEUE_SYNC_MINIMUM_START_SECONDS \
+  QUEUE_SHUTDOWN_RESERVE_SECONDS QUEUE_MINIMUM_START_SECONDS \
+  QUEUE_UNKNOWN_JOB_SECONDS QUEUE_EXPECTED_BYTES_PER_SECOND \
+  QUEUE_PREDICTION_SAFETY_FACTOR; do
+  [[ -n "$(jq -r --arg setting "$setting" '.data.config[$setting] // empty' <<<"$FUNCTION_JSON")" ]] || {
+    echo "Function configuration is missing $setting." >&2
+    exit 1
+  }
+done
 
 RULE_ID=$("${OCI[@]}" events rule list --compartment-id "$COMPARTMENT_ID" --all \
   --query "data[?\"display-name\"=='$RULE_NAME'].id | [0]" --raw-output)

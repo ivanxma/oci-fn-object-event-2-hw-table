@@ -44,6 +44,27 @@ class DeploymentScriptTest(unittest.TestCase):
         self.assertIn('[[ "$RULE_FUNCTION_ID" == "$FUNCTION_ID" ]]', source)
         self.assertIn('[[ "$FUNCTION_STATE" == ACTIVE ]]', source)
 
+    def test_function_deploy_includes_adjustable_runtime_and_queue_settings(self):
+        deploy = self.source("deploy/deploy.sh")
+        example = self.source("deploy/env.sh.example")
+        for setting in (
+            "WRITER_WORKERS",
+            "LOAD_LEASE_SECONDS",
+            "QUEUE_LEASE_SECONDS",
+            "QUEUE_REORDER_GRACE_SECONDS",
+            "QUEUE_SYNC_RESERVE_SECONDS",
+            "QUEUE_SYNC_MINIMUM_START_SECONDS",
+            "QUEUE_SHUTDOWN_RESERVE_SECONDS",
+            "QUEUE_MINIMUM_START_SECONDS",
+            "QUEUE_UNKNOWN_JOB_SECONDS",
+            "QUEUE_EXPECTED_BYTES_PER_SECOND",
+            "QUEUE_PREDICTION_SAFETY_FACTOR",
+        ):
+            self.assertIn(setting, deploy)
+            self.assertIn(setting, example)
+        self.assertIn("Sync queue reserve plus minimum start budget", deploy)
+        self.assertIn("Detached queue reserve plus minimum start budget", deploy)
+
     def test_ui_deploy_reuses_tls_and_has_bounded_health_gate(self):
         source = self.source("deploy/deploy_ui.sh")
         self.assertIn("Reusing existing generated TLS certificate", source)

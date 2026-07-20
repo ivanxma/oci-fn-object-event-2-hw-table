@@ -143,8 +143,21 @@ class MappingPageTest(unittest.TestCase):
         ):
             response = self.client.get("/mappings/?tab=function")
         self.assertEqual(response.status_code, 200)
-        for label in (b"Sync timeout", b"Detached timeout", b"Memory", b"Provisioned concurrency", b"Default writer workers"):
+        for label in (
+            b"Sync timeout",
+            b"Detached timeout",
+            b"Memory",
+            b"Provisioned concurrency",
+            b"Database host",
+            b"New database password",
+            b"Default writer workers",
+            b"Reorder grace",
+            b"Sync shutdown reserve",
+            b"Expected ingestion throughput",
+            b"Prediction safety factor",
+        ):
             self.assertIn(label, response.data)
+        self.assertNotIn(b'name="new_db_password" maxlength="1024" autocomplete="new-password" value=', response.data)
         self.assertNotIn(b"not-rendered", response.data)
 
     def test_selected_rule_edit_redirects_to_owning_mapping(self) -> None:

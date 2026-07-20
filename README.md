@@ -137,10 +137,16 @@ At minimum, review these queue and execution settings in `deploy/env.sh`:
 | `DETACHED_TIMEOUT_SECONDS` | `3600` | Detached Function timeout in seconds. |
 | `QUEUE_LEASE_SECONDS` | `90` | Lane and running-entry lease renewed by heartbeat. |
 | `QUEUE_REORDER_GRACE_SECONDS` | `30` | Wait before the first newly received event becomes eligible. |
+| `QUEUE_SYNC_RESERVE_SECONDS` | `15` | Sync time retained for state recording and continuation. |
+| `QUEUE_SYNC_MINIMUM_START_SECONDS` | `15` | Minimum Sync budget before another entry starts. |
 | `QUEUE_SHUTDOWN_RESERVE_SECONDS` | `120` | Detached runtime held back for safe release and continuation. |
 | `QUEUE_MINIMUM_START_SECONDS` | `180` | Minimum remaining Detached budget for another entry. |
+| `QUEUE_UNKNOWN_JOB_SECONDS` | `60` | Admission estimate for DELETE and unknown-size events. |
+| `QUEUE_EXPECTED_BYTES_PER_SECOND` | `4194304` | Conservative sustained ingestion rate used for admission. |
+| `QUEUE_PREDICTION_SAFETY_FACTOR` | `1.35` | Safety multiplier applied to the predicted duration. |
 | `BATCH_ROWS` | `10000` | Rows per database writer batch. |
 | `WRITER_WORKERS` | `4` | Default parallel MySQL writers. |
+| `LOAD_LEASE_SECONDS` | `120` | Age after which an abandoned LOADING batch can be recovered. |
 | `OBJECT_STORAGE_RANGE_BYTES` | `33554432` | Bounded Object Storage range size; 32 MiB. |
 
 Also set the compartment, subnet, region, application/Function names,
@@ -148,6 +154,15 @@ repository, database connection, control database, bucket, rule/logging, UI,
 and TLS values shown in `deploy/env.sh.example`. `deploy.sh` discovers the
 deployed Function OCID and invoke endpoint dynamically and injects both into
 the Function configuration.
+
+Authenticated operators can change these live values from **Resource Mappings
+→ OCI Function Configuration**, together with the Function database host, port,
+user, control schema, TLS mode, optional write-only password replacement,
+memory, timeouts, provisioned concurrency, streaming range, and read timeout.
+The existing database password is never returned to the browser. Mapping-level
+target database/table, requested mode, and worker count remain under each
+Resource Mapping. Mirror intentional live changes into the protected
+`deploy/env.sh` when they must survive a later scripted redeployment.
 
 The control tables are idempotent. On the first Function invocation or first
 Queue/Mapping UI access, the application creates or upgrades
@@ -264,6 +279,7 @@ troubleshooting, and validation commands.
 ## More information
 
 - [Ordered event queue design, workflow, UI, and validation](docs/ordered-event-queue-design.md)
+- [Queue reorder-grace test: 10 seconds versus 30 seconds](docs/queue-reorder-grace-test-10s-vs-30s.md)
 - [Technical deployment and operations guide](docs/technical-details.md)
 - [Repeatable performance-test setup and runner](performance_test/README.md)
 - [Parallel CSV streaming implementation](docs/csv-stream-parallelization-implementation.md)

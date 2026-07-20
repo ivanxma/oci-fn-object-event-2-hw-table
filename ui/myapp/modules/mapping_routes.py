@@ -516,7 +516,8 @@ def update_function_configuration():
         flash(
             f"OCI Function {configuration.display_name} configuration updated: "
             f"Sync {configuration.sync_timeout_seconds}s, Detached {configuration.detached_timeout_seconds}s, "
-            f"Memory {configuration.memory_in_mbs} MB.",
+            f"Memory {configuration.memory_in_mbs} MB, DB {configuration.db_host}:{configuration.db_port}, "
+            f"Workers {configuration.writer_workers}, Reorder grace {configuration.queue_reorder_grace_seconds}s.",
             "success",
         )
     except (ValueError, FunctionConfigurationError) as error:
