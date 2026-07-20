@@ -189,6 +189,9 @@ class MappingPageTest(unittest.TestCase):
         with patch("myapp.modules.common.MySQLService.health_check", return_value=None), patch(
             "myapp.modules.mapping_routes.MappingService.get_mapping", return_value=MAPPING
         ), patch(
+            "myapp.modules.mapping_routes.MappingService.mapping_has_nonterminal_queue_work",
+            return_value=False,
+        ), patch(
             "myapp.modules.mapping_routes.EventRuleService.delete_function_rule"
         ) as delete_rule, patch(
             "myapp.modules.mapping_routes.MappingService.delete_mapping", return_value=True
