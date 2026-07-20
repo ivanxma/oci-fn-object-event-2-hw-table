@@ -11,7 +11,6 @@ ui/        Flask operations application
 deploy/    Oracle Linux bootstrap and idempotent deployment scripts
 tests/     Function tests and fixtures
 ui/tests/  Flask UI and OCI-management tests
-blog/      Architecture and operational design articles
 docs/      Versioned technical implementation documentation
 external-reports/  Versioned final measured reports for external sharing
 reports/   Git-ignored HTML plans and working assessment artifacts
@@ -242,7 +241,7 @@ retries, and timing to be correlated.
 
 Detached mode extends the bound; it does not remove it. Earlier 1 GB Sync tests
 exceeded 300 seconds; the final controlled run used Detached mode for 1–5 GB.
-See the linked final performance report and architecture blog for the test
+See the linked final performance report and architecture document for the test
 environment, shapes, worker counts, and storage observations.
 
 ## Logging and troubleshooting
@@ -277,8 +276,8 @@ session state should be committed.
 
 ## Related documents
 
-- [CSV-to-HeatWave ingestion design](../blog/csv-ingestion-to-heatwave.md)
-- [Large-file technical architecture](../blog/technical-architecture-large-csv-heatwave.md)
+- [CSV-to-HeatWave ingestion design](csv-ingestion-to-heatwave.md)
+- [Large-file technical architecture](technical-architecture-large-csv-heatwave.md)
 - [Parallel CSV streaming implementation](csv-stream-parallelization-implementation.md)
 - [Diskless parallel CSV streaming implementation](diskless-parallel-csv-streaming-implementation.md)
 - [Current VM 6 performance report — MySQL.8 with 1.3 TB storage](../external-reports/performance-test-report-vm6-20260719.md)

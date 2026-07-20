@@ -268,8 +268,8 @@ troubleshooting, and validation commands.
 - [Repeatable performance-test setup and runner](performance_test/README.md)
 - [Parallel CSV streaming implementation](docs/csv-stream-parallelization-implementation.md)
 - [Diskless parallel CSV streaming implementation](docs/diskless-parallel-csv-streaming-implementation.md)
-- [CSV-to-HeatWave ingestion design](blog/csv-ingestion-to-heatwave.md)
-- [Large-file technical architecture](blog/technical-architecture-large-csv-heatwave.md)
+- [CSV-to-HeatWave ingestion design](docs/csv-ingestion-to-heatwave.md)
+- [Large-file technical architecture](docs/technical-architecture-large-csv-heatwave.md)
 - [Current VM 6 performance report — MySQL.8 with 1.3 TB storage](external-reports/performance-test-report-vm6-20260719.md)
 - [Prior performance baseline — MySQL.8 with 50 GB storage](external-reports/performance-test-report-20260719-sync-detached.md)
 
