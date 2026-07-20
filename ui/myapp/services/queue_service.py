@@ -107,6 +107,8 @@ class QueueService:
                 lease_expires_at DATETIME(6) NULL,
                 invocation_mode ENUM('SYNC','DETACHED') NOT NULL,
                 worker_threads SMALLINT UNSIGNED NOT NULL,
+                order_required BOOLEAN NOT NULL DEFAULT TRUE,
+                reorder_grace_seconds SMALLINT UNSIGNED NOT NULL DEFAULT 30,
                 object_size_bytes BIGINT UNSIGNED NULL,
                 event_payload JSON NOT NULL,
                 last_error TEXT NULL,
@@ -122,6 +124,18 @@ class QueueService:
                 KEY ix_queue_object_event (object_event_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
         )
+        for column, definition in (
+            ("order_required", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("reorder_grace_seconds", "SMALLINT UNSIGNED NOT NULL DEFAULT 30"),
+        ):
+            cursor.execute(
+                "SELECT COUNT(*) AS count FROM information_schema.columns WHERE table_schema=%s AND table_name='event_work_queue' AND column_name=%s",
+                (control_database(), column),
+            )
+            row = cursor.fetchone()
+            count = row.get("count", 0) if isinstance(row, dict) else (row[0] if row else 0)
+            if not count:
+                cursor.execute(f"ALTER TABLE {_table('event_work_queue')} ADD COLUMN {quote_identifier(column, 'queue column')} {definition}")
         cursor.execute(
             f"""CREATE TABLE IF NOT EXISTS {_table('queue_attempt')} (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -208,6 +222,7 @@ class QueueService:
                             q.target_database, q.target_table, q.bucket_name, q.resource_name,
                             q.object_version, q.event_action, q.event_time, q.priority, q.status,
                             q.attempt_count, q.available_at, q.invocation_mode, q.worker_threads,
+                            q.order_required, q.reorder_grace_seconds,
                             q.object_size_bytes, q.last_error, q.operator_note, q.started_at,
                             q.completed_at, q.created_at,a.transport_mode AS latest_transport_mode,
                             a.status AS latest_attempt_status,a.duration_ms AS latest_attempt_duration_ms,
@@ -292,11 +307,12 @@ class QueueService:
                 f"""INSERT INTO {_table('event_work_queue')}
                    (event_id,mapping_id,queue_scope,binding_key,target_database,target_table,
                     compartment_name,bucket_name,resource_name,object_version,event_action,event_time,
-                    priority,invocation_mode,worker_threads,event_payload,operator_note)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    priority,invocation_mode,worker_threads,order_required,reorder_grace_seconds,event_payload,operator_note)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (event_id, mapping_id, scope, binding_key, mapping["target_database"], mapping["target_table"],
                  mapping["compartment_name"], mapping["bucket_name"], resource, version, action, event_time,
-                 priority, mapping["invocation_mode"], mapping["worker_threads"], json.dumps(event), note),
+                 priority, mapping["invocation_mode"], mapping["worker_threads"], bool(mapping.get("order_required", True)),
+                 int(mapping.get("reorder_grace_seconds") if mapping.get("reorder_grace_seconds") is not None else 30), json.dumps(event), note),
             )
             queue_id = int(cursor.lastrowid)
             cursor.execute(

@@ -342,6 +342,8 @@ def _mapping_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
         "invocation_mode": entry["invocation_mode"],
         "worker_threads": int(entry["worker_threads"]),
         "queue_scope": entry["queue_scope"],
+        "order_required": bool(entry.get("order_required", True)),
+        "reorder_grace_seconds": int(entry.get("reorder_grace_seconds") if entry.get("reorder_grace_seconds") is not None else 30),
     }
 
 
@@ -389,7 +391,7 @@ def _invocation_id(ctx: Any) -> str:
 def _drain_binding(db: Database, ctx: Any, binding_key: str, transport_mode: str) -> dict[str, Any]:
     owner = invocation_owner()
     lease_seconds = max(30, int(os.environ.get("QUEUE_LEASE_SECONDS", "90")))
-    grace_seconds = max(0, int(os.environ.get("QUEUE_REORDER_GRACE_SECONDS", "30")))
+    default_grace_seconds = max(0, int(os.environ.get("QUEUE_REORDER_GRACE_SECONDS", "30")))
     started, maximum = monotonic_deadline(transport_mode)
     if not acquire_lane(db, binding_key, owner, lease_seconds):
         return {"status": "queue_wakeup_coalesced", "binding_key": binding_key, "processed": 0}
@@ -398,11 +400,11 @@ def _drain_binding(db: Database, ctx: Any, binding_key: str, transport_mode: str
     stop_reason = "empty"
     try:
         while True:
-            entry, reason = claim_next(db, binding_key, owner, lease_seconds, grace_seconds)
+            entry, reason = claim_next(db, binding_key, owner, lease_seconds, default_grace_seconds)
             if entry is None:
                 stop_reason = reason
                 if reason == "not_ready" and time.monotonic() - started + 5 < maximum:
-                    time.sleep(min(5, max(1, grace_seconds)))
+                    time.sleep(min(5, max(1, default_grace_seconds)))
                     continue
                 needs_continuation = reason in {"not_ready", "busy", "race"}
                 break

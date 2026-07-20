@@ -31,7 +31,7 @@ class MappingService:
         self.mysql = mysql
 
     @staticmethod
-    def normalize(form: dict[str, Any]) -> dict[str, str]:
+    def normalize(form: dict[str, Any]) -> dict[str, Any]:
         """Validate browser input before it is used in a parameterized statement."""
         mode = (form.get("invocation_mode") or "SYNC").strip().upper()
         if mode not in {"SYNC", "DETACHED"}:
@@ -45,6 +45,15 @@ class MappingService:
             raise ValueError("Worker threads must be a whole number from 1 to 64.") from error
         if not 1 <= workers <= 64:
             raise ValueError("Worker threads must be from 1 to 64.")
+        order_required = str(form.get("order_required") or "").strip().lower() in {"1", "true", "yes", "on"}
+        try:
+            reorder_grace_seconds = int(form.get("reorder_grace_seconds") or 30)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Mapping wait time must be a whole number from 0 to 3600 seconds.") from error
+        if not 0 <= reorder_grace_seconds <= 3600:
+            raise ValueError("Mapping wait time must be from 0 to 3600 seconds.")
+        if order_required and reorder_grace_seconds < 30:
+            raise ValueError("Order-sensitive mappings require a wait time of at least 30 seconds.")
         return {
             "compartment_name": _required_text(form.get("compartment_name"), "Compartment name", 255),
             "bucket_name": _required_text(form.get("bucket_name"), "Bucket name", 255),
@@ -54,6 +63,8 @@ class MappingService:
             "invocation_mode": mode,
             "worker_threads": str(workers),
             "queue_scope": queue_scope,
+            "order_required": order_required,
+            "reorder_grace_seconds": reorder_grace_seconds,
         }
 
     def _ensure_schema(self, cursor) -> None:
@@ -71,6 +82,8 @@ class MappingService:
                 invocation_mode ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC',
                 worker_threads SMALLINT UNSIGNED NOT NULL DEFAULT 4,
                 queue_scope ENUM('TABLE','MAPPING') NOT NULL DEFAULT 'TABLE',
+                order_required BOOLEAN NOT NULL DEFAULT TRUE,
+                reorder_grace_seconds SMALLINT UNSIGNED NOT NULL DEFAULT 30,
                 event_rule_id VARCHAR(255) NULL,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 PRIMARY KEY (id)
@@ -80,6 +93,8 @@ class MappingService:
             ("invocation_mode", "ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC'"),
             ("worker_threads", "SMALLINT UNSIGNED NOT NULL DEFAULT 4"),
             ("queue_scope", "ENUM('TABLE','MAPPING') NOT NULL DEFAULT 'TABLE'"),
+            ("order_required", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("reorder_grace_seconds", "SMALLINT UNSIGNED NOT NULL DEFAULT 30"),
             ("event_rule_id", "VARCHAR(255) NULL"),
         ):
             cursor.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=%s AND table_name=%s AND column_name=%s", (database, MAPPING_TABLE, column))
@@ -93,7 +108,7 @@ class MappingService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             self._ensure_schema(cursor)
             cursor.execute(
-                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, queue_scope, event_rule_id "
+                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, queue_scope, order_required, reorder_grace_seconds, event_rule_id "
                 f"FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} ORDER BY compartment_name, bucket_name, resource_name_pattern"
             )
             return cursor.fetchall()
@@ -119,7 +134,7 @@ class MappingService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             self._ensure_schema(cursor)
             cursor.execute(
-                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, queue_scope, event_rule_id "
+                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, queue_scope, order_required, reorder_grace_seconds, event_rule_id "
                 f"FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} WHERE id = %s",
                 (mapping_id,),
             )
@@ -130,7 +145,7 @@ class MappingService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             self._ensure_schema(cursor)
             cursor.execute(
-                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, queue_scope, event_rule_id "
+                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, queue_scope, order_required, reorder_grace_seconds, event_rule_id "
                 f"FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} WHERE event_rule_id = %s LIMIT 1",
                 (rule_id,),
             )
@@ -142,8 +157,8 @@ class MappingService:
             self._ensure_schema(cursor)
             cursor.execute(
                 f"INSERT INTO {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} "
-                "(compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, queue_scope) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads", "queue_scope")),
+                "(compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, queue_scope, order_required, reorder_grace_seconds) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads", "queue_scope", "order_required", "reorder_grace_seconds")),
             )
             return int(cursor.lastrowid)
 
@@ -159,8 +174,8 @@ class MappingService:
                 return False
             cursor.execute(
                 f"UPDATE {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} "
-                "SET compartment_name = %s, bucket_name = %s, resource_name_pattern = %s, target_database = %s, target_table = %s, invocation_mode = %s, worker_threads = %s, queue_scope = %s WHERE id = %s",
-                (*tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads", "queue_scope")), mapping_id),
+                "SET compartment_name = %s, bucket_name = %s, resource_name_pattern = %s, target_database = %s, target_table = %s, invocation_mode = %s, worker_threads = %s, queue_scope = %s, order_required = %s, reorder_grace_seconds = %s WHERE id = %s",
+                (*tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads", "queue_scope", "order_required", "reorder_grace_seconds")), mapping_id),
             )
             return True
 

@@ -93,6 +93,8 @@ def ensure_queue_tables(db: Database) -> None:
                 lease_expires_at DATETIME(6) NULL,
                 invocation_mode ENUM('SYNC','DETACHED') NOT NULL,
                 worker_threads SMALLINT UNSIGNED NOT NULL,
+                order_required BOOLEAN NOT NULL DEFAULT TRUE,
+                reorder_grace_seconds SMALLINT UNSIGNED NOT NULL DEFAULT 30,
                 object_size_bytes BIGINT UNSIGNED NULL,
                 event_payload JSON NOT NULL,
                 last_error TEXT NULL,
@@ -108,6 +110,16 @@ def ensure_queue_tables(db: Database) -> None:
                 KEY ix_queue_object_event (object_event_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
         )
+        for column, definition in (
+            ("order_required", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("reorder_grace_seconds", "SMALLINT UNSIGNED NOT NULL DEFAULT 30"),
+        ):
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=%s AND table_name='event_work_queue' AND column_name=%s",
+                (control_database(), column),
+            )
+            if not cursor.fetchone()[0]:
+                cursor.execute(f"ALTER TABLE {control_table('event_work_queue')} ADD COLUMN {quote_identifier(column, 'queue column')} {definition}")
         cursor.execute(
             f"""CREATE TABLE IF NOT EXISTS {control_table('queue_attempt')} (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -187,15 +199,16 @@ def enqueue_event(
                (event_id, object_event_id, mapping_id, queue_scope, binding_key,
                 target_database, target_table, compartment_name, bucket_name,
                 resource_name, object_version, event_action, event_time, invocation_mode,
-                worker_threads, object_size_bytes, event_payload)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                worker_threads, order_required, reorder_grace_seconds, object_size_bytes, event_payload)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)""",
             (
                 event_id, source.get("object_event_id"), mapping["id"], scope, binding_key,
                 mapping["target_database"], mapping["target_table"], source["compartment_name"],
                 source["bucket_name"], source["resource_name"], source.get("object_version", ""),
                 action, event_time, str(mapping.get("invocation_mode") or "SYNC").upper(),
-                int(mapping.get("worker_threads") or 4), _event_size(event),
+                int(mapping.get("worker_threads") or 4), bool(mapping.get("order_required", True)),
+                int(mapping.get("reorder_grace_seconds") if mapping.get("reorder_grace_seconds") is not None else 30), _event_size(event),
                 json.dumps(payload, separators=(",", ":")),
             ),
         )
@@ -235,7 +248,7 @@ def claim_next(
     binding_key: str,
     owner_token: str,
     lease_seconds: int,
-    reorder_grace_seconds: int,
+    default_reorder_grace_seconds: int,
 ) -> tuple[dict[str, Any] | None, str]:
     """Claim the first non-terminal entry; never bypass blocked earlier work."""
     with db.connection() as connection:
@@ -264,9 +277,12 @@ def claim_next(
         entry = cursor.fetchone()
         if not entry:
             return None, "empty"
+        if entry["status"] == "BLOCKED":
+            return None, "blocked"
         watermark_time = lane.get("last_completed_event_time")
         watermark_id = int(lane.get("last_completed_queue_id") or 0)
-        if watermark_time is not None and (
+        order_required = bool(entry.get("order_required", True))
+        if order_required and watermark_time is not None and (
             entry["event_time"] < watermark_time
             or (entry["event_time"] == watermark_time and int(entry["id"]) < watermark_id)
         ):
@@ -283,10 +299,14 @@ def claim_next(
             entry["status"] = "BLOCKED"
             entry["last_error"] = "Late event is older than the completed lane watermark and requires operator review."
             return entry, "late_event"
-        if entry["status"] == "BLOCKED":
-            return None, "blocked"
         if entry["status"] in {"LEASED", "RUNNING"}:
             return None, "busy"
+        grace_value = entry.get("reorder_grace_seconds")
+        reorder_grace_seconds = int(default_reorder_grace_seconds if grace_value is None else grace_value)
+        if order_required:
+            reorder_grace_seconds = max(30, reorder_grace_seconds)
+        else:
+            reorder_grace_seconds = max(0, reorder_grace_seconds)
         cursor.execute(
             "SELECT UTC_TIMESTAMP(6) >= DATE_ADD(%s, INTERVAL %s SECOND) "
             "AND UTC_TIMESTAMP(6) >= %s AS is_ready",
@@ -410,9 +430,19 @@ def complete_entry(db: Database, entry: dict[str, Any], owner_token: str, attemp
             raise RuntimeError("Queue lease was lost before completion could be recorded.")
         cursor.execute(
             f"""UPDATE {control_table('queue_lane')}
-                   SET last_completed_event_time=%s,last_completed_queue_id=%s
+                   SET last_completed_queue_id=CASE
+                         WHEN last_completed_event_time IS NULL
+                           OR %s > last_completed_event_time
+                           OR (%s = last_completed_event_time AND %s > COALESCE(last_completed_queue_id,0))
+                         THEN %s ELSE last_completed_queue_id END,
+                       last_completed_event_time=CASE
+                         WHEN last_completed_event_time IS NULL OR %s > last_completed_event_time
+                         THEN %s ELSE last_completed_event_time END
                  WHERE binding_key=%s AND owner_token=%s""",
-            (entry["event_time"], entry["id"], entry["binding_key"], owner_token),
+            (
+                entry["event_time"], entry["event_time"], entry["id"], entry["id"],
+                entry["event_time"], entry["event_time"], entry["binding_key"], owner_token,
+            ),
         )
         cursor.execute(
             f"""INSERT INTO {control_table('queue_transition_audit')}

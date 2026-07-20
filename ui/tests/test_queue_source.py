@@ -45,6 +45,12 @@ class QueueSourceTest(unittest.TestCase):
         self.assertIn('value="TABLE"', source)
         self.assertIn('value="MAPPING"', source)
 
+    def test_mapping_form_has_per_mapping_order_policy(self):
+        source = (UI_ROOT / "myapp" / "templates" / "mapping_form.html").read_text(encoding="utf-8")
+        self.assertIn('name="order_required"', source)
+        self.assertIn('name="reorder_grace_seconds"', source)
+        self.assertIn("Ordered mappings require a wait of at least 30 seconds", source)
+
 
 if __name__ == "__main__":
     unittest.main()

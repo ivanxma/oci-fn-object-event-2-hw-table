@@ -102,6 +102,53 @@ class WorkQueuePolicyTest(unittest.TestCase):
         self.assertEqual(reason, "claimed")
         self.assertEqual(claimed["status"], "RUNNING")
 
+    def test_unordered_late_entry_can_be_claimed(self):
+        entry = {
+            "id": 12,
+            "status": "PENDING",
+            "attempt_count": 0,
+            "received_at": datetime(2026, 7, 19, 12, 0, 0),
+            "available_at": datetime(2026, 7, 19, 12, 0, 0),
+            "event_time": datetime(2026, 7, 19, 11, 0, 0),
+            "order_required": False,
+            "reorder_grace_seconds": 0,
+        }
+
+        class Cursor:
+            rowcount = 1
+
+            def execute(self, sql, _params=()):
+                if "SELECT owner_token" in sql:
+                    self.result = {
+                        "owner_token": "owner",
+                        "last_completed_event_time": datetime(2026, 7, 19, 12, 0, 0),
+                        "last_completed_queue_id": 11,
+                    }
+                elif "SELECT * FROM" in sql:
+                    self.result = dict(entry)
+                elif "AS is_ready" in sql:
+                    self.result = {"is_ready": 1}
+
+            def fetchone(self):
+                return self.result
+
+        class Connection:
+            def cursor(self, **_kwargs):
+                return Cursor()
+
+        class Database:
+            @contextmanager
+            def connection(self):
+                yield Connection()
+
+        claimed, reason = QUEUE.claim_next(Database(), "table:fntestdb.employees", "owner", 90, 30)
+        self.assertEqual(reason, "claimed")
+        self.assertEqual(claimed["id"], 12)
+
+    def test_complete_entry_keeps_lane_watermark_monotonic(self):
+        source = (Path(__file__).resolve().parents[1] / "function" / "work_queue.py").read_text(encoding="utf-8")
+        self.assertIn("THEN %s ELSE last_completed_event_time END", source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -20,6 +20,8 @@
     <label>Execution mode <span>*</span><select id="invocation-mode" name="invocation_mode"><option value="SYNC" {{ 'selected' if (mapping.invocation_mode or 'SYNC') == 'SYNC' else '' }}>Synchronous</option><option value="DETACHED" {{ 'selected' if mapping.invocation_mode == 'DETACHED' else '' }}>Detached</option></select><small>Timeouts and global capacity are maintained under OCI Function Configuration.</small></label>
     <label>Worker threads<input type="number" name="worker_threads" min="1" max="64" value="{{ mapping.worker_threads or 4 }}"><small>Per-mapping database writer concurrency.</small></label>
     <label>Queue binding <span>*</span><select name="queue_scope"><option value="TABLE" {{ 'selected' if (mapping.queue_scope or 'TABLE') == 'TABLE' else '' }}>Per target table (recommended)</option><option value="MAPPING" {{ 'selected' if mapping.queue_scope == 'MAPPING' else '' }}>Per mapping</option></select><small>Table scope serializes every mapping that mutates the same table. Mapping scope is only safe for independent, non-overlapping partitions.</small></label>
+    <label>Mapping wait (seconds) <span>*</span><input id="reorder-grace-seconds" type="number" name="reorder_grace_seconds" min="30" max="3600" required value="{{ mapping.get('reorder_grace_seconds', 30) }}"><small>Wait before claiming a newly received event, allowing earlier Object Storage events to arrive.</small></label>
+    <label class="checkbox-field wide"><input id="order-required" type="checkbox" name="order_required" {{ 'checked' if mapping.get('order_required', true) else '' }}><span>Object operation order is important</span><small>When enabled, late events older than the completed queue watermark are blocked for review. Ordered mappings require a wait of at least 30 seconds.</small></label>
     <label class="checkbox-field wide create-rule-option"><input type="checkbox" name="create_rule" {{ 'checked' if mapping.create_rule else '' }}><span>Create and manage an OCI Events rule for this mapping</span><small>{% if form_mode == 'Edit' %}Saving updates the associated live OCI rule. Uncheck to delete that rule while retaining this mapping.{% else %}The rule matches this bucket and object-name pattern and invokes the configured OCI Function.{% endif %}</small></label>
     <div class="form-actions mapping-actions"><a class="secondary-button" href="{{ url_for('mappings.list_mappings') }}">Cancel</a><button class="primary-button" type="submit">{{ form_mode }} mapping</button></div>
   </form>
@@ -30,6 +32,14 @@
 document.addEventListener('DOMContentLoaded', () => {
   const database = document.getElementById('target-database');
   const table = document.getElementById('target-table');
+  const orderRequired = document.getElementById('order-required');
+  const waitSeconds = document.getElementById('reorder-grace-seconds');
+  const updateOrderPolicy = () => {
+    waitSeconds.min = orderRequired.checked ? '30' : '0';
+    if (orderRequired.checked && Number(waitSeconds.value) < 30) waitSeconds.value = '30';
+  };
+  orderRequired.addEventListener('change', updateOrderPolicy);
+  updateOrderPolicy();
   database.addEventListener('change', async () => {
     table.innerHTML = '<option value="">Select table</option>';
     table.disabled = !database.value;

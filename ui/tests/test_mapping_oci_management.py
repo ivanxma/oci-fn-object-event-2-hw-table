@@ -20,6 +20,8 @@ def mapping_form(**overrides: str) -> dict[str, str]:
         "target_table": "perf_t_001",
         "invocation_mode": "SYNC",
         "worker_threads": "4",
+        "order_required": "on",
+        "reorder_grace_seconds": "30",
     }
     values.update(overrides)
     return values
@@ -46,10 +48,23 @@ def function_form(**overrides: str) -> dict[str, str]:
 
 
 class MappingOciManagementTest(unittest.TestCase):
-    def test_mapping_has_no_per_mapping_timeout(self) -> None:
+    def test_mapping_has_per_mapping_order_policy(self) -> None:
         normalized = MappingService.normalize(mapping_form(timeout_seconds="9999"))
         self.assertNotIn("timeout_seconds", normalized)
         self.assertEqual(normalized["worker_threads"], "4")
+        self.assertTrue(normalized["order_required"])
+        self.assertEqual(normalized["reorder_grace_seconds"], 30)
+
+    def test_ordered_mapping_requires_at_least_30_seconds(self) -> None:
+        with self.assertRaisesRegex(ValueError, "at least 30 seconds"):
+            MappingService.normalize(mapping_form(reorder_grace_seconds="29"))
+
+    def test_unordered_mapping_allows_zero_wait(self) -> None:
+        values = mapping_form(reorder_grace_seconds="0")
+        values.pop("order_required")
+        normalized = MappingService.normalize(values)
+        self.assertFalse(normalized["order_required"])
+        self.assertEqual(normalized["reorder_grace_seconds"], 0)
 
     def test_mapping_worker_bounds(self) -> None:
         for workers in ("0", "65", "invalid"):

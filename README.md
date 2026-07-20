@@ -2,9 +2,9 @@
 
 This application turns OCI Object Storage CSV lifecycle events into controlled,
 auditable MySQL table updates. OCI Events routes object create, update, and
-delete events to an OCI Function. A mapping selects the target table and either
-Sync or Detached execution. Every event first enters a durable TABLE- or
-MAPPING-bound queue, so overlapping Function invocations cannot reorder
+delete events to an OCI Function. A mapping selects the target table, Sync or
+Detached execution, and its wait/order policy. Every event first enters a
+durable TABLE- or MAPPING-bound queue, so overlapping Function invocations cannot reorder
 mutations for the same ownership boundary. CSV rows are streamed into parallel
 staging-table writers, then a partition exchange publishes one file's data
 atomically.
@@ -31,6 +31,8 @@ The `v0.1` tag remains the earlier release baseline. This branch adds:
   watermarks, deterministic ordering, and idempotent event intake;
 - mapping-driven Sync or Detached execution with safe Detached continuation
   before the Function runtime budget is exhausted;
+- mapping-specific reorder wait and an explicit order-important policy, with a
+  required minimum wait of 30 seconds when ordering protection is enabled;
 - immutable requested-mode snapshots and actual worker-transport attempts;
 - a Queue UI with Dashboard and Details views for outstanding work, depth,
   status, lane leases, heartbeats, attempts, errors, manual enqueue, scheduling
@@ -71,6 +73,8 @@ flowchart LR
 - Publishes one file atomically with MySQL partition exchange; delete events
   retire the corresponding partition.
 - Chooses Sync or Detached processing dynamically from each mapping.
+- Snapshots each mapping's wait and order policy on enqueue, so editing a
+  mapping does not silently alter already accepted work.
 - Binds ordering per target table by default, with an explicit per-mapping
   option for independently owned, non-overlapping partitions.
 - Uses a heartbeated lane lease, deterministic event order, completion
@@ -140,7 +144,7 @@ At minimum, review these queue and execution settings in `deploy/env.sh`:
 | `FUNCTION_TIMEOUT` | `300` | Sync Function timeout in seconds. |
 | `DETACHED_TIMEOUT_SECONDS` | `3600` | Detached Function timeout in seconds. |
 | `QUEUE_LEASE_SECONDS` | `90` | Lane and running-entry lease renewed by heartbeat. |
-| `QUEUE_REORDER_GRACE_SECONDS` | `30` | Wait before the first newly received event becomes eligible. |
+| `QUEUE_REORDER_GRACE_SECONDS` | `30` | Default/fallback wait for legacy queue entries; new entries snapshot their mapping-specific wait. |
 | `QUEUE_SYNC_RESERVE_SECONDS` | `15` | Sync time retained for state recording and continuation. |
 | `QUEUE_SYNC_MINIMUM_START_SECONDS` | `15` | Minimum Sync budget before another entry starts. |
 | `QUEUE_SHUTDOWN_RESERVE_SECONDS` | `120` | Detached runtime held back for safe release and continuation. |
@@ -164,17 +168,20 @@ Authenticated operators can change these live values from **Resource Mappings
 user, control schema, TLS mode, optional write-only password replacement,
 memory, timeouts, provisioned concurrency, streaming range, and read timeout.
 The existing database password is never returned to the browser. Mapping-level
-target database/table, requested mode, and worker count remain under each
-Resource Mapping. Mirror intentional live changes into the protected
-`deploy/env.sh` when they must survive a later scripted redeployment.
+target database/table, requested mode, worker count, wait time, and whether
+object-operation order is important remain under each Resource Mapping. An
+order-important mapping requires at least 30 seconds of wait. Mirror intentional
+live changes into the protected `deploy/env.sh` when they must survive a later
+scripted redeployment.
 
 The control tables are idempotent. On the first Function invocation or first
 Queue/Mapping UI access, the application creates or upgrades
 `object_storage_mappings`, `queue_lane`, `event_work_queue`, `queue_attempt`,
 `queue_transition_audit`, and the event/batch audit tables. Existing mappings
-receive safe `TABLE` queue scope by default. No separate queue SQL migration is
-required, but the configured database user must be allowed to perform those
-control-schema changes.
+receive safe `TABLE` queue scope, order-required behavior, and a 30-second wait
+by default. Queue entries retain a snapshot of these values. No separate queue
+SQL migration is required, but the configured database user must be allowed to
+perform those control-schema changes.
 
 ### Complete setup in the UI
 
@@ -190,7 +197,9 @@ After the deployment validator passes:
    and also provides individual statement tabs.
 4. Create a **Resource Mapping** for the compartment, bucket, mutually
    exclusive object pattern, target table, requested Sync/Detached mode, writer
-   count, and TABLE/MAPPING queue scope.
+   count, TABLE/MAPPING queue scope, mapping wait, and order-important policy.
+   Ordered mappings require a wait of 30–3,600 seconds; unordered mappings may
+   use 0–3,600 seconds.
 5. Create or associate an **OCI Rule** that sends create, update, and delete
    events for that mapping to the deployed Function.
 6. Use **Object Storage Upload** for a small CSV verification, then confirm the
@@ -294,6 +303,10 @@ troubleshooting, and validation commands.
   out of order. Queue idempotency, reorder grace, and a completion watermark
   protect observed work, but a producer manifest/sequence is still required
   when intent cannot be inferred from arrival and event timestamps.
+- When a mapping declares order important, an event older than the completed
+  lane watermark is blocked for operator review. When ordering is disabled,
+  late work may execute and the lane watermark never moves backward; this is
+  suitable only when those object operations are genuinely independent.
 - A timeout can leave a staging table behind. The UI exposes confirmed cleanup,
   while protecting a target that still has an active loading lease.
 - More worker threads help only while MySQL CPU, connection capacity, storage
