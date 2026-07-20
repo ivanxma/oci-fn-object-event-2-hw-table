@@ -3,6 +3,10 @@
 # Usage: ./showlog.sh [minutes] [limit]
 set -euo pipefail
 
+# bootstrap.sh installs OCI CLI and Fn CLI in user-local directories on a
+# fresh VM. Make this helper work from non-login shells and automation.
+export PATH="$HOME/.fn/bin:$HOME/bin:$HOME/.local/bin:$PATH"
+
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/env.sh}"
 
@@ -37,6 +41,9 @@ fi
 
 OCI_BIN="${OCI_BIN:-oci}"
 OCI_AUTH="${OCI_AUTH:-instance_principal}"
+for command in "$OCI_BIN" jq date; do
+  command -v "$command" >/dev/null || { echo "Missing required command: $command" >&2; exit 1; }
+done
 RAW_LOGS=$(mktemp)
 trap 'rm -f "$RAW_LOGS"' EXIT
 

@@ -120,20 +120,36 @@ throughput, row width, indexes, and concurrent loads.
 ## Deployment
 
 ```sh
-cd deploy
-./bootstrap.sh
-cp env.sh.example env.sh
-chmod 600 env.sh
+cd /home/opc/oci-object-event-2-table
+./deploy/bootstrap.sh
+cp deploy/env.sh.example deploy/env.sh
+chmod 600 deploy/env.sh
 # Edit the protected file.
-./deploy.sh
-./deploy_ui.sh
+./deploy/setup.sh --skip-bootstrap
 ```
+
+On subsequent reruns use `./deploy/setup.sh`; it safely reruns package
+bootstrap, Function deployment, UI deployment, and final validation. Use
+`--skip-bootstrap` when packages were just installed, `--smoke-test` for the
+100-row Object Storage create/delete verification, and `--reset-performance`
+only when the configured performance target's mutable state should be reset.
+
+The bootstrap installs Podman, OCI/Fn prerequisites, nginx, OpenSSL, SELinux
+policy tools, firewalld, jq, and core/archive utilities. OCI CLI and Fn may be
+installed under user-local paths, so every deployment/performance script sets
+that PATH before prerequisite checks. Python 3.13 is supplied by the Function
+and UI images; host Python is not the application runtime.
 
 The Function deployment creates or updates the application and image, discovers
 the Function OCID and invoke endpoint, applies both timeout modes and protected
 configuration, configures invocation logging when enabled, and creates/updates
 the base Events rule. The UI deployment builds a separate container, binds
 Flask only to localhost, installs a systemd service, and exposes nginx HTTPS.
+Generated TLS material is reused on reruns. The deployment health gate waits up
+to 30 seconds for the login page and prints the service journal on failure.
+`deploy/validate.sh` then verifies the current Function/rule association,
+bucket event setting, service/container state, protected file permissions,
+runtime dependency versions, and DB TCP reachability without exposing secrets.
 
 Set `OBJECT_STORAGE_BUCKET_NAME` and optionally
 `OBJECT_STORAGE_OBJECT_NAME_PATTERN` (for example `folder/*.csv`). Mapping-

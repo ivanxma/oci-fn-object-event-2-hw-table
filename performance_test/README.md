@@ -9,6 +9,12 @@ the object, waits for successful partition cleanup, and verifies zero final rows
 `--reset` clears only mutable batch/target state and deliberately preserves
 Event TX and error audit history.
 
+The setup and case runners execute all Python helpers inside the deployed
+Python 3.13 UI image, which already contains Connector/Python 9.7+. No host
+installation of `mysql-connector-python` is required. Read-only repository
+scripts are mounted without SELinux relabeling, preventing a test run from
+changing labels used by the live UI container.
+
 ```bash
 cd /home/opc/oci-object-event-2-table
 ./performance_test/setup.sh

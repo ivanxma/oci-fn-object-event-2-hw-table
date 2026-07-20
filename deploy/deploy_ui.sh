@@ -4,15 +4,18 @@
 set -euo pipefail
 umask 077
 
+export PATH="$HOME/.fn/bin:$HOME/bin:$HOME/.local/bin:$PATH"
+
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
 [[ -r "$ENV_FILE" ]] || { echo "Copy deploy/env.sh.example to deploy/env.sh and set deployment values." >&2; exit 1; }
+chmod 600 "$ENV_FILE"
 set -a
 # shellcheck disable=SC1090
 . "$ENV_FILE"
 set +a
 
-for command in oci podman sudo systemctl; do
+for command in oci podman sudo systemctl curl; do
   command -v "$command" >/dev/null || { echo "Missing $command." >&2; exit 1; }
 done
 [[ -n "${FLASK_SECRET_KEY:-}" ]] || { echo "FLASK_SECRET_KEY must be set in $ENV_FILE." >&2; exit 1; }
@@ -35,6 +38,12 @@ TLS_KEY_FILE="$DEPLOY_TLS_DIR/tls.key"
 CURRENT_USER=$(id -un)
 CURRENT_GROUP=$(id -gn)
 
+if [[ -n "$SOURCE_TLS_CERT_FILE" && -z "$SOURCE_TLS_KEY_FILE" ]] \
+   || [[ -z "$SOURCE_TLS_CERT_FILE" && -n "$SOURCE_TLS_KEY_FILE" ]]; then
+  echo "TLS_CERT_FILE and TLS_KEY_FILE must either both be set or both be empty." >&2
+  exit 1
+fi
+
 OCI_FUNCTION_ID=""
 if [[ "$OCI_FUNCTION_CONFIGURATION_ENABLED" == "true" || "$OCI_EVENT_RULE_MANAGEMENT_ENABLED" == "true" ]]; then
   for value in COMPARTMENT_ID APP_NAME FUNCTION_NAME REGION; do
@@ -52,9 +61,16 @@ fi
 case "$UI_BIND_PORT" in
   ''|*[!0-9]*) echo "UI_BIND_PORT must be numeric." >&2; exit 1 ;;
 esac
+(( UI_BIND_PORT >= 1024 && UI_BIND_PORT <= 65535 )) || { echo "UI_BIND_PORT must be from 1024 to 65535." >&2; exit 1; }
 
-if ! command -v nginx >/dev/null || ! command -v openssl >/dev/null; then
+# Keep this fallback so deploy_ui.sh remains self-diagnosing when an operator
+# skipped bootstrap.sh. Install the complete UI host set together; checking only
+# nginx/openssl previously missed SELinux and firewall helpers.
+if ! command -v nginx >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 \
+   || ! command -v setsebool >/dev/null 2>&1 || ! command -v firewall-cmd >/dev/null 2>&1; then
+  command -v dnf >/dev/null 2>&1 || { echo "Missing UI host packages and dnf is unavailable; run deploy/bootstrap.sh on Oracle Linux." >&2; exit 1; }
   sudo dnf install -y nginx openssl policycoreutils-python-utils
+  sudo dnf install -y firewalld
 fi
 
 mkdir -p "$INSTANCE_DIR"
@@ -66,8 +82,13 @@ if [[ -z "$SOURCE_TLS_CERT_FILE" || -z "$SOURCE_TLS_KEY_FILE" ]]; then
     echo "TLS_CERT_FILE and TLS_KEY_FILE must reference readable certificate files; set GENERATE_SELF_SIGNED_CERT=true for a temporary self-signed certificate." >&2
     exit 1
   fi
-  sudo openssl req -x509 -newkey rsa:4096 -sha256 -nodes -days 365 \
-    -keyout "$TLS_KEY_FILE" -out "$TLS_CERT_FILE" -subj "/CN=${UI_SERVER_NAME}" >/dev/null 2>&1
+  if sudo test -r "$TLS_CERT_FILE" && sudo test -r "$TLS_KEY_FILE"; then
+    echo "Reusing existing generated TLS certificate for $UI_SERVICE_NAME."
+  else
+    sudo openssl req -x509 -newkey rsa:4096 -sha256 -nodes -days 365 \
+      -keyout "$TLS_KEY_FILE" -out "$TLS_CERT_FILE" -subj "/CN=${UI_SERVER_NAME}" >/dev/null 2>&1
+    echo "Generated a self-signed TLS certificate for $UI_SERVICE_NAME."
+  fi
 else
   [[ -r "$SOURCE_TLS_CERT_FILE" && -r "$SOURCE_TLS_KEY_FILE" ]] || { echo "Configured TLS certificate or key is not readable." >&2; exit 1; }
   sudo install -m 644 "$SOURCE_TLS_CERT_FILE" "$TLS_CERT_FILE"
@@ -86,6 +107,8 @@ chmod 600 "$RUNTIME_ENV"
 # A system service uses the system Podman store/runtime rather than a user's
 # login-session runtime, so it remains available after reboot and logout.
 sudo podman build --tag "$UI_SERVICE_NAME:latest" "$ROOT_DIR/ui"
+sudo podman run --rm --entrypoint python "$UI_SERVICE_NAME:latest" -c \
+  'import sys, mysql.connector; assert sys.version_info >= (3,13); assert tuple(map(int,mysql.connector.__version__.split(".")[:2])) >= (9,7); print(f"UI runtime: Python {sys.version.split()[0]}, Connector/Python {mysql.connector.__version__}")'
 
 SERVICE_FILE="/etc/systemd/system/${UI_SERVICE_NAME}.service"
 NGINX_FILE="/etc/nginx/conf.d/${UI_SERVICE_NAME}.conf"
@@ -131,7 +154,9 @@ EOF
 
 sudo nginx -t
 if command -v getenforce >/dev/null && [[ "$(getenforce)" == "Enforcing" ]]; then
-  sudo setsebool -P httpd_can_network_connect 1
+  if ! getsebool httpd_can_network_connect 2>/dev/null | grep -q -- '--> on'; then
+    sudo setsebool -P httpd_can_network_connect 1
+  fi
 fi
 sudo systemctl daemon-reload
 sudo systemctl enable "$UI_SERVICE_NAME"
@@ -140,14 +165,30 @@ sudo systemctl enable nginx
 sudo systemctl restart nginx
 
 if command -v firewall-cmd >/dev/null; then
-  sudo systemctl enable --now firewalld || true
+  sudo timeout 30s systemctl enable --now firewalld || true
   zone=$(sudo firewall-cmd --get-active-zones 2>/dev/null | awk 'NR==1 {print $1}')
   zone=${zone:-$(sudo firewall-cmd --get-default-zone 2>/dev/null || echo public)}
-  sudo firewall-cmd --zone="$zone" --permanent --add-service=https
-  sudo firewall-cmd --reload
+  sudo timeout 20s firewall-cmd --zone="$zone" --permanent --add-service=https
+  sudo timeout 20s firewall-cmd --reload
 else
   echo "firewall-cmd is unavailable; allow TCP/443 using the host firewall." >&2
 fi
 
-sudo systemctl --no-pager --full status "$UI_SERVICE_NAME"
-echo "UI HTTPS deployment complete. Confirm the OCI NSG/security list allows inbound TCP/443."
+UI_READY=false
+for _attempt in $(seq 1 30); do
+  if sudo systemctl is-active --quiet "$UI_SERVICE_NAME" && curl --fail --silent --show-error --insecure \
+      "https://127.0.0.1/login" >/dev/null; then
+    UI_READY=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$UI_READY" != true ]]; then
+  echo "UI did not pass its HTTPS health check within 30 seconds." >&2
+  sudo systemctl --no-pager --full status "$UI_SERVICE_NAME" >&2 || true
+  sudo journalctl -u "$UI_SERVICE_NAME" -n 100 --no-pager >&2 || true
+  exit 1
+fi
+sudo systemctl is-active --quiet nginx || { echo "nginx is not active after deployment." >&2; exit 1; }
+echo "UI HTTPS deployment complete and healthy: https://${UI_SERVER_NAME}/ (local check returned 200)."
+echo "Confirm the OCI NSG/security list allows inbound TCP/443."

@@ -3,9 +3,15 @@
 set -euo pipefail
 umask 077
 
+# OCI CLI and Fn installers use user-local paths on a fresh VM. Set PATH before
+# any prerequisite checks so deployment works in non-interactive SSH/systemd
+# shells without requiring the operator to source .bashrc.
+export PATH="$HOME/.fn/bin:$HOME/bin:$HOME/.local/bin:$PATH"
+
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
 [[ -r "$ENV_FILE" ]] || { echo "Copy deploy/env.sh.example to deploy/env.sh and set deployment values." >&2; exit 1; }
+chmod 600 "$ENV_FILE"
 set -a
 # shellcheck disable=SC1090
 . "$ENV_FILE"
@@ -26,7 +32,16 @@ fi
   exit 1
 }
 CONTROL_DATABASE="${CONTROL_DATABASE:-${DB_NAME:-fndb}}"
+DB_PORT="${DB_PORT:-3306}"
 for command in oci fn podman jq; do command -v "$command" >/dev/null || { echo "Missing $command; run deploy/bootstrap.sh first." >&2; exit 1; }; done
+
+require_integer() {
+  local name=$1 minimum=$2 maximum=$3 value=${!1:-}
+  [[ "$value" =~ ^[0-9]+$ ]] || { echo "$name must be numeric." >&2; exit 1; }
+  (( value >= minimum && value <= maximum )) || { echo "$name must be from $minimum to $maximum." >&2; exit 1; }
+}
+
+require_integer DB_PORT 1 65535
 
 OCI=(oci --auth instance_principal)
 "${OCI[@]}" fn function update --help | grep -- '--detached-mode-timeout-in-seconds' >/dev/null || {
@@ -34,6 +49,15 @@ OCI=(oci --auth instance_principal)
   exit 1
 }
 NAMESPACE=$("${OCI[@]}" os ns get --query data --raw-output)
+if [[ -n "${OBJECT_STORAGE_BUCKET_NAME:-}" && "${ENSURE_BUCKET_OBJECT_EVENTS:-true}" == "true" ]]; then
+  BUCKET_EVENTS=$("${OCI[@]}" os bucket get --namespace-name "$NAMESPACE" --name "$OBJECT_STORAGE_BUCKET_NAME" \
+    --query 'data."object-events-enabled"' --raw-output)
+  if [[ "$BUCKET_EVENTS" != "true" ]]; then
+    echo "Enabling Object Storage events on bucket $OBJECT_STORAGE_BUCKET_NAME."
+    "${OCI[@]}" os bucket update --namespace-name "$NAMESPACE" --name "$OBJECT_STORAGE_BUCKET_NAME" \
+      --object-events-enabled true --force >/dev/null
+  fi
+fi
 REPOSITORY_NAME="$REPOSITORY_PREFIX/$FUNCTION_NAME"
 REPOSITORY_ID=$("${OCI[@]}" artifacts container repository list --compartment-id "$COMPARTMENT_ID" --all --query "data.items[?\"display-name\"=='$REPOSITORY_NAME'].id | [0]" --raw-output)
 if [[ -z "$REPOSITORY_ID" || "$REPOSITORY_ID" == null ]]; then
@@ -44,7 +68,6 @@ if [[ -z "$APP_ID" || "$APP_ID" == null ]]; then
   APP_ID=$("${OCI[@]}" fn application create --compartment-id "$COMPARTMENT_ID" --display-name "$APP_NAME" --subnet-ids "[\"$SUBNET_ID\"]" --query 'data.id' --raw-output)
 fi
 
-export PATH="$HOME/.fn/bin:$HOME/bin:$PATH"
 fn create context "$REGION" --provider oracle-ip 2>/dev/null || true
 fn use context "$REGION" 2>/dev/null || true
 fn update context oracle.compartment-id "$COMPARTMENT_ID"
@@ -60,15 +83,31 @@ trap cleanup EXIT
 FUNCTION_MEMORY="${FUNCTION_MEMORY:-1024}"
 FUNCTION_TIMEOUT="${FUNCTION_TIMEOUT:-300}"
 DETACHED_TIMEOUT_SECONDS="${DETACHED_TIMEOUT_SECONDS:-3600}"
-[[ "$FUNCTION_MEMORY" =~ ^[0-9]+$ ]] || { echo "FUNCTION_MEMORY must be numeric." >&2; exit 1; }
-[[ "$FUNCTION_TIMEOUT" =~ ^[0-9]+$ ]] || { echo "FUNCTION_TIMEOUT must be numeric." >&2; exit 1; }
-[[ "$DETACHED_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || { echo "DETACHED_TIMEOUT_SECONDS must be numeric." >&2; exit 1; }
-(( FUNCTION_TIMEOUT >= 1 && FUNCTION_TIMEOUT <= 300 )) || { echo "FUNCTION_TIMEOUT must be from 1 to 300 seconds." >&2; exit 1; }
-(( DETACHED_TIMEOUT_SECONDS >= 5 && DETACHED_TIMEOUT_SECONDS <= 3600 )) || { echo "DETACHED_TIMEOUT_SECONDS must be from 5 to 3600 seconds." >&2; exit 1; }
+BATCH_ROWS="${BATCH_ROWS:-10000}"
+WRITER_WORKERS="${WRITER_WORKERS:-4}"
+OBJECT_STORAGE_READ_TIMEOUT_SECONDS="${OBJECT_STORAGE_READ_TIMEOUT_SECONDS:-300}"
+OBJECT_STORAGE_RANGE_BYTES="${OBJECT_STORAGE_RANGE_BYTES:-33554432}"
+QUEUE_LEASE_SECONDS="${QUEUE_LEASE_SECONDS:-90}"
+QUEUE_REORDER_GRACE_SECONDS="${QUEUE_REORDER_GRACE_SECONDS:-30}"
+QUEUE_SHUTDOWN_RESERVE_SECONDS="${QUEUE_SHUTDOWN_RESERVE_SECONDS:-120}"
+QUEUE_MINIMUM_START_SECONDS="${QUEUE_MINIMUM_START_SECONDS:-180}"
+require_integer FUNCTION_MEMORY 128 3072
+(( FUNCTION_MEMORY % 64 == 0 )) || { echo "FUNCTION_MEMORY must use a 64 MB increment." >&2; exit 1; }
+require_integer FUNCTION_TIMEOUT 1 300
+require_integer DETACHED_TIMEOUT_SECONDS 5 3600
+require_integer BATCH_ROWS 1 1000000
+require_integer WRITER_WORKERS 1 64
+require_integer OBJECT_STORAGE_READ_TIMEOUT_SECONDS 1 300
+require_integer OBJECT_STORAGE_RANGE_BYTES 1048576 268435456
+require_integer QUEUE_LEASE_SECONDS 30 3600
+require_integer QUEUE_REORDER_GRACE_SECONDS 0 3600
+require_integer QUEUE_SHUTDOWN_RESERVE_SECONDS 0 1800
+require_integer QUEUE_MINIMUM_START_SECONDS 1 1800
 cp "$ROOT_DIR/function/Dockerfile" "$ROOT_DIR/function/func.py" "$ROOT_DIR/function/partition_loader.py" "$ROOT_DIR/function/work_queue.py" "$ROOT_DIR/function/requirements.txt" "$BUILD_DIR/"
 sed -e "s/^name:.*/name: $FUNCTION_NAME/" -e "s/^memory:.*/memory: $FUNCTION_MEMORY/" -e "s/^timeout:.*/timeout: $FUNCTION_TIMEOUT/" "$ROOT_DIR/function/func.yaml" > "$BUILD_DIR/func.yaml"
 (cd "$BUILD_DIR" && fn deploy --app "$APP_NAME")
 FUNCTION_ID=$("${OCI[@]}" fn function list --application-id "$APP_ID" --all --query "data[?\"display-name\"=='$FUNCTION_NAME'].id | [0]" --raw-output)
+[[ -n "$FUNCTION_ID" && "$FUNCTION_ID" != null ]] || { echo "Function $FUNCTION_NAME was not found after deployment." >&2; exit 1; }
 FUNCTION_INVOKE_ENDPOINT=$("${OCI[@]}" fn function get --function-id "$FUNCTION_ID" --query 'data."invoke-endpoint"' --raw-output)
 [[ -n "$FUNCTION_INVOKE_ENDPOINT" && "$FUNCTION_INVOKE_ENDPOINT" != null ]] || { echo "Function invoke endpoint was not resolved." >&2; exit 1; }
 jq -n --arg host "$DB_HOST" --arg port "${DB_PORT:-3306}" --arg user "$DB_USER" --arg password "$DB_PASSWORD" --arg ssl "${DB_SSL_DISABLED:-false}" --arg namespace "${OBJECT_STORAGE_NAMESPACE:-}" --arg batch "${BATCH_ROWS:-10000}" --arg workers "${WRITER_WORKERS:-4}" --arg read_timeout "${OBJECT_STORAGE_READ_TIMEOUT_SECONDS:-300}" --arg range_bytes "${OBJECT_STORAGE_RANGE_BYTES:-33554432}" --arg control "$CONTROL_DATABASE" --arg function_id "$FUNCTION_ID" --arg invoke_endpoint "$FUNCTION_INVOKE_ENDPOINT" --arg region "$REGION" --arg detached "${DETACHED_ENABLED:-false}" --arg detached_timeout "${DETACHED_TIMEOUT_SECONDS:-3600}" --arg sync_timeout "$FUNCTION_TIMEOUT" --arg lease_seconds "${QUEUE_LEASE_SECONDS:-90}" --arg reorder_grace "${QUEUE_REORDER_GRACE_SECONDS:-30}" --arg shutdown_reserve "${QUEUE_SHUTDOWN_RESERVE_SECONDS:-120}" --arg minimum_start "${QUEUE_MINIMUM_START_SECONDS:-180}" '{DB_HOST:$host,DB_PORT:$port,DB_USER:$user,DB_PASSWORD:$password,DB_SSL_DISABLED:$ssl,OBJECT_STORAGE_NAMESPACE:$namespace,BATCH_ROWS:$batch,WRITER_WORKERS:$workers,OBJECT_STORAGE_READ_TIMEOUT_SECONDS:$read_timeout,OBJECT_STORAGE_RANGE_BYTES:$range_bytes,CONTROL_DATABASE:$control,FUNCTION_ID:$function_id,FUNCTION_INVOKE_ENDPOINT:$invoke_endpoint,OCI_REGION:$region,DETACHED_ENABLED:$detached,DETACHED_TIMEOUT_SECONDS:$detached_timeout,SYNC_TIMEOUT_SECONDS:$sync_timeout,QUEUE_LEASE_SECONDS:$lease_seconds,QUEUE_REORDER_GRACE_SECONDS:$reorder_grace,QUEUE_SHUTDOWN_RESERVE_SECONDS:$shutdown_reserve,QUEUE_MINIMUM_START_SECONDS:$minimum_start}' > "$CONFIG_FILE"
@@ -124,4 +163,10 @@ if [[ -z "$RULE_ID" || "$RULE_ID" == null ]]; then
 else
   "${OCI[@]}" events rule update --rule-id "$RULE_ID" --condition "$CONDITION" --actions "$ACTIONS" --force >/dev/null
 fi
-echo "Deployment complete: $APP_NAME/$FUNCTION_NAME; rule $RULE_NAME."
+RULE_ID=$("${OCI[@]}" events rule list --compartment-id "$COMPARTMENT_ID" --all --query "data[?\"display-name\"=='$RULE_NAME'].id | [0]" --raw-output)
+[[ -n "$RULE_ID" && "$RULE_ID" != null ]] || { echo "Events rule $RULE_NAME was not found after deployment." >&2; exit 1; }
+RULE_FUNCTION_ID=$("${OCI[@]}" events rule get --rule-id "$RULE_ID" --query 'data.actions.actions[0]."function-id"' --raw-output)
+[[ "$RULE_FUNCTION_ID" == "$FUNCTION_ID" ]] || { echo "Events rule $RULE_NAME does not target the deployed Function." >&2; exit 1; }
+FUNCTION_STATE=$("${OCI[@]}" fn function get --function-id "$FUNCTION_ID" --query 'data."lifecycle-state"' --raw-output)
+[[ "$FUNCTION_STATE" == ACTIVE ]] || { echo "Function $FUNCTION_NAME is not ACTIVE after deployment: $FUNCTION_STATE" >&2; exit 1; }
+echo "Deployment complete: $APP_NAME/$FUNCTION_NAME ($FUNCTION_STATE); rule $RULE_NAME targets the current Function."

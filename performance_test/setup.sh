@@ -3,6 +3,8 @@
 set -euo pipefail
 umask 077
 
+export PATH="$HOME/.fn/bin:$HOME/bin:$HOME/.local/bin:$PATH"
+
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
 RESET=false
@@ -24,9 +26,17 @@ set +a
 for value in COMPARTMENT_ID APP_NAME FUNCTION_NAME RULE_NAME REGION DB_HOST DB_USER DB_PASSWORD CONTROL_DATABASE OBJECT_STORAGE_BUCKET_NAME UI_SERVICE_NAME UI_CONTAINER_NAME; do
   [[ -n "${!value:-}" ]] || { echo "Missing $value in $ENV_FILE" >&2; exit 1; }
 done
-for command in oci jq podman sudo; do
+for command in oci jq podman sudo systemctl; do
   command -v "$command" >/dev/null || { echo "Missing required command: $command" >&2; exit 1; }
 done
+sudo systemctl is-active --quiet "$UI_SERVICE_NAME" || {
+  echo "UI service $UI_SERVICE_NAME is not active. Run deploy/deploy_ui.sh first." >&2
+  exit 1
+}
+sudo podman image exists "$UI_SERVICE_NAME:latest" || {
+  echo "UI image $UI_SERVICE_NAME:latest is missing. Run deploy/deploy_ui.sh first." >&2
+  exit 1
+}
 
 TARGET_DATABASE="${PERF_TARGET_DATABASE:-fntestdb}"
 TARGET_TABLE="${PERF_TARGET_TABLE:-perf_t_001}"
@@ -68,42 +78,42 @@ export EVENT_RULE_ID BUCKET_NAME="$OBJECT_STORAGE_BUCKET_NAME"
 
 sudo podman exec --user 10001 \
   -e PROFILE_NAME="$PROFILE_NAME" -e PROFILE_HOST="$DB_HOST" -e PROFILE_PORT="${DB_PORT:-3306}" -e PROFILE_DATABASE="$CONTROL_DATABASE" \
-  "$UI_CONTAINER_NAME" python -c 'import os; from pathlib import Path; from myapp.services.profile_store import ProfileStore; store=ProfileStore(Path("/app/instance/profiles.json"),Path("/app/instance/keys")); name=os.environ["PROFILE_NAME"]; store.save({"name":name,"mode":"direct","host":os.environ["PROFILE_HOST"],"port":os.environ["PROFILE_PORT"],"database":os.environ["PROFILE_DATABASE"]},original_name=name)'
+  "$UI_CONTAINER_NAME" python -c 'import os; from pathlib import Path; from myapp.services.profile_store import ProfileStore; store=ProfileStore(Path("/app/instance/profiles.json"),Path("/app/instance/profile_ssh_keys"),Path("/app/instance/profile_settings.json")); name=os.environ["PROFILE_NAME"]; store.save({"name":name,"mode":"direct","host":os.environ["PROFILE_HOST"],"port":os.environ["PROFILE_PORT"],"database":os.environ["PROFILE_DATABASE"]},original_name=name)'
 echo "UI profile ready: $PROFILE_NAME (no password stored)"
 
 DB_SETUP_ARGS=()
 [[ "$RESET" == true ]] && DB_SETUP_ARGS+=(--reset)
 sudo --preserve-env=DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,CONTROL_DATABASE,TARGET_DATABASE,TARGET_TABLE,RESOURCE_NAME_PATTERN,COMPARTMENT_NAME,BUCKET_NAME,INVOCATION_MODE,WRITER_WORKERS,EVENT_RULE_ID \
-  podman run --rm --user 0 --network host \
+  podman run --security-opt label=disable --rm --user 0 --network host \
   -e DB_HOST -e DB_PORT -e DB_USER -e DB_PASSWORD -e CONTROL_DATABASE \
   -e TARGET_DATABASE -e TARGET_TABLE -e RESOURCE_NAME_PATTERN -e COMPARTMENT_NAME \
   -e BUCKET_NAME -e INVOCATION_MODE -e WRITER_WORKERS -e EVENT_RULE_ID \
-  -v "$ROOT_DIR/performance_test/setup_db.py:/opt/setup_db.py:ro,Z" \
+  -v "$ROOT_DIR/performance_test/setup_db.py:/opt/setup_db.py:ro" \
   "$UI_SERVICE_NAME:latest" python /opt/setup_db.py "${DB_SETUP_ARGS[@]}"
 
 if [[ "$SMOKE_TEST" == true ]]; then
   SMOKE_FILE=$(mktemp --suffix=.csv)
-  sudo podman run --rm --user 0 \
-    -v "$ROOT_DIR/performance_test/generate_csv.py:/opt/generate_csv.py:ro,Z" \
-    -v "$SMOKE_FILE:/output.csv:Z" \
+  sudo podman run --security-opt label=disable --rm --user 0 \
+    -v "$ROOT_DIR/performance_test/generate_csv.py:/opt/generate_csv.py:ro" \
+    -v "$SMOKE_FILE:/output.csv" \
     "$UI_SERVICE_NAME:latest" python /opt/generate_csv.py --rows 100 --output /output.csv
   OBJECT_NAME="$TEST_PREFIX/setup-smoke-$(date -u +%Y%m%dT%H%M%SZ).csv"
   "${OCI[@]}" os object put --bucket-name "$OBJECT_STORAGE_BUCKET_NAME" --name "$OBJECT_NAME" --file "$SMOKE_FILE" --force >/dev/null
   echo "Smoke object uploaded: $OBJECT_NAME"
   export OBJECT_NAME EXPECTED_ACTION=CREATE EXPECTED_ROWS=100 EVENT_WAIT_SECONDS="${EVENT_WAIT_SECONDS:-360}"
   sudo --preserve-env=DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,CONTROL_DATABASE,TARGET_DATABASE,TARGET_TABLE,OBJECT_NAME,EXPECTED_ACTION,EXPECTED_ROWS,EVENT_WAIT_SECONDS \
-    podman run --rm --user 0 --network host \
+    podman run --security-opt label=disable --rm --user 0 --network host \
     -e DB_HOST -e DB_PORT -e DB_USER -e DB_PASSWORD -e CONTROL_DATABASE \
     -e TARGET_DATABASE -e TARGET_TABLE -e OBJECT_NAME -e EXPECTED_ACTION -e EXPECTED_ROWS -e EVENT_WAIT_SECONDS \
-    -v "$ROOT_DIR/performance_test/wait_event.py:/opt/wait_event.py:ro,Z" \
+    -v "$ROOT_DIR/performance_test/wait_event.py:/opt/wait_event.py:ro" \
     "$UI_SERVICE_NAME:latest" python /opt/wait_event.py
   "${OCI[@]}" os object delete --bucket-name "$OBJECT_STORAGE_BUCKET_NAME" --name "$OBJECT_NAME" --force
   export EXPECTED_ACTION=DELETE EXPECTED_ROWS=0
   sudo --preserve-env=DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,CONTROL_DATABASE,TARGET_DATABASE,TARGET_TABLE,OBJECT_NAME,EXPECTED_ACTION,EXPECTED_ROWS,EVENT_WAIT_SECONDS \
-    podman run --rm --user 0 --network host \
+    podman run --security-opt label=disable --rm --user 0 --network host \
     -e DB_HOST -e DB_PORT -e DB_USER -e DB_PASSWORD -e CONTROL_DATABASE \
     -e TARGET_DATABASE -e TARGET_TABLE -e OBJECT_NAME -e EXPECTED_ACTION -e EXPECTED_ROWS -e EVENT_WAIT_SECONDS \
-    -v "$ROOT_DIR/performance_test/wait_event.py:/opt/wait_event.py:ro,Z" \
+    -v "$ROOT_DIR/performance_test/wait_event.py:/opt/wait_event.py:ro" \
     "$UI_SERVICE_NAME:latest" python /opt/wait_event.py
 fi
 

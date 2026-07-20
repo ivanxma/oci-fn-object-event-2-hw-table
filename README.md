@@ -65,21 +65,35 @@ MySQL Connector/Python `>=9.7,<10`.
 On an Oracle Linux deployment host configured with an OCI instance principal:
 
 ```sh
-cd deploy
-./bootstrap.sh
-cp env.sh.example env.sh
-chmod 600 env.sh
+cd /home/opc/oci-object-event-2-table
+./deploy/bootstrap.sh
+cp deploy/env.sh.example deploy/env.sh
+chmod 600 deploy/env.sh
 # Set OCI, database, Function, rule, logging, HTTPS, and UI values in env.sh.
-./deploy.sh
-./deploy_ui.sh
+./deploy/setup.sh --skip-bootstrap
 ```
+
+For later reruns, `./deploy/setup.sh` performs the idempotent package bootstrap,
+Function deployment, UI deployment, and post-deployment validation in one
+command. Add `--smoke-test` to prepare the configured performance target and run
+a 100-row Object Storage create/delete check; add `--reset-performance` only
+when the mutable performance target should be reset first.
+
+`bootstrap.sh` installs the complete Oracle Linux host set: OCI/Fn prerequisites,
+Podman, nginx, OpenSSL, SELinux helpers, firewalld, jq, and archive/core tools.
+The Function and UI run in Python 3.13 containers, so the older Oracle Linux
+system Python is not used as an application runtime. Every deployment script
+sets the user-local OCI/Fn PATH before checking prerequisites.
 
 `deploy.sh` builds and deploys the Function, discovers its OCID and invoke
 endpoint, applies Function timeouts/capacity, and creates or updates the base
-Object Storage rule. `deploy_ui.sh` deploys the Flask container behind nginx
-HTTPS and discovers the same OCI resources for live rule and Function
-management. Keep `deploy/env.sh`, database passwords, OCIR tokens, TLS private
-keys, and Flask secrets out of Git.
+Object Storage rule. It also enables bucket object events by default when a
+bucket is configured. `deploy_ui.sh` deploys the Flask container behind nginx
+HTTPS, reuses existing generated TLS material on reruns, and waits for a bounded
+HTTPS health check. `deploy/validate.sh` is a read-only post-deployment check for
+OCI resource wiring, bucket events, service health, protected file modes,
+runtime versions, and DB endpoint reachability. Keep `deploy/env.sh`, database
+passwords, OCIR tokens, TLS private keys, and Flask secrets out of Git.
 
 Before use, confirm:
 
