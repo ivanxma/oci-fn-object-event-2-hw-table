@@ -64,14 +64,29 @@ def _wake(binding_key: str) -> None:
 @queue_bp.get("/")
 @login_required
 def dashboard():
+    active_tab = request.args.get("tab", "dashboard")
+    if active_tab not in {"dashboard", "details"}:
+        active_tab = "dashboard"
     filters = {name: request.args.get(name, "").strip() for name in ("status", "queue_scope", "binding_key", "resource_name")}
     try:
         counts, entries, lanes = _service().dashboard(filters)
-        mappings = MappingService(mysql_for_request()).list_mappings()
     except (MySQLError, ValueError, RuntimeError) as error:
         flash(f"Could not read queue records: {type(error).__name__}: {error}", "error")
-        counts, entries, lanes, mappings = {}, [], [], []
-    return render_dashboard("queue_dashboard.html", active_page="queue", counts=counts, entries=entries, lanes=lanes, mappings=mappings, filters=filters)
+        counts, entries, lanes = {}, [], []
+    nonterminal = {"PENDING", "LEASED", "RUNNING", "RETRY_WAIT", "BLOCKED"}
+    outstanding_entries = [entry for entry in entries if entry.get("status") in nonterminal]
+    outstanding_count = sum(int(counts.get(status, 0)) for status in nonterminal)
+    return render_dashboard(
+        "queue_dashboard.html",
+        active_page="queue",
+        active_tab=active_tab,
+        counts=counts,
+        entries=entries,
+        outstanding_entries=outstanding_entries[:20],
+        outstanding_count=outstanding_count,
+        lanes=lanes,
+        filters=filters,
+    )
 
 
 @queue_bp.route("/new", methods=["GET", "POST"])
@@ -84,7 +99,7 @@ def create_entry():
             if request.form.get("wake_worker"):
                 _wake(binding_key)
             flash(f"Queue entry {queue_id} created.", "success")
-            return redirect(url_for("queue.dashboard"))
+            return redirect(url_for("queue.dashboard", tab="details"))
         except (MySQLError, ValueError, RuntimeError) as error:
             flash(str(error), "error")
     try:
@@ -105,7 +120,7 @@ def edit_selected():
         return redirect(url_for("queue.edit_entry", queue_id=queue_ids[0]))
     except ValueError as error:
         flash(str(error), "warning")
-        return redirect(url_for("queue.dashboard"))
+        return redirect(url_for("queue.dashboard", tab="details"))
 
 
 @queue_bp.route("/<int:queue_id>/edit", methods=["GET", "POST"])
@@ -116,7 +131,7 @@ def edit_entry(queue_id: int):
         try:
             service.edit_entry(queue_id, request.form, _username())
             flash(f"Queue entry {queue_id} updated.", "success")
-            return redirect(url_for("queue.dashboard"))
+            return redirect(url_for("queue.dashboard", tab="details"))
         except (MySQLError, ValueError) as error:
             flash(str(error), "error")
     try:
@@ -125,7 +140,7 @@ def edit_entry(queue_id: int):
             raise ValueError("Queue entry does not exist.")
     except (MySQLError, ValueError) as error:
         flash(str(error), "error")
-        return redirect(url_for("queue.dashboard"))
+        return redirect(url_for("queue.dashboard", tab="details"))
     return render_dashboard("queue_form.html", active_page="queue", form_mode="Edit", entry=entry, mappings=[])
 
 
@@ -144,7 +159,7 @@ def _transition(action: str):
             flash(f"Retry entries are ready, but worker wake-up failed: {'; '.join(wake_errors)}", "error")
     except (MySQLError, ValueError) as error:
         flash(str(error), "error")
-    return redirect(url_for("queue.dashboard"))
+    return redirect(url_for("queue.dashboard", tab="details"))
 
 
 @queue_bp.post("/cancel-selected")
@@ -163,6 +178,9 @@ def retry_selected():
 @login_required
 def wake():
     binding_key = request.form.get("binding_key", "").strip()
+    return_tab = request.form.get("return_tab", "dashboard")
+    if return_tab not in {"dashboard", "details"}:
+        return_tab = "dashboard"
     if not binding_key or len(binding_key) > 191:
         flash("Select a valid queue binding to wake.", "error")
     else:
@@ -171,4 +189,4 @@ def wake():
             flash(f"Detached worker wake-up submitted for {binding_key}.", "success")
         except RuntimeError as error:
             flash(str(error), "error")
-    return redirect(url_for("queue.dashboard", binding_key=binding_key))
+    return redirect(url_for("queue.dashboard", tab=return_tab, binding_key=binding_key))

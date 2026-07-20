@@ -52,15 +52,25 @@ class ImportService:
     def create_database_statement(self, database: str) -> str:
         return f"CREATE DATABASE IF NOT EXISTS {quote_identifier(database, 'database name')} CHARACTER SET utf8mb4"
 
-    def load_data(self, path: Path, database: str, table: str, columns: list[dict], primary_key: list[str], add_row_id: bool, delimiter: str, *, partition_by_batch: bool = False, create_database: bool = False) -> int:
-        self._validate_primary_key_values(path, columns, primary_key, add_row_id)
-        statement = self.load_data_statement(database, table, columns, delimiter, partition_by_batch)
+    def drop_table_statement(self, database: str, table: str) -> str:
+        return f"DROP TABLE IF EXISTS {quote_identifier(database, 'database name')}.{quote_identifier(table, 'table name')}"
+
+    def load_data(self, path: Path, database: str, table: str, columns: list[dict], primary_key: list[str], add_row_id: bool, delimiter: str, *, partition_by_batch: bool = False, create_database: bool = False, drop_table: bool = False, load_rows: bool = True) -> int:
+        statement = None
+        if load_rows:
+            self._validate_primary_key_values(path, columns, primary_key, add_row_id)
+            statement = self.load_data_statement(database, table, columns, delimiter, partition_by_batch)
         try:
             if create_database:
                 self.mysql.create_database(database)
             with self.mysql.connection() as conn:
                 cursor = conn.cursor()
+                if drop_table:
+                    cursor.execute(self.drop_table_statement(database, table))
                 cursor.execute(self.ddl(database, table, columns, primary_key, add_row_id, partition_by_batch))
+                if not load_rows:
+                    return 0
+                assert statement is not None
                 cursor.execute(statement, (str(path),))
                 return cursor.rowcount
         except mysql.connector.Error as error:

@@ -9,8 +9,10 @@
         <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="sample-panel" id="sample-tab">Sample data <span>{{ job.preview|length }}</span></button>
       </div>
       <section class="tab-panel active" role="tabpanel" id="schema-panel" aria-labelledby="schema-tab">
-        <div class="panel-heading"><div><h2>Column definition</h2><p>Change a target column name or MySQL type. Select existing CSV fields to form a primary key.</p></div><div class="schema-options"><label class="checkbox-field"><input id="partition-by-batch" type="checkbox" name="partition_by_batch"><span>OCI event-ready table: add invisible <code>batch_num</code> to the primary key and partition by LIST</span><small>Required for OCI create, update, and delete event processing. Imports use reserved batch 0.</small></label><label class="checkbox-field row-id"><input id="add-row-id" type="checkbox" name="add_row_id"><span>Add <code>ROW_ID</code> auto-increment primary key</span></label></div></div>
+        <div class="panel-heading"><div><h2>Column definition</h2><p>Change a target column name or MySQL type. Select existing CSV fields to form a primary key.</p></div></div>
         <div class="table-wrap"><table class="definition-table"><thead><tr><th>CSV column</th><th>Target column</th><th>MySQL type</th><th>Allow NULL</th><th>Primary key</th></tr></thead><tbody>{% for column in columns %}<tr><td><code>{{ column.source_name }}</code></td><td><input aria-label="Target column for {{ column.source_name }}" name="column_name_{{ loop.index0 }}" value="{{ column.name }}" required></td><td><input aria-label="MySQL type for {{ column.source_name }}" name="column_type_{{ loop.index0 }}" value="{{ column.type }}" required></td><td><label class="checkbox-field"><input id="nullable-{{ loop.index0 }}" type="checkbox" name="nullable_{{ loop.index0 }}" checked><span>Nullable</span></label></td><td><label class="checkbox-field"><input type="checkbox" name="primary_key_index" value="{{ loop.index0 }}" data-nullable-id="nullable-{{ loop.index0 }}"><span>Key</span></label></td></tr>{% endfor %}</tbody></table></div>
+        <fieldset class="import-action-options ddl-control-options"><legend>DDL controls</legend><label class="checkbox-field"><input id="partition-by-batch" type="checkbox" name="partition_by_batch"><span>OCI event-ready table: add invisible <code>batch_num</code> to the primary key and partition by LIST<small>Required for OCI create, update, and delete event processing. Imports use reserved batch 0.</small></span></label><label class="checkbox-field row-id"><input id="add-row-id" type="checkbox" name="add_row_id"><span>Add <code>ROW_ID</code> auto-increment primary key</span></label><label class="checkbox-field destructive-option"><input id="drop-table" type="checkbox" name="drop_table"><span>Drop the existing target table before creating it<small>Destructive: all existing rows, partitions, indexes, constraints, and triggers are removed. Foreign-key dependencies can prevent the drop. Final confirmation is required on the SQL review page.</small></span></label></fieldset>
+        <fieldset class="import-action-options"><legend>Execution action <span>*</span></legend><label class="radio-field"><input type="radio" name="import_action" value="DDL_AND_DATA" checked required><span>DDL + data loading</span><small>Create or recreate the table, then load the uploaded CSV with <code>LOAD DATA LOCAL INFILE</code>.</small></label><label class="radio-field"><input type="radio" name="import_action" value="DDL_ONLY" required><span>DDL only</span><small>Run database/table DDL without loading any CSV rows.</small></label></fieldset>
       </section>
       <section class="tab-panel" role="tabpanel" id="sample-panel" aria-labelledby="sample-tab" hidden>
         <div class="panel-heading"><div><h2>Sample data</h2><p>First {{ job.preview|length }} row(s) read from the uploaded CSV. No data has been imported yet.</p></div></div>
@@ -18,7 +20,7 @@
       </section>
     </div>
   </section>
-  <section class="review-footer"><div><strong>Ready to import?</strong><span>Review the exact SQL statements before the table is created or CSV rows are loaded.</span></div><button class="primary-button">Create table and load data <span>→</span></button></section>
+  <section class="review-footer"><div><strong>Ready to proceed?</strong><span id="import-action-summary">Review the exact SQL statements before the table is created or CSV rows are loaded.</span></div><button id="prepare-import-button" class="primary-button">Review DDL + data load <span>→</span></button></section>
 </form>
 <script>
 document.querySelectorAll('input[name="primary_key_index"]').forEach((keyInput) => {
@@ -44,6 +46,17 @@ const syncPartitionKey = () => {
 partitionByBatch.addEventListener('change', syncPartitionKey);
 document.querySelectorAll('input[name="primary_key_index"]').forEach((input) => input.addEventListener('change', syncPartitionKey));
 syncPartitionKey();
+const importActionSummary = document.getElementById('import-action-summary');
+const prepareImportButton = document.getElementById('prepare-import-button');
+const syncImportAction = () => {
+  const ddlOnly = document.querySelector('input[name="import_action"]:checked')?.value === 'DDL_ONLY';
+  importActionSummary.textContent = ddlOnly
+    ? 'Review the exact DDL statements. The uploaded CSV will not be loaded.'
+    : 'Review the exact SQL statements before the table is created or CSV rows are loaded.';
+  prepareImportButton.firstChild.textContent = ddlOnly ? 'Review DDL only ' : 'Review DDL + data load ';
+};
+document.querySelectorAll('input[name="import_action"]').forEach((input) => input.addEventListener('change', syncImportAction));
+syncImportAction();
 document.querySelectorAll('[data-tabs]').forEach((view) => {
   const tabs = view.querySelectorAll('[role="tab"]');
   const panels = view.querySelectorAll('[role="tabpanel"]');

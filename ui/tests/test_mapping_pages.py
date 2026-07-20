@@ -278,6 +278,53 @@ class MappingPageTest(unittest.TestCase):
         self.assertEqual(upload.call_args.kwargs["mapping"], MAPPING)
         self.assertEqual(upload.call_args.kwargs["folder"], "sync-folder")
 
+    def test_blocked_queue_status_links_to_selected_error_log(self) -> None:
+        entry = {
+            "id": 12,
+            "status": "BLOCKED",
+            "event_error_id": 2,
+            "event_action": "CREATE",
+            "invocation_mode": "DETACHED",
+            "latest_transport_mode": "DETACHED",
+            "latest_attempt_duration_ms": 497.886,
+            "queue_scope": "TABLE",
+            "binding_key": "table:fntestdb.employees",
+            "mapping_id": 7,
+            "target_database": "fntestdb",
+            "target_table": "employees",
+            "bucket_name": "test-bucket",
+            "resource_name": "sync-folder/employees.csv",
+            "event_time": datetime.now(timezone.utc),
+            "attempt_count": 1,
+            "priority": 100,
+            "last_error": "Data too long for column 'last_name' at row 29",
+            "operator_note": None,
+        }
+        with patch("myapp.modules.common.MySQLService.health_check", return_value=None), patch(
+            "myapp.modules.queue_routes.QueueService.dashboard",
+            return_value=({"BLOCKED": 1}, [entry], []),
+        ), patch(
+            "myapp.modules.queue_routes.MappingService.list_mappings", return_value=[MAPPING]
+        ):
+            response = self.client.get("/queue/?tab=dashboard")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Queue control model", response.data)
+        self.assertIn(b"Outstanding jobs", response.data)
+        self.assertIn(b"BLOCKED \xc2\xb7 View log", response.data)
+        self.assertIn(b"error_id=2", response.data)
+        self.assertIn(b"#error-log-2", response.data)
+        self.assertIn(b'data-column="Error / note"', response.data)
+
+    def test_queue_details_tab_contains_entry_and_lane_controls(self) -> None:
+        with patch("myapp.modules.common.MySQLService.health_check", return_value=None), patch(
+            "myapp.modules.queue_routes.QueueService.dashboard", return_value=({}, [], [])
+        ), patch("myapp.modules.queue_routes.MappingService.list_mappings", return_value=[]):
+            response = self.client.get("/queue/?tab=details")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Queue entries", response.data)
+        self.assertIn(b"Queue bindings and worker leases", response.data)
+        self.assertIn(b'name="tab" value="details"', response.data)
+
     def test_mapping_scoped_objects_can_be_deleted(self) -> None:
         with patch("myapp.modules.common.MySQLService.health_check", return_value=None), patch(
             "myapp.modules.mapping_routes.MappingService.get_mapping", return_value=MAPPING

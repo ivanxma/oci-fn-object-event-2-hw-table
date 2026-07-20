@@ -13,7 +13,6 @@
       <a class="{{ 'active' if active_page == 'import' else '' }}" href="{{ url_for('imports.home') }}">Data Import</a>
       <a class="{{ 'active' if active_page == 'mappings' else '' }}" href="{{ url_for('mappings.list_mappings') }}">Resource Mappings</a>
       <a class="{{ 'active' if active_page == 'event_tx' else '' }}" href="{{ url_for('event_tx.list_event_transactions') }}">Event TX</a>
-      <a class="{{ 'active' if active_page == 'detached' else '' }}" href="{{ url_for('event_tx.detached_processes') }}">Detached Processes</a>
       <a class="{{ 'active' if active_page == 'queue' else '' }}" href="{{ url_for('queue.dashboard') }}">Queue</a>
       <a class="{{ 'active' if active_page == 'profiles' else '' }}" href="{{ url_for('profiles.manage') }}">Connection Profiles</a>
     </nav>
@@ -111,14 +110,14 @@
       });
       [...table.tBodies].forEach((body) => body.addEventListener('click', (event) => {
         const cell = event.target.closest('td');
-        if (!cell || event.target.closest('a,button,input,select,textarea,label,form')) return;
+        if (!cell || event.target.closest('a,button,input,select,textarea,label')) return;
         showValue(cell.dataset.value ?? cell.innerText, cell.dataset.column || table.tHead.rows[0].cells[cell.cellIndex]?.innerText.replace(/[▲▼]/g, '').trim());
       }));
       [...table.tBodies].forEach((body) => body.addEventListener('keydown', (event) => {
         const cell = event.target.closest('td');
-        if (cell && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); showValue(cell.dataset.value ?? cell.innerText, cell.dataset.column || table.tHead.rows[0].cells[cell.cellIndex]?.innerText.replace(/[▲▼]/g, '').trim()); }
+        if (cell && !event.target.closest('a,button,input,select,textarea,label') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); showValue(cell.dataset.value ?? cell.innerText, cell.dataset.column || table.tHead.rows[0].cells[cell.cellIndex]?.innerText.replace(/[▲▼]/g, '').trim()); }
       }));
-      [...table.tBodies].flatMap((body) => [...body.rows]).forEach((row) => [...row.cells].forEach((cell) => { if (!cell.querySelector('a,button,input,select,textarea,label,form')) { cell.tabIndex = 0; cell.classList.add('table-value-cell'); cell.title = 'Click to view full value'; } }));
+      [...table.tBodies].flatMap((body) => [...body.rows]).forEach((row) => [...row.cells].forEach((cell) => { if (!cell.querySelector('a,button,input,select,textarea,label')) { cell.tabIndex = 0; cell.classList.add('table-value-cell'); cell.title = 'Click to view full value'; } }));
       applyLayout(table);
       const wrap = table.closest('.table-wrap');
       const editableForm = table.closest('form:not(.table-page-view)');

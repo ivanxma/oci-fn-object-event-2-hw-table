@@ -456,6 +456,7 @@ def log_event(db: Database, source: dict[str, Any], action: str, status: str, ma
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (source.get("object_event_id"), mapping.get("id") if mapping else None, mapping.get("target_database") if mapping else None, mapping.get("target_table") if mapping else None, batch_num, action, status, source["bucket_name"], source["resource_name"], source["object_version"], source.get("invocation_mode") or (mapping.get("invocation_mode") if mapping else None), message),
         )
+        event_log_id = cursor.lastrowid
         if source.get("object_event_id"):
             cursor.execute(
                 f"""UPDATE {control_table('object_event')}
@@ -464,7 +465,7 @@ def log_event(db: Database, source: dict[str, Any], action: str, status: str, ma
                   WHERE id = %s""",
                 (source["object_event_id"],),
             )
-        return cursor.lastrowid
+        return event_log_id
 
 
 def log_error(db: Database, source: dict[str, Any], action: str, error: Exception, mapping: dict[str, Any] | None = None, batch_num: int | None = None) -> None:

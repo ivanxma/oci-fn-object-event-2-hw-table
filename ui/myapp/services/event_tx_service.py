@@ -46,31 +46,43 @@ class EventTransactionService:
         return f"COALESCE({', '.join(candidates)}, 'UNKNOWN')" if candidates else "'UNKNOWN'"
 
     def _event_timing_sql(self, cursor, alias: str = "tx") -> tuple[str, str]:
-        """Return optional Object Storage timing projection and join."""
+        """Return per-execution timing, with lifecycle timing as a legacy fallback.
+
+        ``object_event.duration_ms`` spans receipt through the final retry. Queue
+        attempts are the execution unit, so an Event TX row must use the attempt
+        nearest that transaction record rather than repeating the full lifecycle.
+        """
         if not self._table_exists(cursor, OBJECT_EVENT_TABLE):
             return (
-                ", NULL AS event_received_at, NULL AS event_completed_at, NULL AS event_duration_ms",
+                ", NULL AS event_received_at, NULL AS event_completed_at, NULL AS event_duration_ms, NULL AS event_attempt_number, 'UNAVAILABLE' AS event_timing_scope",
                 "",
             )
         control = quote_identifier(control_database(), "control database")
+        queue_timing_available = self._table_exists(cursor, "event_work_queue") and self._table_exists(cursor, "queue_attempt")
+        if queue_timing_available:
+            projection = (
+                ", COALESCE(execution_attempt.started_at, object_event.received_at) AS event_received_at"
+                ", COALESCE(execution_attempt.completed_at, object_event.completed_at) AS event_completed_at"
+                ", COALESCE(execution_attempt.duration_ms, object_event.duration_ms) AS event_duration_ms"
+                ", execution_attempt.attempt_number AS event_attempt_number"
+                ", CASE WHEN execution_attempt.id IS NULL THEN 'LIFECYCLE' ELSE 'ATTEMPT' END AS event_timing_scope"
+            )
+            join = (
+                f" LEFT JOIN {control}.`object_event` AS object_event ON object_event.id = {alias}.object_event_id"
+                f" LEFT JOIN {control}.`event_work_queue` AS queued_event ON queued_event.object_event_id = {alias}.object_event_id"
+                f" LEFT JOIN {control}.`queue_attempt` AS execution_attempt ON execution_attempt.id = ("
+                f"SELECT attempt.id FROM {control}.`queue_attempt` AS attempt "
+                "WHERE attempt.queue_id = queued_event.id "
+                f"AND attempt.started_at <= DATE_ADD({alias}.created_at, INTERVAL 1 SECOND) "
+                f"AND (({alias}.event_status = 'SUCCESS' AND attempt.status = 'SUCCESS') "
+                f"OR ({alias}.event_status <> 'SUCCESS' AND attempt.status = 'ERROR')) "
+                f"ORDER BY ABS(TIMESTAMPDIFF(MICROSECOND, COALESCE(attempt.completed_at, attempt.started_at), {alias}.created_at)), attempt.id DESC LIMIT 1)"
+            )
+            return projection, join
         return (
-            ", object_event.received_at AS event_received_at, object_event.completed_at AS event_completed_at, object_event.duration_ms AS event_duration_ms",
+            ", object_event.received_at AS event_received_at, object_event.completed_at AS event_completed_at, object_event.duration_ms AS event_duration_ms, NULL AS event_attempt_number, 'LIFECYCLE' AS event_timing_scope",
             f" LEFT JOIN {control}.`object_event` AS object_event ON object_event.id = {alias}.object_event_id",
         )
-
-    def detached_processes(self, limit: int = 200) -> list[dict[str, Any]]:
-        """Return mapping-driven detached work for operational monitoring."""
-        with self.mysql.connection() as conn:
-            cursor = conn.cursor(dictionary=True, buffered=True)
-            control = quote_identifier(control_database(), "control database")
-            invocation_mode = self._transaction_mode_sql(cursor)
-            cursor.execute(f"""SELECT tx.id, tx.mapping_id, tx.event_action, tx.event_status,
-                tx.target_database, tx.target_table, tx.bucket_name, tx.resource_name,
-                tx.message, tx.created_at, {invocation_mode} AS invocation_mode,
-                COALESCE(m.worker_threads, 4) AS worker_threads
-                FROM {control}.event_tx_log tx LEFT JOIN {control}.object_storage_mappings m ON m.id=tx.mapping_id
-                WHERE {invocation_mode}='DETACHED' ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""", (limit,))
-            return cursor.fetchall()
 
     def registered_tables(self) -> tuple[list[dict[str, Any]], bool]:
         with self.mysql.connection() as conn:

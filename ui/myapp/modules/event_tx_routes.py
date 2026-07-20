@@ -18,12 +18,8 @@ event_tx_bp = Blueprint("event_tx", __name__, url_prefix="/event-tx")
 @event_tx_bp.get("/detached")
 @login_required
 def detached_processes():
-    try:
-        processes = EventTransactionService(mysql_for_request()).detached_processes()
-    except Exception as error:
-        flash(f"Could not read detached processes: {error}", "error")
-        processes = []
-    return render_dashboard("detached_processes.html", active_page="detached", processes=processes)
+    """Keep old bookmarks working after detached monitoring moved to Queue."""
+    return redirect(url_for("queue.dashboard", tab="details"))
 
 
 def _limit(value: str | None) -> int:

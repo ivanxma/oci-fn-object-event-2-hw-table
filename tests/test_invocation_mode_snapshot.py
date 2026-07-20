@@ -10,6 +10,8 @@ class Cursor:
 
     def execute(self, statement, parameters=None):
         self.calls.append((statement, parameters))
+        if statement.lstrip().startswith("UPDATE"):
+            self.lastrowid = 0
 
 
 class Connection:
@@ -45,8 +47,9 @@ def test_event_log_persists_source_mode_snapshot():
         "invocation_mode": "SYNC",
     }
 
-    log_event(database, source, "CREATE", "SUCCESS", mapping, 4, "loaded")
+    event_log_id = log_event(database, source, "CREATE", "SUCCESS", mapping, 4, "loaded")
 
     insert, parameters = database.cursor.calls[0]
     assert "invocation_mode" in insert
     assert parameters[-2] == "DETACHED"
+    assert event_log_id == 17

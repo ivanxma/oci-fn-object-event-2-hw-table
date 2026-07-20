@@ -57,7 +57,7 @@ def review(job_id: str):
     return render_dashboard("import_review.html", active_page="import", job=job, job_id=job_id, columns=columns)
 
 
-def reviewed_definition(job: dict) -> tuple[list[dict], list[str], bool, bool]:
+def reviewed_definition(job: dict) -> tuple[list[dict], list[str], bool, bool, bool, str]:
     """Validate and normalize the reviewed form without executing database SQL."""
     columns = []
     for index, source_name in enumerate(job["headers"]):
@@ -72,7 +72,11 @@ def reviewed_definition(job: dict) -> tuple[list[dict], list[str], bool, bool]:
         primary_key.append(names[int(index)])
     partition_by_batch = request.form.get("partition_by_batch") == "on"
     add_row_id = request.form.get("add_row_id") == "on" or (partition_by_batch and not primary_key)
-    return columns, primary_key, add_row_id, partition_by_batch
+    drop_table = request.form.get("drop_table") == "on"
+    import_action = request.form.get("import_action", "DDL_AND_DATA")
+    if import_action not in {"DDL_ONLY", "DDL_AND_DATA"}:
+        raise ValueError("Choose DDL only or DDL + data loading.")
+    return columns, primary_key, add_row_id, partition_by_batch, drop_table, import_action
 
 
 @import_bp.post("/<job_id>/prepare")
@@ -84,10 +88,25 @@ def prepare(job_id: str):
         flash("That import review has expired. Upload the CSV again.", "warning")
         return redirect(url_for("imports.home"))
     try:
-        columns, primary_key, add_row_id, partition_by_batch = reviewed_definition(job)
+        columns, primary_key, add_row_id, partition_by_batch, drop_table, import_action = reviewed_definition(job)
         importer = ImportService(mysql_for_request())
-        job["reviewed"] = {"columns": columns, "primary_key": primary_key, "add_row_id": add_row_id, "partition_by_batch": partition_by_batch}
-        return render_dashboard("sql_preview.html", active_page="import", job=job, job_id=job_id, ddl=importer.ddl(job["database"], job["table"], columns, primary_key, add_row_id, partition_by_batch), create_database_statement=importer.create_database_statement(job["database"]) if job["create_database"] else None, load_statement=importer.load_data_statement(job["database"], job["table"], columns, job["delimiter"], partition_by_batch))
+        job["reviewed"] = {"columns": columns, "primary_key": primary_key, "add_row_id": add_row_id, "partition_by_batch": partition_by_batch, "drop_table": drop_table, "import_action": import_action}
+        ddl = importer.ddl(job["database"], job["table"], columns, primary_key, add_row_id, partition_by_batch)
+        create_database_statement = importer.create_database_statement(job["database"]) if job["create_database"] else None
+        drop_table_statement = importer.drop_table_statement(job["database"], job["table"]) if drop_table else None
+        load_statement = importer.load_data_statement(job["database"], job["table"], columns, job["delimiter"], partition_by_batch) if import_action == "DDL_AND_DATA" else None
+        statements = [statement for statement in (create_database_statement, drop_table_statement, ddl, load_statement) if statement]
+        return render_dashboard(
+            "sql_preview.html",
+            active_page="import",
+            job=job,
+            job_id=job_id,
+            ddl=ddl,
+            create_database_statement=create_database_statement,
+            drop_table_statement=drop_table_statement,
+            load_statement=load_statement,
+            complete_sql=";\n\n".join(statements) + ";",
+        )
     except ValueError as error:
         flash(str(error), "error")
         return redirect(url_for("imports.review", job_id=job_id))
@@ -103,10 +122,16 @@ def load(job_id: str):
         flash("Review the generated SQL before running an import.", "warning")
         return redirect(url_for("imports.review", job_id=job_id))
     try:
-        row_count = ImportService(mysql_for_request()).load_data(Path(job["path"]), job["database"], job["table"], review["columns"], review["primary_key"], review["add_row_id"], job["delimiter"], partition_by_batch=review.get("partition_by_batch", False), create_database=job["create_database"])
+        if review.get("drop_table") and request.form.get("confirm_drop_table") != "on":
+            raise ValueError("Confirm that the existing target table may be dropped and recreated.")
+        load_rows = review.get("import_action", "DDL_AND_DATA") == "DDL_AND_DATA"
+        row_count = ImportService(mysql_for_request()).load_data(Path(job["path"]), job["database"], job["table"], review["columns"], review["primary_key"], review["add_row_id"], job["delimiter"], partition_by_batch=review.get("partition_by_batch", False), create_database=job["create_database"], drop_table=review.get("drop_table", False), load_rows=load_rows)
         Path(job["path"]).unlink(missing_ok=True)
         state.imports.pop(job_id, None)
-        flash(f"Loaded {row_count} row(s) into {job['database']}.{job['table']} using LOAD DATA LOCAL INFILE.", "success")
+        if load_rows:
+            flash(f"Loaded {row_count} row(s) into {job['database']}.{job['table']} using LOAD DATA LOCAL INFILE.", "success")
+        else:
+            flash(f"DDL completed for {job['database']}.{job['table']}; CSV rows were not loaded.", "success")
     except ImportExecutionError as error:
         current_app.logger.exception("CSV LOAD DATA import failed")
         flash(str(error), "error")

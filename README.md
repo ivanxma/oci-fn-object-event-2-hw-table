@@ -12,7 +12,9 @@ atomically.
 The Flask operations UI provides one place to create and maintain mappings,
 manage live OCI Events rules, configure Function capacity, upload or remove test
 objects, inspect target and staging tables, and trace event timing, transaction
-status, detached work, and errors. This operational view makes setup,
+status, ordered work, and errors. Event TX reports each queue execution attempt,
+while Object Storage Event retains the end-to-end lifecycle across queueing and
+retries. This operational view makes setup,
 verification, troubleshooting, retry decisions, and orphaned-stage cleanup
 available without requiring operators to join OCI Console and control-schema
 data manually.
@@ -30,8 +32,9 @@ The `v0.1` tag remains the earlier release baseline. This branch adds:
 - mapping-driven Sync or Detached execution with safe Detached continuation
   before the Function runtime budget is exhausted;
 - immutable requested-mode snapshots and actual worker-transport attempts;
-- a Queue UI for depth, status, lane leases, heartbeats, attempts, errors,
-  manual enqueue, scheduling edits, retry, cancel, and worker wake-up; and
+- a Queue UI with Dashboard and Details views for outstanding work, depth,
+  status, lane leases, heartbeats, attempts, errors, manual enqueue, scheduling
+  edits, retry, cancel, and worker wake-up; and
 - ordered CREATE, UPDATE, and DELETE handling without bypassing a blocked head
   entry.
 
@@ -72,12 +75,13 @@ flowchart LR
   option for independently owned, non-overlapping partitions.
 - Uses a heartbeated lane lease, deterministic event order, completion
   watermark, retry/block states, and safe detached continuation handoff.
-- Records raw events, execution mode, lifecycle status, timing, transaction
-  audit, queue attempts, worker transport, and actionable error detail.
+- Records raw events, execution mode, lifecycle status, per-attempt execution
+  timing, end-to-end event timing, transaction audit, queue attempts, worker
+  transport, and actionable error detail.
 - Provides operational UI workflows for mappings, live OCI Rules, Function
   configuration, Object Storage testing, registered-table data, stage cleanup,
-  Event TX, detached-process monitoring, and queue operations including manual
-  enqueue, edit, retry, cancel, and worker wake-up.
+  Event TX, and queue operations including a summary Dashboard plus detailed
+  manual enqueue, edit, retry, cancel, lease, and worker wake-up controls.
 
 ## Deployment and configuration
 
@@ -179,7 +183,11 @@ After the deployment validator passes:
 1. Open the HTTPS UI and create or select a non-secret connection profile.
 2. Authenticate with the approved MySQL account; the password remains in
    server-owned session state and is not saved in the profile.
-3. Create or confirm the compatible target table in **Data Import**.
+3. Create or confirm the compatible target table in **Data Import**. The review
+   page aligns partitioning, generated `ROW_ID`, and destructive table-recreate
+   choices under **DDL controls**. Select **DDL only** or **DDL + data loading**;
+   the SQL review opens with the complete generated script in execution order
+   and also provides individual statement tabs.
 4. Create a **Resource Mapping** for the compartment, bucket, mutually
    exclusive object pattern, target table, requested Sync/Detached mode, writer
    count, and TABLE/MAPPING queue scope.
@@ -190,6 +198,21 @@ After the deployment validator passes:
 
 Use TABLE scope unless separate mappings are guaranteed to own disjoint records
 and have no cross-file key, move, update, or deletion dependencies.
+
+The **Queue → Dashboard** tab summarizes outstanding, running, waiting, blocked,
+and completed work and lists individual non-terminal jobs. **Queue → Details**
+contains the complete entry and binding tables plus edit, retry, cancel, and
+per-binding worker wake-up actions. Processing is event-driven, so there is no
+misleading global queue start/stop switch: disable the applicable OCI Rule to
+pause new intake, then allow or manage already accepted queue entries. The old
+Detached Processes URL redirects to Queue Details because detached work is one
+transport mode of the same ordered queue rather than a separate process model.
+
+In **Event TX**, timing belongs to the matched `queue_attempt`, so retries are
+shown as separate executions. The **Object Storage Event** tab intentionally
+shows the full event lifecycle from initial receipt through final completion,
+including queue wait and retry intervals. Historical rows without queue-attempt
+data fall back to lifecycle timing and are labelled as such.
 
 ### Upgrade an existing deployment
 

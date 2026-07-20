@@ -82,13 +82,58 @@ def inspect_csv(path: Path) -> dict:
     dialect = _dialect(path)
     headers, rows = iter_rows(path)
     preview = []
-    samples = {header: [] for header in headers}
+    inference = {
+        header: {
+            "has_value": False,
+            "all_integer": True,
+            "all_decimal": True,
+            "all_datetime": True,
+            "all_date": True,
+            "max_length": 0,
+        }
+        for header in headers
+    }
     for row in rows:
         if len(preview) < MAX_PREVIEW_ROWS:
             preview.append(row)
         for header in headers:
-            if len(samples[header]) < MAX_PREVIEW_ROWS:
-                samples[header].append(row[header])
-        if len(preview) >= MAX_PREVIEW_ROWS and all(len(values) >= MAX_PREVIEW_ROWS for values in samples.values()):
-            break
-    return {"headers": headers, "preview": preview, "types": {key: infer_mysql_type(value) for key, value in samples.items()}, "delimiter": dialect.delimiter}
+            value = row[header].strip()
+            if not value:
+                continue
+            stats = inference[header]
+            stats["has_value"] = True
+            stats["max_length"] = max(stats["max_length"], len(value))
+            stats["all_integer"] = stats["all_integer"] and bool(re.fullmatch(r"[-+]?\d+", value))
+            try:
+                Decimal(value)
+            except InvalidOperation:
+                stats["all_decimal"] = False
+            try:
+                datetime.fromisoformat(value)
+            except ValueError:
+                stats["all_datetime"] = False
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                stats["all_date"] = False
+
+    def inferred_type(stats: dict) -> str:
+        if not stats["has_value"]:
+            return "TEXT"
+        if stats["all_integer"]:
+            return "BIGINT"
+        if stats["all_decimal"]:
+            return "DECIMAL(38, 10)"
+        if stats["all_datetime"]:
+            return "DATETIME"
+        if stats["all_date"]:
+            return "DATE"
+        maximum = stats["max_length"]
+        return f"VARCHAR({maximum})" if maximum <= 1024 else "TEXT"
+
+    return {
+        "headers": headers,
+        "preview": preview,
+        "types": {header: inferred_type(inference[header]) for header in headers},
+        "delimiter": dialect.delimiter,
+    }

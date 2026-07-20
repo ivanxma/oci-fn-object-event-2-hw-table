@@ -185,13 +185,33 @@ class QueueService:
             cursor.execute(f"SELECT status, COUNT(*) AS count FROM {_table('event_work_queue')} GROUP BY status")
             counts = {row["status"]: int(row["count"]) for row in cursor.fetchall()}
             cursor.execute(
+                "SELECT COUNT(*) AS count FROM information_schema.tables "
+                "WHERE table_schema=%s AND table_name='event_errors'",
+                (control_database(),),
+            )
+            has_event_errors = bool(cursor.fetchone()["count"])
+            event_error_id = (
+                f"""(SELECT e.id FROM {_table('event_errors')} e
+                        WHERE e.mapping_id=q.mapping_id
+                          AND e.target_database=q.target_database
+                          AND e.target_table=q.target_table
+                          AND e.event_action=q.event_action
+                          AND e.error_message=q.last_error
+                          AND e.created_at BETWEEN q.created_at
+                              AND DATE_ADD(COALESCE(q.completed_at,q.updated_at), INTERVAL 5 SECOND)
+                        ORDER BY e.id DESC LIMIT 1)"""
+                if has_event_errors
+                else "NULL"
+            )
+            cursor.execute(
                 f"""SELECT q.id, q.event_id, q.mapping_id, q.queue_scope, q.binding_key,
                             q.target_database, q.target_table, q.bucket_name, q.resource_name,
                             q.object_version, q.event_action, q.event_time, q.priority, q.status,
                             q.attempt_count, q.available_at, q.invocation_mode, q.worker_threads,
                             q.object_size_bytes, q.last_error, q.operator_note, q.started_at,
                             q.completed_at, q.created_at,a.transport_mode AS latest_transport_mode,
-                            a.status AS latest_attempt_status,a.duration_ms AS latest_attempt_duration_ms
+                            a.status AS latest_attempt_status,a.duration_ms AS latest_attempt_duration_ms,
+                            {event_error_id} AS event_error_id
                      FROM {_table('event_work_queue')} q
                      LEFT JOIN {_table('queue_attempt')} a ON a.id=(SELECT MAX(a2.id) FROM {_table('queue_attempt')} a2 WHERE a2.queue_id=q.id)
                      {where}
