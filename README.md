@@ -90,26 +90,33 @@ Before use, confirm:
 ### IAM policy baseline
 
 Use the dynamic group that contains the UI/deployment VM instance principal.
-For the HWDemo validation compartment, the verified Container Instance policy
-resource family is `compute-container-family` (not `container-instances` or
-`container-instances-family`):
+The Container Instance policy resource family is `compute-container-family`
+(not `container-instances` or `container-instances-family`). Replace
+`<dynamic-group>`, `<compartment>`, and `<tag-namespace>` below with your own
+OCI names. A deployment requires a policy bundle; it is not sufficient to
+grant only Container Instance access:
 
 ```text
-Allow dynamic-group oracleidentitycloudservice/hwdemo_dg to manage compute-container-family in compartment HWDemo
-Allow dynamic-group oracleidentitycloudservice/hwdemo_dg to use virtual-network-family in compartment HWDemo
+Allow dynamic-group <dynamic-group> to manage compute-container-family in compartment <compartment>
+Allow dynamic-group <dynamic-group> to use virtual-network-family in compartment <compartment>
+Allow dynamic-group <dynamic-group> to manage streams in compartment <compartment>
+Allow dynamic-group <dynamic-group> to read secrets in compartment <compartment>
+Allow dynamic-group <dynamic-group> to read secret-bundles in compartment <compartment>
+Allow dynamic-group <dynamic-group> to manage repos in compartment <compartment>
 ```
 
-The first statement permits the Event Processor to list/create/manage OCI
-Container Instances. The second permits VNIC/subnet attachment during create.
-The UI also needs Vault metadata permission to populate the secret selector;
-the deployed consumer needs bundle-read permission to resolve the selected
-secret value:
+`compute-container-family` permits Event Processor list/create/manage
+operations. `virtual-network-family` permits VNIC/subnet attachment. Streams
+cover the UI Stream Server/Content operations and consumer assignment. `read
+secrets` lists metadata for the UI selector; `read secret-bundles` retrieves
+the selected value at runtime. Repositories permit the approved OCIR image
+workflow through the instance principal.
+
+If the deployment applies **defined tags** (freeform tags do not need this),
+also grant use of the approved tag namespace at tenancy scope:
 
 ```text
-Allow dynamic-group oracleidentitycloudservice/hwdemo_dg to read secrets in compartment HWDemo
-Allow dynamic-group oracleidentitycloudservice/hwdemo_dg to read secret-bundles in compartment HWDemo
-Allow dynamic-group oracleidentitycloudservice/hwdemo_dg to manage streams in compartment HWDemo
-Allow dynamic-group oracleidentitycloudservice/hwdemo_dg to manage repos in compartment HWDemo
+Allow dynamic-group <dynamic-group> to use tag-namespaces in tenancy
 ```
 
 Apply least privilege to the actual consumer resource-principal dynamic group
