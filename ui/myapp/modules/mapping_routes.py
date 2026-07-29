@@ -145,7 +145,7 @@ def _reconcile_rule(
 @login_required
 def list_mappings():
     active_tab = request.args.get("tab", "mappings")
-    if active_tab not in {"mappings", "rules", "deployment", "upload"}:
+    if active_tab not in {"mappings", "rules", "upload"}:
         active_tab = "mappings"
     mappings: list[dict] = []
     rules = []

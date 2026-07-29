@@ -16,14 +16,17 @@ def _service() -> StreamingService:
 def index():
     streams = []
     messages = []
+    active_tab = request.args.get("tab", "server").strip().lower()
+    if active_tab not in {"server", "content"}:
+        active_tab = "server"
     selected_stream_id = request.args.get("stream_id", "").strip()
     try:
         streams = _service().list_streams()
-        if selected_stream_id:
+        if active_tab == "content" and selected_stream_id:
             messages = _service().read_messages(stream_id=selected_stream_id)
     except StreamingError as error:
         flash(str(error), "error")
-    return render_dashboard("streaming.html", active_page="streaming", streams=streams, messages=messages, selected_stream_id=selected_stream_id)
+    return render_dashboard("streaming.html", active_page="streaming", streams=streams, messages=messages, selected_stream_id=selected_stream_id, active_tab=active_tab)
 
 @streaming_bp.post("/create")
 @login_required
@@ -31,7 +34,7 @@ def create():
     try:
         stream = _service().create_stream(name=request.form.get("name", ""), partitions=int(request.form.get("partitions", "1")), retention_hours=int(request.form.get("retention_hours", "24")))
         flash(f"Stream {stream.name} is being created.", "success")
-        return redirect(url_for("streaming.index", stream_id=stream.id))
+        return redirect(url_for("streaming.index", tab="server"))
     except (ValueError, StreamingError) as error:
         flash(str(error), "error")
         return redirect(url_for("streaming.index"))
@@ -44,4 +47,4 @@ def test_message():
         flash("Test message published.", "success")
     except (ValueError, StreamingError) as error:
         flash(str(error), "error")
-    return redirect(url_for("streaming.index", stream_id=request.form.get("stream_id", "")))
+    return redirect(url_for("streaming.index", tab="content", stream_id=request.form.get("stream_id", "")))

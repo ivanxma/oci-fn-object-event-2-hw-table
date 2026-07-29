@@ -1,12 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="page-heading"><div><p class="eyebrow">OBJECT STORAGE ROUTING</p><h1>Resource mappings and OCI automation</h1><p>Maintain database routing, OCI Events Streaming rules, and consumer deployment readiness.</p></div><a class="primary-button compact" href="{{ url_for('mappings.create_mapping') }}">Add mapping <span>+</span></a></section>
+<section class="page-heading"><div><p class="eyebrow">OBJECT STORAGE ROUTING</p><h1>Resource mappings and OCI automation</h1><p>Maintain database routing and OCI Events Streaming rules. Consumer deployment is managed from Orchestration.</p></div><a class="primary-button compact" href="{{ url_for('mappings.create_mapping') }}">Add mapping <span>+</span></a></section>
 
 <section class="content-card mappings-tabs">
   <div class="tab-list" role="tablist" aria-label="Mapping and OCI configuration views">
     <a class="tab {{ 'active' if active_tab == 'mappings' else '' }}" role="tab" aria-selected="{{ 'true' if active_tab == 'mappings' else 'false' }}" href="{{ url_for('mappings.list_mappings', tab='mappings') }}">Mappings <span>{{ mappings|length }}</span></a>
     <a class="tab {{ 'active' if active_tab == 'rules' else '' }}" role="tab" aria-selected="{{ 'true' if active_tab == 'rules' else 'false' }}" href="{{ url_for('mappings.list_mappings', tab='rules') }}">OCI Rules{% if active_tab == 'rules' %} <span>{{ rules|length }}</span>{% endif %}</a>
-    <a class="tab {{ 'active' if active_tab == 'deployment' else '' }}" role="tab" aria-selected="{{ 'true' if active_tab == 'deployment' else 'false' }}" href="{{ url_for('mappings.list_mappings', tab='deployment') }}">Consumer Deployment</a>
     <a class="tab {{ 'active' if active_tab == 'upload' else '' }}" role="tab" aria-selected="{{ 'true' if active_tab == 'upload' else 'false' }}" href="{{ url_for('mappings.list_mappings', tab='upload') }}">Object Storage Upload</a>
   </div>
 
@@ -35,12 +34,6 @@
       </div>
       <div class="table-wrap"><table class="rules-table"><thead><tr><th class="selection-column"><label class="checkbox-field" title="Select all visible rules"><input id="select-all-rules" type="checkbox" aria-label="Select all visible rules"><span>Select</span></label></th><th>Rule</th><th>Enabled</th><th>Lifecycle</th><th>Condition from OCI</th><th>Mapping</th><th>Created</th></tr></thead><tbody>{% for rule in rules %}{% set mapping = rule_mapping_lookup.get(rule.id) %}<tr><td class="selection-column"><label class="checkbox-field"><input class="rule-row-select" type="checkbox" name="rule_id" value="{{ rule.id }}" aria-label="Select rule {{ rule.display_name }}"><span class="visually-hidden">Select {{ rule.display_name }}</span></label></td><td><strong>{{ rule.display_name }}</strong><small>{{ 'UI managed' if rule.managed else 'External rule' }}</small></td><td>{{ 'Yes' if rule.is_enabled else 'No' }}</td><td><span class="lifecycle-badge {{ 'success' if rule.lifecycle_state == 'ACTIVE' else 'warning' }}">{{ rule.lifecycle_state }}</span></td><td><code class="rule-condition">{{ rule.condition }}</code></td><td>{% if mapping %}<span>#{{ mapping.id }} · {{ mapping.target_database }}.{{ mapping.target_table }}</span>{% elif rule.mapping_id %}Mapping #{{ rule.mapping_id }} not found{% else %}Unassociated{% endif %}</td><td>{{ rule.time_created or '—' }}</td></tr>{% else %}<tr><td colspan="7" class="empty-state">No OCI Events rules target the configured Function.</td></tr>{% endfor %}</tbody></table></div>
     </form>
-  </div>
-
-  {% elif active_tab == 'deployment' %}
-  <div class="tab-panel active" role="tabpanel">
-    <div class="panel-heading"><div><h2>Consumer deployment</h2><p>The OCI Function is replaced by a mode-aware Container Instance consumer. Deploy only through Orchestration after full verification passes.</p></div><a class="secondary-button compact" href="{{ url_for('orchestration.index') }}">Open Orchestration</a></div>
-    <aside class="mapping-assumptions"><strong>Deployment contract</strong><ul><li>FIFO: one stream partition and one active consumer replica.</li><li>Parallel: two or more partitions and no more replicas than partitions; global FIFO is not guaranteed.</li><li>The consumer retrieves its database bundle from Vault through its resource principal and writes a durable capture before loader processing.</li></ul></aside>
   </div>
 
   {% else %}

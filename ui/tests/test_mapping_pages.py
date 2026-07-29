@@ -30,6 +30,7 @@ except ModuleNotFoundError:
 from myapp.app import create_app
 from myapp.services.event_rule_service import EventRuleRecord
 from myapp.services.object_storage_upload_service import ObjectRecord
+from myapp.services.streaming_service import StreamMessage, StreamRecord
 
 
 MAPPING = {
@@ -120,14 +121,13 @@ class MappingPageTest(unittest.TestCase):
         self.assertIn(b"/mappings/rules/delete-selected", response.data)
         self.assertNotIn(b"Edit mapping/rule", response.data)
 
-    def test_consumer_deployment_tab_replaces_function_capacity(self) -> None:
+    def test_consumer_deployment_tab_is_removed_from_resource_mappings(self) -> None:
         health, mappings = self._base_patches()
         with health, mappings:
             response = self.client.get("/mappings/?tab=deployment")
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Consumer deployment", response.data)
-        self.assertIn(b"Open Orchestration", response.data)
-        self.assertNotIn(b"OCI Function Configuration", response.data)
+        self.assertNotIn(b"Consumer Deployment", response.data)
+        self.assertIn(b"Mappings stored", response.data)
 
     def test_selected_rule_edit_redirects_to_owning_mapping(self) -> None:
         rule = EventRuleRecord(
@@ -223,6 +223,30 @@ class MappingPageTest(unittest.TestCase):
         self.assertIn(b"created automatically", response.data)
         self.assertIn(b"sync-folder/employees.csv", response.data)
         self.assertIn(b"Delete selected", response.data)
+
+    def test_stream_server_tab_contains_only_server_list_and_creation(self) -> None:
+        stream = StreamRecord("ocid1.stream.test", "test-stream", "ACTIVE", 1, 24, "endpoint", None)
+        with patch("myapp.modules.common.MySQLService.health_check", return_value=None), patch(
+            "myapp.modules.streaming_routes.StreamingService.list_streams", return_value=[stream]
+        ):
+            response = self.client.get("/streaming/?tab=server")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Create stream", response.data)
+        self.assertIn(b"Open content", response.data)
+        self.assertNotIn(b"Publish test message", response.data)
+        self.assertNotIn(b"Read sample", response.data)
+
+    def test_stream_content_tab_contains_message_actions_only(self) -> None:
+        stream = StreamRecord("ocid1.stream.test", "test-stream", "ACTIVE", 1, 24, "endpoint", None)
+        message = StreamMessage(0, "1", "key", "value", None)
+        with patch("myapp.modules.common.MySQLService.health_check", return_value=None), patch(
+            "myapp.modules.streaming_routes.StreamingService.list_streams", return_value=[stream]
+        ), patch("myapp.modules.streaming_routes.StreamingService.read_messages", return_value=[message]):
+            response = self.client.get("/streaming/?tab=content&stream_id=ocid1.stream.test")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Publish test message", response.data)
+        self.assertIn(b"Read sample", response.data)
+        self.assertNotIn(b">Create stream</button>", response.data)
 
     def test_mapping_scoped_csv_upload_uses_selected_mapping(self) -> None:
         with patch("myapp.modules.common.MySQLService.health_check", return_value=None), patch(
