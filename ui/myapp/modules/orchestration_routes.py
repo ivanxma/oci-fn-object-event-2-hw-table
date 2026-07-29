@@ -96,7 +96,7 @@ def create_database_secret():
         existing_secret_id = request.form.get("existing_secret_id", "")
         if existing_secret_id:
             vault_service.update_database_secret(secret_id=existing_secret_id, **values)
-            flash("OCI Vault database secret updated as a new version. Existing processors keep the same secret OCID.", "success")
+            flash("OCI Vault database secret updated as a new version. Existing processors keep the same secret OCID; restart or replace a processor to load the new version.", "success")
         else:
             secret = vault_service.create_database_secret(name=request.form.get("secret_name", ""), vault_id=request.form.get("vault_id", ""), key_id=request.form.get("key_id", ""), **values)
             flash(f"OCI Vault database secret created: {secret.name} ({secret.id}). Select it in Processor deployment.", "success")

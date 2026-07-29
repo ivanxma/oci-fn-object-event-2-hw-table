@@ -63,6 +63,7 @@ class ConsumerRuntime:
     """Non-secret values passed to a single Container Instance deployment."""
     image_url: str
     db_secret_ocid: str
+    display_name: str
     writer_workers: int
 
     @classmethod
@@ -73,13 +74,14 @@ class ConsumerRuntime:
         runtime = cls(
             image_url=value("image_url", defaults.image_url),
             db_secret_ocid=value("db_secret_ocid", defaults.db_secret_ocid),
+            display_name=value("processor_name", ""),
             writer_workers=int(value("writer_workers", str(defaults.writer_workers))),
         )
         runtime.validate()
         return runtime
 
     def validate(self) -> None:
-        required = ("image_url", "db_secret_ocid")
+        required = ("image_url", "db_secret_ocid", "display_name")
         missing = [name for name in required if not str(getattr(self, name)).strip()]
         if missing:
             raise ValueError("Processor configuration is missing: " + ", ".join(missing) + ".")
@@ -87,6 +89,8 @@ class ConsumerRuntime:
             raise ValueError("Container image must be a valid OCI Registry image reference.")
         if not self.db_secret_ocid.startswith("ocid1.vaultsecret."):
             raise ValueError("Choose a valid OCI Vault secret.")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9._-]{0,254}", self.display_name):
+            raise ValueError("Processor name must start with a letter and use letters, digits, dots, hyphens, or underscores.")
         if not 1 <= self.writer_workers <= 32:
             raise ValueError("Loader workers must be from 1 to 32.")
 
@@ -97,7 +101,7 @@ class ContainerOrchestrationService:
 
     def deployment_spec(self, *, mapping: dict[str, Any], stream_partitions: int, partition_assignment: str, runtime: ConsumerRuntime | None = None) -> dict[str, Any]:
         runtime = runtime or ConsumerRuntime(
-            self.settings.image_url, self.settings.db_secret_ocid, self.settings.writer_workers,
+            self.settings.image_url, self.settings.db_secret_ocid, f"{self.settings.name_prefix}-{str(mapping.get('processing_mode') or 'fifo').lower()}-p{partition_assignment}", self.settings.writer_workers,
         )
         runtime.validate()
         mode = str(mapping.get("processing_mode") or "FIFO").upper()
@@ -111,8 +115,7 @@ class ContainerOrchestrationService:
             raise ValueError("Container OCPUs and memory must both be greater than zero.")
         if not str(mapping.get("stream_id", "")).startswith("ocid1.stream."):
             raise ValueError("The mapping does not have a valid OCI Stream.")
-        suffix = "-".join(assignments)
-        name = f"{self.settings.name_prefix}-{mode.lower()}-p{suffix}"[:255]
+        name = runtime.display_name
         return {
             "display_name": name,
             "compartment_id": self.settings.compartment_id,
@@ -165,6 +168,23 @@ class ContainerOrchestrationService:
         spec = self.deployment_spec(mapping=mapping, stream_partitions=stream_partitions, partition_assignment=partition_assignment, runtime=runtime)
         try:
             oci, client = self._client()
+            records = oci.pagination.list_call_get_all_results(
+                client.list_container_instances, compartment_id=self.settings.compartment_id
+            ).data
+            duplicate = next(
+                (
+                    item for item in records
+                    if (getattr(item, "freeform_tags", {}) or {}).get("managed-by") == "oci-object-event-2-table"
+                    and str(getattr(item, "display_name", "")) == spec["display_name"]
+                    and str(getattr(item, "lifecycle_state", "")).upper() not in {"DELETED", "DELETING"}
+                ),
+                None,
+            )
+            if duplicate is not None:
+                raise ValueError(
+                    "An active managed Container Instance already uses this processor name. "
+                    "Choose a different name, or delete the old instance before reusing it."
+                )
             models = oci.container_instances.models
             details = models.CreateContainerInstanceDetails(
                 display_name=spec["display_name"], compartment_id=spec["compartment_id"], availability_domain=spec["availability_domain"],

@@ -28,13 +28,14 @@ class OrchestrationServiceTest(unittest.TestCase):
     def test_form_runtime_overrides_non_secret_values_with_validation(self):
         runtime = ConsumerRuntime.from_form({
             "image_url": "lhr.ocir.io/ns/repo:next", "db_secret_ocid": "ocid1.vaultsecret.new",
+            "processor_name": "processor-next",
             "writer_workers": "8",
         }, self._service().settings)
         spec = self._service().deployment_spec(mapping={"id": 7, "stream_id": "ocid1.stream.test", "processing_mode": "FIFO"}, stream_partitions=1, partition_assignment="0", runtime=runtime)
         self.assertEqual(spec["container"]["image_url"], "lhr.ocir.io/ns/repo:next")
         self.assertEqual(spec["container"]["environment_variables"]["WRITER_WORKERS"], "8")
         with self.assertRaisesRegex(ValueError, "valid OCI Vault secret"):
-            ConsumerRuntime.from_form({"db_secret_ocid": "not-a-secret"}, self._service().settings)
+            ConsumerRuntime.from_form({"processor_name": "processor-next", "db_secret_ocid": "not-a-secret"}, self._service().settings)
 
     def test_rejects_non_positive_resources(self):
         settings = DeploymentSettings(True, "ocid1.compartment.test", "uk-london-1", "ocid1.subnet.test", "AD-1", "CI.Standard.E4.Flex", 0, 16, "lhr.ocir.io/ns/repo:tag", "ocid1.vaultsecret.test", "db", "3306", "streamuser", "stream_db", "stream_data", "stream_db")
@@ -54,12 +55,16 @@ class OrchestrationServiceTest(unittest.TestCase):
             def __init__(self, **kwargs): self.__dict__.update(kwargs)
         class Client:
             def __init__(self): self.details = None
+            list_container_instances = object()
             def create_container_instance(self, details):
                 self.details = details
                 return SimpleNamespace(data=SimpleNamespace(id="ocid1.computecontainerinstance.test", display_name=details.display_name, lifecycle_state="CREATING"))
         client = Client()
         models = SimpleNamespace(CreateContainerInstanceDetails=Details, CreateContainerInstanceShapeConfigDetails=Details, CreateContainerDetails=Details, CreateContainerVnicDetails=Details)
-        oci = SimpleNamespace(container_instances=SimpleNamespace(models=models))
+        oci = SimpleNamespace(
+            container_instances=SimpleNamespace(models=models),
+            pagination=SimpleNamespace(list_call_get_all_results=lambda *_args, **_kwargs: SimpleNamespace(data=[])),
+        )
         service = self._service()
         with patch.object(service, "_client", return_value=(oci, client)):
             result = service.create(mapping={"id": 3, "stream_id": "ocid1.stream.test", "processing_mode": "FIFO"}, stream_partitions=1, partition_assignment="0")
@@ -67,6 +72,21 @@ class OrchestrationServiceTest(unittest.TestCase):
         self.assertFalse(client.details.containers[0].is_resource_principal_disabled)
         self.assertEqual(client.details.vnics[0].subnet_id, "ocid1.subnet.test")
         self.assertEqual(client.details.freeform_tags["mapping-id"], "3")
+
+    def test_create_rejects_duplicate_active_processor_name(self):
+        service = self._service()
+        existing = SimpleNamespace(
+            display_name="object-storage-stream-processor-fifo-p0", lifecycle_state="ACTIVE",
+            freeform_tags={"managed-by": "oci-object-event-2-table"},
+        )
+        client = SimpleNamespace(list_container_instances=object(), create_container_instance=lambda _: self.fail("create must not run"))
+        oci = SimpleNamespace(
+            pagination=SimpleNamespace(list_call_get_all_results=lambda *_args, **_kwargs: SimpleNamespace(data=[existing])),
+            container_instances=SimpleNamespace(models=SimpleNamespace()),
+        )
+        with patch.object(service, "_client", return_value=(oci, client)):
+            with self.assertRaisesRegex(ValueError, "already uses this processor name"):
+                service.create(mapping={"id": 3, "stream_id": "ocid1.stream.test", "processing_mode": "FIFO"}, stream_partitions=1, partition_assignment="0")
 
     def test_create_wraps_oci_failure(self):
         service = self._service()
