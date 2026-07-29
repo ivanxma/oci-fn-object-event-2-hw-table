@@ -144,10 +144,30 @@ class ConsumerModeTest(unittest.TestCase):
             def complete(*_args):
                 raise AssertionError("complete must not be called without a claim")
             @staticmethod
+            def decoded_payload(_value):
+                raise AssertionError("payload normalization must not run without a claim")
+            @staticmethod
             def fail(*_args):
                 raise AssertionError("fail must not be called without a claim")
         with patch.dict(sys.modules, {"message_store": Store}):
             self.assertFalse(process_one(None, lambda _payload: None, stream_id="ocid1.stream.test", partitions=["0"]))
+
+    def test_processing_boundary_normalizes_claimed_json(self):
+        import sys
+        from unittest.mock import patch
+        received = []
+        class Store:
+            @staticmethod
+            def claim_next(_connection, **_kwargs): return {"id": 9, "payload": '{"eventType":"test"}'}
+            @staticmethod
+            def decoded_payload(value): return json.loads(value) if isinstance(value, str) else value
+            @staticmethod
+            def complete(*_args): pass
+            @staticmethod
+            def fail(*_args): raise AssertionError("valid payload must not fail")
+        with patch.dict(sys.modules, {"message_store": Store}):
+            self.assertTrue(process_one(None, received.append, stream_id="ocid1.stream.test", partitions=["0"]))
+        self.assertEqual(received, [{"eventType": "test"}])
 
     def test_loader_uses_shared_processing_path_without_fdk_response(self):
         import sys

@@ -58,12 +58,15 @@ def assigned_partitions(mode: str, partitions: int, assignment: str) -> list[str
 
 def process_one(connection: Any, processor: Any, *, stream_id: str, partitions: list[str]) -> bool:
     """Run one durable capture through the loader; leave failure retryable."""
-    from message_store import claim_next, complete, fail
+    from message_store import claim_next, complete, decoded_payload, fail
     row = claim_next(connection, stream_id=stream_id, partitions=partitions)
     if row is None:
         return False
     try:
-        processor(row["payload"])
+        # Claim normally normalizes JSON, but normalize again at the execution
+        # boundary so a Connector/Python representation can never reach the
+        # loader as a JSON string.
+        processor(decoded_payload(row["payload"]))
         complete(connection, int(row["id"]))
         return True
     except Exception as error:
