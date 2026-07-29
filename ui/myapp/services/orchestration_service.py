@@ -10,6 +10,11 @@ class OrchestrationError(RuntimeError):
     pass
 
 
+def valid_deployment_id(value: str) -> bool:
+    """OCI uses the computecontainerinstance OCID resource type."""
+    return value.startswith("ocid1.computecontainerinstance.")
+
+
 def validate_deployment(*, processing_mode: str, partitions: int, replicas: int) -> None:
     mode = processing_mode.upper()
     if mode == "FIFO" and (partitions != 1 or replicas != 1):
@@ -201,7 +206,7 @@ class ContainerOrchestrationService:
 
     def get_deployment(self, deployment_id: str) -> dict[str, Any]:
         """Return a managed Container Instance's non-secret deployment contract."""
-        if not deployment_id.startswith("ocid1.containerinstance."):
+        if not valid_deployment_id(deployment_id):
             raise ValueError("Container Instance identifier is invalid.")
         try:
             _, client = self._client()
@@ -238,7 +243,7 @@ class ContainerOrchestrationService:
 
     def delete(self, deployment_id: str) -> None:
         """Delete only an instance carrying this application's management tag."""
-        if not deployment_id.startswith("ocid1.containerinstance."):
+        if not valid_deployment_id(deployment_id):
             raise ValueError("Container Instance identifier is invalid.")
         try:
             oci, client = self._client()

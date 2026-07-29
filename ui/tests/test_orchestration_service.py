@@ -60,7 +60,7 @@ class OrchestrationServiceTest(unittest.TestCase):
             def __init__(self): self.details = None
             def create_container_instance(self, details):
                 self.details = details
-                return SimpleNamespace(data=SimpleNamespace(id="ocid1.containerinstance.test", display_name=details.display_name, lifecycle_state="CREATING"))
+                return SimpleNamespace(data=SimpleNamespace(id="ocid1.computecontainerinstance.test", display_name=details.display_name, lifecycle_state="CREATING"))
         client = Client()
         models = SimpleNamespace(CreateContainerInstanceDetails=Details, CreateContainerInstanceShapeConfigDetails=Details, CreateContainerDetails=Details, CreateContainerVnicDetails=Details)
         oci = SimpleNamespace(container_instances=SimpleNamespace(models=models))
@@ -81,11 +81,11 @@ class OrchestrationServiceTest(unittest.TestCase):
     def test_delete_rejects_unmanaged_instance_before_mutation(self):
         service = self._service()
         client = SimpleNamespace(list_container_instances=object(), delete_container_instance=lambda *_args: self.fail("delete must not run"))
-        record = SimpleNamespace(id="ocid1.containerinstance.test", freeform_tags={})
+        record = SimpleNamespace(id="ocid1.computecontainerinstance.test", freeform_tags={})
         oci = SimpleNamespace(pagination=SimpleNamespace(list_call_get_all_results=lambda *_args, **_kwargs: SimpleNamespace(data=[record])))
         with patch.object(service, "_client", return_value=(oci, client)):
             with self.assertRaisesRegex(OrchestrationError, "managed by this application"):
-                service.delete("ocid1.containerinstance.test")
+                service.delete("ocid1.computecontainerinstance.test")
 
     def test_detail_returns_only_non_secret_runtime_configuration(self):
         service = self._service()
@@ -94,20 +94,20 @@ class OrchestrationServiceTest(unittest.TestCase):
             environment_variables={"DB_SECRET_OCID": "ocid1.vaultsecret.test", "DB_PASSWORD": "not-visible", "CONSUMER_PARTITIONS": "0"},
         )
         record = SimpleNamespace(
-            id="ocid1.containerinstance.test", display_name="processor-p0", lifecycle_state="ACTIVE",
+            id="ocid1.computecontainerinstance.test", display_name="processor-p0", lifecycle_state="ACTIVE",
             freeform_tags={"managed-by": "oci-object-event-2-table", "mapping-id": "12"}, compartment_id="ocid1.compartment.test",
             availability_domain="AD-1", shape="CI.Standard.E4.Flex", shape_config=SimpleNamespace(ocpus=1, memory_in_gbs=16), containers=[container],
         )
         with patch.object(service, "_client", return_value=(None, SimpleNamespace(get_container_instance=lambda _: SimpleNamespace(data=record)))):
-            detail = service.get_deployment("ocid1.containerinstance.test")
+            detail = service.get_deployment("ocid1.computecontainerinstance.test")
         self.assertTrue(detail["containers"][0]["resource_principal_enabled"])
         self.assertEqual([item["name"] for item in detail["containers"][0]["environment"]], ["CONSUMER_PARTITIONS", "DB_SECRET_OCID"])
 
     def test_delete_rejects_already_deleted_instance(self):
         service = self._service()
         client = SimpleNamespace(list_container_instances=object(), delete_container_instance=lambda *_args: self.fail("delete must not run"))
-        record = SimpleNamespace(id="ocid1.containerinstance.test", lifecycle_state="DELETED", freeform_tags={"managed-by": "oci-object-event-2-table"})
+        record = SimpleNamespace(id="ocid1.computecontainerinstance.test", lifecycle_state="DELETED", freeform_tags={"managed-by": "oci-object-event-2-table"})
         oci = SimpleNamespace(pagination=SimpleNamespace(list_call_get_all_results=lambda *_args, **_kwargs: SimpleNamespace(data=[record])))
         with patch.object(service, "_client", return_value=(oci, client)):
             with self.assertRaisesRegex(ValueError, "already deleted"):
-                service.delete("ocid1.containerinstance.test")
+                service.delete("ocid1.computecontainerinstance.test")
