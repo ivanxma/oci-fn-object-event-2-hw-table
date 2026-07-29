@@ -101,6 +101,7 @@ def create_database_secret():
             secret = vault_service.create_database_secret(name=request.form.get("secret_name", ""), vault_id=request.form.get("vault_id", ""), key_id=request.form.get("key_id", ""), **values)
             flash(f"OCI Vault database secret created: {secret.name} ({secret.id}). Select it in Processor deployment.", "success")
     except (ValueError, VaultSecretError) as error:
+        current_app.logger.warning("OCI Vault database secret create/update failed: %s", type(error).__name__)
         flash(str(error), "error")
     return redirect(url_for("orchestration.index", tab="database-secret"))
 

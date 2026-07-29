@@ -119,7 +119,7 @@ class VaultSecretService:
         payload = json.dumps({"host": host, "port": int(port), "user": user, "credential": password, "database": database, "control_database": control_database, "stream_data_database": stream_data_database}, separators=(",", ":")).encode("utf-8")
         try:
             oci, client = self._client()
-            content = oci.vault.models.Base64SecretContentDetails(content=base64.b64encode(payload).decode("ascii"))
+            content = oci.vault.models.Base64SecretContentDetails(name=f"{name}-v1", stage="CURRENT", content=base64.b64encode(payload).decode("ascii"))
             details = oci.vault.models.CreateSecretDetails(
                 compartment_id=self.compartment_id, secret_name=name, vault_id=vault_id, key_id=key_id,
                 description="Processor database connectivity configuration.", secret_content=content,
@@ -139,7 +139,7 @@ class VaultSecretService:
         payload = json.dumps({"host": host.strip(), "port": int(port), "user": user.strip(), "credential": password, "database": database.strip(), "control_database": control_database.strip(), "stream_data_database": stream_data_database.strip()}, separators=(",", ":")).encode("utf-8")
         try:
             oci, client = self._client()
-            content = oci.vault.models.Base64SecretContentDetails(content=base64.b64encode(payload).decode("ascii"))
+            content = oci.vault.models.Base64SecretContentDetails(name="processor-db-config", stage="CURRENT", content=base64.b64encode(payload).decode("ascii"))
             client.update_secret(secret_id, oci.vault.models.UpdateSecretDetails(secret_content=content))
         except (ValueError, VaultSecretError):
             raise
