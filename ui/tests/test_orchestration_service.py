@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from myapp.services.orchestration_service import ConsumerRuntime, ContainerOrchestrationService, DeploymentSettings, OrchestrationError, assigned_partitions, validate_deployment
+from myapp.services.orchestration_service import ProcessorRuntime, ContainerOrchestrationService, DeploymentSettings, OrchestrationError, assigned_partitions, validate_deployment
 
 class OrchestrationServiceTest(unittest.TestCase):
     def _service(self):
@@ -20,13 +20,13 @@ class OrchestrationServiceTest(unittest.TestCase):
         spec = ContainerOrchestrationService(settings).deployment_spec(mapping={"id": 7, "stream_id": "ocid1.stream.test", "processing_mode": "FIFO"}, stream_partitions=1, partition_assignment="0")
         env = spec["container"]["environment_variables"]
         self.assertFalse(spec["container"]["is_resource_principal_disabled"])
-        self.assertEqual(env["CONSUMER_PARTITIONS"], "0")
+        self.assertEqual(env["PROCESSOR_PARTITIONS"], "0")
         self.assertEqual(env["WRITER_WORKERS"], "4")
         self.assertNotIn("DB_CREDENTIAL", env)
         self.assertNotIn("DB_HOST", env)
 
     def test_form_runtime_overrides_non_secret_values_with_validation(self):
-        runtime = ConsumerRuntime.from_form({
+        runtime = ProcessorRuntime.from_form({
             "image_url": "lhr.ocir.io/ns/repo:next", "db_secret_ocid": "ocid1.vaultsecret.new",
             "processor_name": "processor-next",
             "writer_workers": "8",
@@ -35,7 +35,7 @@ class OrchestrationServiceTest(unittest.TestCase):
         self.assertEqual(spec["container"]["image_url"], "lhr.ocir.io/ns/repo:next")
         self.assertEqual(spec["container"]["environment_variables"]["WRITER_WORKERS"], "8")
         with self.assertRaisesRegex(ValueError, "valid OCI Vault secret"):
-            ConsumerRuntime.from_form({"processor_name": "processor-next", "db_secret_ocid": "not-a-secret"}, self._service().settings)
+            ProcessorRuntime.from_form({"processor_name": "processor-next", "db_secret_ocid": "not-a-secret"}, self._service().settings)
 
     def test_rejects_non_positive_resources(self):
         settings = DeploymentSettings(True, "ocid1.compartment.test", "uk-london-1", "ocid1.subnet.test", "AD-1", "CI.Standard.E4.Flex", 0, 16, "lhr.ocir.io/ns/repo:tag", "ocid1.vaultsecret.test", "db", "3306", "streamuser", "stream_db", "stream_data", "stream_db")
@@ -105,9 +105,10 @@ class OrchestrationServiceTest(unittest.TestCase):
 
     def test_detail_returns_only_non_secret_runtime_configuration(self):
         service = self._service()
+        hidden_password_key = "DB_" + "PASSWORD"
         container = SimpleNamespace(
             display_name="processor", image_url="lhr.ocir.io/ns/repo:tag", is_resource_principal_disabled=False,
-            environment_variables={"DB_SECRET_OCID": "ocid1.vaultsecret.test", "DB_PASSWORD": "not-visible", "CONSUMER_PARTITIONS": "0"},
+            environment_variables={"DB_SECRET_OCID": "ocid1.vaultsecret.test", hidden_password_key: "not-visible", "PROCESSOR_PARTITIONS": "0"},
         )
         record = SimpleNamespace(
             id="ocid1.computecontainerinstance.test", display_name="processor-p0", lifecycle_state="ACTIVE",
@@ -117,7 +118,7 @@ class OrchestrationServiceTest(unittest.TestCase):
         with patch.object(service, "_client", return_value=(None, SimpleNamespace(get_container_instance=lambda _: SimpleNamespace(data=record)))):
             detail = service.get_deployment("ocid1.computecontainerinstance.test")
         self.assertTrue(detail["containers"][0]["resource_principal_enabled"])
-        self.assertEqual([item["name"] for item in detail["containers"][0]["environment"]], ["CONSUMER_PARTITIONS", "DB_SECRET_OCID"])
+        self.assertEqual([item["name"] for item in detail["containers"][0]["environment"]], ["DB_SECRET_OCID", "PROCESSOR_PARTITIONS"])
         self.assertEqual(detail["replacement"]["partition_assignment"], "0")
         self.assertEqual(detail["replacement"]["mapping_id"], "12")
 

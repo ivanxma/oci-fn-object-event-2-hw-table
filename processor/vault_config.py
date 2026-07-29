@@ -1,4 +1,4 @@
-"""Load the consumer database bundle from OCI Vault without logging it."""
+"""Load the processor database bundle from OCI Vault without logging it."""
 from __future__ import annotations
 import base64
 import json
@@ -31,19 +31,6 @@ def parse_secret_content(encoded: str) -> dict[str, Any]:
     return value
 
 
-def database_config_from_secret(secret_value: str) -> dict[str, Any]:
-    """Combine a Vault secret with non-secret runtime connection values."""
-    values = {
-        "host": os.environ.get("DB_HOST", "").strip(),
-        "port": os.environ.get("DB_PORT", "3306").strip(),
-        "user": os.environ.get("DB_USER", "").strip(),
-        "database": os.environ.get("DB_NAME", "").strip(),
-        "credential": secret_value,
-    }
-    if not all(values[key] for key in REQUIRED):
-        raise ValueError("The Vault secret requires DB_HOST, DB_PORT, DB_USER, and DB_NAME.")
-    return values
-
 def load_database_config() -> dict[str, Any]:
     secret_id = os.environ.get("DB_SECRET_OCID", "")
     if not secret_id.startswith("ocid1.vaultsecret."):
@@ -53,14 +40,7 @@ def load_database_config() -> dict[str, Any]:
         signer = oci_signer()
         client = oci.secrets.SecretsClient({}, signer=signer)
         content = client.get_secret_bundle(secret_id).data.secret_bundle_content.content
-        try:
-            return parse_secret_content(content)
-        except ValueError:
-            try:
-                secret_value = base64.b64decode(content).decode("utf-8")
-            except Exception as error:
-                raise ValueError("Vault database secret cannot be decoded.") from error
-            return database_config_from_secret(secret_value)
+        return parse_secret_content(content)
     except ValueError:
         raise
     except Exception as error:
@@ -70,11 +50,10 @@ def load_database_config() -> dict[str, Any]:
 def stream_data_database_config(config: dict[str, Any]) -> dict[str, Any]:
     """Return the dedicated durable-stream database configuration.
 
-    ``DB_NAME`` remains the loader/control database for compatibility with the
-    existing Object Storage processing logic.  Operators can isolate retained
-    stream payloads, checkpoints, and retry state with ``STREAM_DATA_DB_NAME``.
+    The complete database configuration is mastered by the selected JSON Vault
+    secret. Durable data uses ``stream_data_database`` when supplied.
     """
-    database = str(config.get("stream_data_database") or os.environ.get("STREAM_DATA_DB_NAME", "").strip() or config["database"])
+    database = str(config.get("stream_data_database") or config["database"])
     return {**config, "database": database}
 
 

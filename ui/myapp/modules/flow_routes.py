@@ -46,7 +46,7 @@ def index():
         rules = EventRuleService(
             compartment_id=config["OCI_COMPARTMENT_ID"], region=config["OCI_REGION"],
             enabled=bool(config["OCI_EVENT_RULE_MANAGEMENT_ENABLED"]), rule_prefix=config["OCI_EVENT_RULE_PREFIX"],
-        ).list_function_rules()
+        ).list_stream_rules()
     except Exception as error:
         flash(f"Could not load Flow rules: {type(error).__name__}: {error}", "warning")
     try:

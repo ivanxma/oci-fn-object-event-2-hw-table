@@ -53,13 +53,11 @@ class EventRuleService:
     def __init__(
         self,
         *,
-        function_id: str = "",
         compartment_id: str,
         region: str,
         enabled: bool,
         rule_prefix: str = "object-storage-heatwave",
     ) -> None:
-        self.function_id = function_id.strip()  # legacy compatibility only
         self.compartment_id = compartment_id.strip()
         self.region = region.strip()
         self.enabled = enabled
@@ -98,14 +96,6 @@ class EventRuleService:
         except (TypeError, ValueError):
             return None
 
-    def _targets_function(self, rule: Any) -> bool:
-        actions = getattr(getattr(rule, "actions", None), "actions", None) or []
-        return any(
-            str(getattr(action, "action_type", "")).upper() == "FAAS"
-            and getattr(action, "function_id", None) == self.function_id
-            for action in actions
-        )
-
     @staticmethod
     def _is_stream_rule(rule: Any) -> bool:
         actions = getattr(getattr(rule, "actions", None), "actions", None) or []
@@ -129,8 +119,8 @@ class EventRuleService:
             managed=tags.get("managed-by") == MANAGED_BY,
         )
 
-    def list_function_rules(self) -> list[EventRuleRecord]:
-        """Compatibility name: return live OCI Streaming rules."""
+    def list_stream_rules(self) -> list[EventRuleRecord]:
+        """Return live OCI Events rules that target OCI Streaming."""
         try:
             oci, client = self._client()
             summaries = oci.pagination.list_call_get_all_results(
@@ -260,7 +250,7 @@ class EventRuleService:
                 f"Could not {action} the OCI Events rule: {type(error).__name__}: {error}"
             ) from error
 
-    def delete_function_rule(self, rule_id: str) -> None:
+    def delete_stream_rule(self, rule_id: str) -> None:
         """Delete a rule only after verifying that it targets an OCI Stream."""
         try:
             oci, client = self._client()

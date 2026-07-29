@@ -2,12 +2,12 @@ import unittest
 import base64
 import json
 
-from stream_consumer import assigned_partitions, capture_batch, decode_stream_message, is_expired_cursor_error, process_one, validate_mode
-from vault_config import database_config_from_secret, oci_signer, parse_secret_content, stream_data_database_config
+from stream_processor import assigned_partitions, capture_batch, decode_stream_message, is_expired_cursor_error, process_one, validate_mode
+from vault_config import oci_signer, parse_secret_content, stream_data_database_config
 from message_store import decoded_payload, ensure_schema, migration_statements, processing_lease_seconds, retry_delay_seconds, schema_statements
 
 
-class ConsumerModeTest(unittest.TestCase):
+class ProcessorModeTest(unittest.TestCase):
     def test_valid_modes(self):
         validate_mode("FIFO", 1, 1)
         validate_mode("PARALLEL", 4, 2)
@@ -48,32 +48,16 @@ class ConsumerModeTest(unittest.TestCase):
             else:
                 os.environ["OCI_AUTH_MODE"] = previous
 
-    def test_vault_secret_uses_non_secret_runtime_values(self):
-        import os
-        prior = {key: os.environ.get(key) for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME")}
-        os.environ.update({"DB_HOST": "db", "DB_PORT": "3306", "DB_USER": "streamuser", "DB_NAME": "stream_db"})
-        try:
-            values = database_config_from_secret("not-rendered")
-            self.assertEqual(values["host"], "db")
-            self.assertEqual(values["credential"], "not-rendered")
-        finally:
-            for key, value in prior.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+    def test_rejects_legacy_plain_text_vault_secret(self):
+        encoded = base64.b64encode(b"not-json").decode()
+        with self.assertRaisesRegex(ValueError, "base64 JSON"):
+            parse_secret_content(encoded)
 
     def test_stream_data_database_can_be_separated_from_loader_database(self):
-        import os
-        previous = os.environ.get("STREAM_DATA_DB_NAME")
-        os.environ["STREAM_DATA_DB_NAME"] = "stream_data"
-        try:
-            self.assertEqual(stream_data_database_config({"database": "stream_db"})["database"], "stream_data")
-        finally:
-            if previous is None:
-                os.environ.pop("STREAM_DATA_DB_NAME", None)
-            else:
-                os.environ["STREAM_DATA_DB_NAME"] = previous
+        self.assertEqual(
+            stream_data_database_config({"database": "stream_db", "stream_data_database": "stream_data"})["database"],
+            "stream_data",
+        )
 
     def test_capture_batch_requires_valid_payload(self):
         class Message: partition = "0"; offset = 1; key = ""; value = "not-base64"
@@ -175,6 +159,6 @@ class ConsumerModeTest(unittest.TestCase):
         from unittest.mock import patch
         from loader import process_event
         received = []
-        with patch.dict(sys.modules, {"func": SimpleNamespace(process_cloud_event=lambda event: received.append(event))}):
+        with patch.dict(sys.modules, {"event_processor": SimpleNamespace(process_cloud_event=lambda event: received.append(event))}):
             process_event({"eventType": "test"})
         self.assertEqual(received, [{"eventType": "test"}])

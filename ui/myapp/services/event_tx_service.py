@@ -1,8 +1,4 @@
-"""Streaming processor transaction reporting.
-
-The OCI Function audit tables were intentionally retired.  Durable stream
-captures are the only event source for this UI.
-"""
+"""Streaming processor transaction reporting from durable stream captures."""
 
 from __future__ import annotations
 
@@ -22,7 +18,7 @@ class EventTransactionService:
     def __init__(self, mysql, stream_data_database: str | None = None) -> None:
         self.mysql = mysql
         self.stream_data_database = validate_identifier(
-            stream_data_database or os.environ.get("STREAM_DATA_DB_NAME", "stream_data"),
+            stream_data_database or os.environ.get("STREAM_DATA_DB_NAME", ""),
             "stream data database",
         )
 
@@ -114,7 +110,7 @@ class EventTransactionService:
         return [], False
 
     def cleanup_stage_table(self, _database: str, _table: str, _stage_table: str) -> None:
-        raise ValueError("Function staging tables are retired; no cleanup is required.")
+        raise ValueError("No residual staging-table cleanup is required.")
 
     def cleanup_stage_tables(self, _database: str, _table: str) -> list[str]:
         return []
@@ -171,7 +167,7 @@ class EventTransactionService:
             total = int(cursor.fetchone()["total"])
             rows = self._capture_rows(cursor, limit=max(page_size, 1), offset=(max(page, 1)-1)*max(page_size, 1))
         for row in rows:
-            row.update({"event_time": row["event_received_at"], "event_type": row["event_action"], "stream_partition": row["partition_id"], "stream_offset": row["stream_offset"], "target": f"{row.get('target_database') or '—'}.{row.get('target_table') or '—'}", "received_at": row["event_received_at"], "completed_at": row["event_completed_at"], "duration_ms": row["event_duration_ms"], "_lifecycle_status": row["event_status"], "_invocation_mode": row["processing_mode"], "_error_id": None})
+            row.update({"event_time": row["event_received_at"], "event_type": row["event_action"], "stream_partition": row["partition_id"], "stream_offset": row["stream_offset"], "target": f"{row.get('target_database') or '—'}.{row.get('target_table') or '—'}", "received_at": row["event_received_at"], "completed_at": row["event_completed_at"], "duration_ms": row["event_duration_ms"]})
         return columns, rows, total, "received_at", "desc"
 
     def object_event_export(self, database: str, **_kwargs) -> tuple[list[str], list[dict[str, Any]]]:

@@ -12,8 +12,8 @@
     </ul>
   </aside>
   <form method="post" class="form-grid mapping-form">
-    <label>Compartment name <span>*</span><input name="compartment_name" maxlength="255" required value="{{ mapping.compartment_name or '' }}" placeholder="HWDemo"><small>OCI compartment display name.</small></label>
-    <label>Bucket name <span>*</span><input name="bucket_name" maxlength="255" required value="{{ mapping.bucket_name or '' }}" placeholder="ivanma-bucket"><small>Object Storage bucket name.</small></label>
+    <label>Compartment name <span>*</span><input name="compartment_name" maxlength="255" required value="{{ mapping.compartment_name or '' }}" placeholder="Operations"><small>OCI compartment display name.</small></label>
+    <label>Bucket name <span>*</span><input name="bucket_name" maxlength="255" required value="{{ mapping.bucket_name or '' }}" placeholder="incoming-data"><small>Object Storage bucket name.</small></label>
     <label class="wide">Resource name pattern <span>*</span><input name="resource_name_pattern" maxlength="1024" required value="{{ mapping.resource_name_pattern or '' }}" placeholder="myfolder/emp*.csv"><small>Shell-style mapping pattern. Managed OCI rules accept literal characters and <code>*</code>.</small></label>
     <label>Target database <span>*</span><select id="target-database" name="target_database" required><option value="">Select database</option>{% for database in target_databases %}<option value="{{ database }}" {{ 'selected' if database == mapping.target_database else '' }}>{{ database }}</option>{% endfor %}</select><small>Only databases available to this connection are listed.</small></label>
     <label>Target table <span>*</span><select id="target-table" name="target_table" required {% if not mapping.target_database %}disabled{% endif %}><option value="">Select table</option>{% for table in target_tables %}<option value="{{ table }}" {{ 'selected' if table == mapping.target_table else '' }}>{{ table }}</option>{% endfor %}</select><small>Tables are loaded from the selected database.</small></label>

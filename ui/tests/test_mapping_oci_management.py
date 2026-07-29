@@ -4,37 +4,20 @@ import json
 import unittest
 
 from myapp.services.event_rule_service import EVENT_TYPES, rule_condition
-from myapp.services.function_configuration_service import normalize_function_configuration
 from myapp.services.mapping_service import MappingService
 from myapp.services.object_storage_upload_service import default_folder, object_name_for_upload, static_prefix
 
 
 def mapping_form(**overrides: str) -> dict[str, str]:
     values = {
-        "compartment_name": "HWDemo",
+        "compartment_name": "Operations",
         "bucket_name": "test-bucket",
         "resource_name_pattern": "performance/*.csv",
         "target_database": "fntestdb",
         "target_table": "perf_t_001",
-        "invocation_mode": "SYNC",
         "worker_threads": "4",
         "stream_id": "ocid1.stream.oc1.uk-london-1.example",
         "processing_mode": "FIFO",
-    }
-    values.update(overrides)
-    return values
-
-
-def function_form(**overrides: str) -> dict[str, str]:
-    values = {
-        "memory_in_mbs": "1024",
-        "sync_timeout_seconds": "300",
-        "detached_timeout_seconds": "3600",
-        "provisioned_concurrency": "0",
-        "writer_workers": "4",
-        "batch_rows": "10000",
-        "object_storage_range_bytes": "33554432",
-        "object_storage_read_timeout_seconds": "300",
     }
     values.update(overrides)
     return values
@@ -57,39 +40,20 @@ class MappingOciManagementTest(unittest.TestCase):
             MappingService.normalize(mapping_form(stream_id=""))
         with self.assertRaisesRegex(ValueError, "Processing mode"):
             MappingService.normalize(mapping_form(processing_mode="UNORDERED"))
-        self.assertEqual(MappingService.normalize(mapping_form(invocation_mode="DETACHED"))["processing_mode"], "FIFO")
+        self.assertEqual(MappingService.normalize(mapping_form(processing_mode="FIFO"))["processing_mode"], "FIFO")
 
     def test_rule_condition_has_bucket_pattern_compartment_and_lifecycle_events(self) -> None:
         condition = json.loads(
             rule_condition(
                 compartment_id="ocid1.compartment.test",
                 bucket_name="test-bucket",
-                resource_pattern="detached-folder/emp*.csv",
+                resource_pattern="stream-folder/emp*.csv",
             )
         )
         self.assertEqual(condition["eventType"], EVENT_TYPES)
         self.assertEqual(condition["data"]["compartmentId"], "ocid1.compartment.test")
-        self.assertEqual(condition["data"]["resourceName"], "detached-folder/emp*.csv")
+        self.assertEqual(condition["data"]["resourceName"], "stream-folder/emp*.csv")
         self.assertEqual(condition["data"]["additionalDetails"]["bucketName"], "test-bucket")
-
-    def test_function_configuration_validation(self) -> None:
-        values = normalize_function_configuration(function_form())
-        self.assertEqual(values["memory_in_mbs"], 1024)
-        self.assertEqual(values["sync_timeout_seconds"], 300)
-        self.assertEqual(values["detached_timeout_seconds"], 3600)
-
-    def test_function_memory_requires_64_mb_increment(self) -> None:
-        with self.assertRaisesRegex(ValueError, "multiple of 64 MB"):
-            normalize_function_configuration(function_form(memory_in_mbs="1000"))
-
-    def test_function_timeout_bounds_are_global(self) -> None:
-        for field, value, message in (
-            ("sync_timeout_seconds", "301", "Sync timeout"),
-            ("detached_timeout_seconds", "3601", "Detached timeout"),
-        ):
-            with self.subTest(field=field):
-                with self.assertRaisesRegex(ValueError, message):
-                    normalize_function_configuration(function_form(**{field: value}))
 
     def test_upload_creates_virtual_folder_and_must_match_mapping(self) -> None:
         self.assertEqual(default_folder("testing/new-folder/*.csv"), "testing/new-folder")

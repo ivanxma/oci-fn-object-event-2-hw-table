@@ -38,8 +38,9 @@ flowchart LR
   table.
 - Handles create/update by streaming bounded Object Storage ranges into
   parallel database writers without creating a full temporary CSV file.
-- Publishes one file atomically with MySQL partition exchange; delete events
-  retire the corresponding partition.
+- Publishes one file atomically with MySQL partition exchange. A matching
+  delete event drops that file's owned target-table partition; it does not
+  truncate and retain an empty partition.
 - Chooses FIFO (one Stream partition/one processor) or parallel partition
   assignments from each mapping.
 - Captures raw Stream events before processing, so failed records can be
@@ -61,22 +62,29 @@ cd deploy
 cp env.sh.example env.sh
 chmod 600 env.sh
 # Set OCI, database, Vault, Stream, image, rule, HTTPS, and UI values in env.sh.
-./build_consumer_image.sh
+./build_processor_image.sh
 ./verify_streaming_deployment.sh
 # Optional bounded integration check against the configured durable database.
 # On OL9 it uses the project-local Python 3.12 verifier environment.
 ./verify_durable_capture.sh
+# Disposable two-partition create/delete verification. It creates uniquely
+# named OCI/DB resources and removes only those exact resources afterward.
+./verify_parallel_flow.sh
 ./deploy_ui.sh
 # Only after the documented full verification gate:
-./deploy_consumer.sh
+./deploy_processor.sh
 ```
 
-`build_consumer_image.sh` builds and pushes the non-root processor image using
+`build_processor_image.sh` builds and pushes the non-root processor image using
 the deployment host's instance-principal OCIR credential helper; it never uses
-a static registry credential. `deploy_consumer.sh` creates
+a static registry credential. `deploy_processor.sh` creates
 one Container Instance for one explicit partition assignment. `deploy_ui.sh`
 deploys the Flask container behind nginx HTTPS. Keep `deploy/env.sh`, database
-database credentials, Vault values, TLS private keys, and Flask secrets out of Git.
+credentials, Vault values, TLS private keys, and Flask secrets out of Git.
+The selected Vault secret must be a JSON object containing `host`, `port`,
+`user`, `credential`, and `database`; optional `control_database` and
+`stream_data_database` fields keep control and growing durable data separate.
+Plain-text password-only Vault secrets are not accepted.
 
 Before use, confirm:
 
@@ -163,8 +171,12 @@ troubleshooting, and validation commands.
   workflow.
 - Target tables must already satisfy the loader contract: compatible columns,
   LIST partitioning by `batch_num`, and `batch_num` in every unique key.
+- The seed partition remains by design. A header-only active CSV may also own
+  an empty partition; empty partitions for deleted source objects indicate
+  legacy or interrupted processing and can be reconciled against
+  `source_object_batches`.
 - The processor is long-running; each Stream message is captured before loading
-  so a failed loader invocation remains retryable after a consumer restart.
+  so a failed loader invocation remains retryable after a processor restart.
 - OCI Events is at-least-once and may retry or deliver conflicting operations
   out of order. Publishers must avoid simultaneous updates to the same logical
   data set.
@@ -177,10 +189,6 @@ troubleshooting, and validation commands.
 
 - [Technical deployment and operations guide](docs/technical-details.md)
 - [Repeatable performance-test setup and runner](performance_test/README.md)
-- [Parallel CSV streaming implementation](docs/csv-stream-parallelization-implementation.md)
-- [Diskless parallel CSV streaming implementation](docs/diskless-parallel-csv-streaming-implementation.md)
-- [CSV-to-HeatWave ingestion design](blog/csv-ingestion-to-heatwave.md)
-- [Large-file technical architecture](blog/technical-architecture-large-csv-heatwave.md)
 - [Current VM 6 performance report — MySQL.8 with 1.3 TB storage](external-reports/performance-test-report-vm6-20260719.md)
 - [Prior performance baseline — MySQL.8 with 50 GB storage](external-reports/performance-test-report-20260719-sync-detached.md)
 

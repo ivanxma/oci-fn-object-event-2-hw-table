@@ -18,5 +18,5 @@ set -a; . "$ENV_FILE"; set +a
   echo "FAIL: verification Python must provide mysql.connector and oci" >&2
   exit 1
 }
-cd "$ROOT_DIR/consumer"
+cd "$ROOT_DIR/processor"
 OCI_AUTH_MODE="${OCI_AUTH_MODE:-instance_principal}" exec "$PYTHON_BIN" verify_capture_store.py

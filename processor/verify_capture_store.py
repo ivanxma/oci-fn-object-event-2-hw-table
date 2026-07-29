@@ -1,4 +1,4 @@
-"""Bounded integration check for the consumer's durable MySQL capture queue.
+"""Bounded integration check for the processor's durable MySQL capture queue.
 
 It creates one unique verification stream record, proves deduplication and
 retry/completion, then removes only that record and its checkpoint.

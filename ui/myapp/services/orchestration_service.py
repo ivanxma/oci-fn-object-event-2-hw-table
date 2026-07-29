@@ -59,7 +59,7 @@ class DeploymentSettings:
 
 
 @dataclass(frozen=True)
-class ConsumerRuntime:
+class ProcessorRuntime:
     """Non-secret values passed to a single Container Instance deployment."""
     image_url: str
     db_secret_ocid: str
@@ -67,7 +67,7 @@ class ConsumerRuntime:
     writer_workers: int
 
     @classmethod
-    def from_form(cls, form: Any, defaults: DeploymentSettings) -> "ConsumerRuntime":
+    def from_form(cls, form: Any, defaults: DeploymentSettings) -> "ProcessorRuntime":
         def value(name: str, fallback: str) -> str:
             return str(form.get(name, fallback)).strip()
 
@@ -99,8 +99,8 @@ class ContainerOrchestrationService:
     def __init__(self, settings: DeploymentSettings) -> None:
         self.settings = settings
 
-    def deployment_spec(self, *, mapping: dict[str, Any], stream_partitions: int, partition_assignment: str, runtime: ConsumerRuntime | None = None) -> dict[str, Any]:
-        runtime = runtime or ConsumerRuntime(
+    def deployment_spec(self, *, mapping: dict[str, Any], stream_partitions: int, partition_assignment: str, runtime: ProcessorRuntime | None = None) -> dict[str, Any]:
+        runtime = runtime or ProcessorRuntime(
             self.settings.image_url, self.settings.db_secret_ocid, f"{self.settings.name_prefix}-{str(mapping.get('processing_mode') or 'fifo').lower()}-p{partition_assignment}", self.settings.writer_workers,
         )
         runtime.validate()
@@ -130,8 +130,8 @@ class ContainerOrchestrationService:
                 "is_resource_principal_disabled": False,
                 "environment_variables": {
                     "OCI_STREAM_ID": str(mapping["stream_id"]), "PROCESSING_MODE": mode,
-                    "EXPECTED_PARTITION_COUNT": str(stream_partitions), "CONSUMER_REPLICA_COUNT": "1",
-                    "CONSUMER_PARTITIONS": ",".join(assignments), "DB_SECRET_OCID": runtime.db_secret_ocid,
+                    "EXPECTED_PARTITION_COUNT": str(stream_partitions), "PROCESSOR_REPLICA_COUNT": "1",
+                    "PROCESSOR_PARTITIONS": ",".join(assignments), "DB_SECRET_OCID": runtime.db_secret_ocid,
                     "WRITER_WORKERS": str(runtime.writer_workers),
                 },
             },
@@ -164,7 +164,7 @@ class ContainerOrchestrationService:
         except Exception as error:
             raise OrchestrationError(f"Could not list Container Instances: {type(error).__name__}: {error}") from error
 
-    def create(self, *, mapping: dict[str, Any], stream_partitions: int, partition_assignment: str, runtime: ConsumerRuntime | None = None) -> dict[str, str]:
+    def create(self, *, mapping: dict[str, Any], stream_partitions: int, partition_assignment: str, runtime: ProcessorRuntime | None = None) -> dict[str, str]:
         spec = self.deployment_spec(mapping=mapping, stream_partitions=stream_partitions, partition_assignment=partition_assignment, runtime=runtime)
         try:
             oci, client = self._client()
@@ -213,9 +213,8 @@ class ContainerOrchestrationService:
             shape_config = getattr(item, "shape_config", None)
             containers = []
             allowed_environment = {
-                "OCI_STREAM_ID", "PROCESSING_MODE", "EXPECTED_PARTITION_COUNT", "CONSUMER_REPLICA_COUNT",
-                "CONSUMER_PARTITIONS", "DB_SECRET_OCID", "DB_HOST", "DB_PORT", "DB_USER", "DB_NAME",
-                "STREAM_DATA_DB_NAME", "CONTROL_DATABASE", "WRITER_WORKERS",
+                "OCI_STREAM_ID", "PROCESSING_MODE", "EXPECTED_PARTITION_COUNT", "PROCESSOR_REPLICA_COUNT",
+                "PROCESSOR_PARTITIONS", "DB_SECRET_OCID", "WRITER_WORKERS",
             }
             for container in getattr(item, "containers", []) or []:
                 environment = getattr(container, "environment_variables", {}) or {}
@@ -234,7 +233,7 @@ class ContainerOrchestrationService:
                 "containers": containers,
                 "replacement": {
                     "mapping_id": str(tags.get("mapping-id", "")),
-                    "partition_assignment": str(primary_environment.get("CONSUMER_PARTITIONS", "")),
+                    "partition_assignment": str(primary_environment.get("PROCESSOR_PARTITIONS", "")),
                     "image_url": str(getattr((getattr(item, "containers", []) or [None])[0], "image_url", "")),
                     "writer_workers": str(primary_environment.get("WRITER_WORKERS", "")),
                 },

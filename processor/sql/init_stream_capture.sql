@@ -1,5 +1,5 @@
 -- Durable OCI Streaming capture and per-partition cursor checkpoint tables.
--- This script is idempotent and is run by consumer/message_store.py at startup.
+-- This script is idempotent and is run by processor/message_store.py at startup.
 
 CREATE TABLE IF NOT EXISTS stream_message_capture (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -28,8 +28,8 @@ CREATE TABLE IF NOT EXISTS stream_partition_checkpoint (
   PRIMARY KEY (stream_id, partition_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Processor-owned transaction lifecycle.  This replaces the retired Function
--- audit tables and is updated with every durable-capture state transition.
+-- Processor-owned transaction lifecycle updated with every durable-capture
+-- state transition.
 CREATE TABLE IF NOT EXISTS stream_event_tx_log (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   capture_id BIGINT UNSIGNED NOT NULL,

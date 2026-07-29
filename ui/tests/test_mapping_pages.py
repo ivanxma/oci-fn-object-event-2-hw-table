@@ -35,12 +35,11 @@ from myapp.services.streaming_service import StreamMessage, StreamRecord
 
 MAPPING = {
     "id": 7,
-    "compartment_name": "HWDemo",
+    "compartment_name": "Operations",
     "bucket_name": "test-bucket",
-    "resource_name_pattern": "sync-folder/emp*.csv",
+    "resource_name_pattern": "stream-folder/emp*.csv",
     "target_database": "fntestdb",
     "target_table": "employees",
-    "invocation_mode": "SYNC",
     "worker_threads": 4,
     "event_rule_id": "ocid1.eventrule.test",
 }
@@ -58,10 +57,8 @@ class MappingPageTest(unittest.TestCase):
                 "PROFILE_STORE": str(root / "profiles.json"),
                 "UPLOAD_FOLDER": str(root / "uploads"),
                 "SSH_KEY_FOLDER": str(root / "keys"),
-                "OCI_FUNCTION_ID": "ocid1.fnfunc.test",
                 "OCI_COMPARTMENT_ID": "ocid1.compartment.test",
                 "OCI_REGION": "uk-london-1",
-                "OCI_FUNCTION_CONFIGURATION_ENABLED": True,
                 "OCI_EVENT_RULE_MANAGEMENT_ENABLED": True,
             }
         )
@@ -101,14 +98,14 @@ class MappingPageTest(unittest.TestCase):
             display_name="mapping-7",
             is_enabled=True,
             lifecycle_state="ACTIVE",
-            condition='{"data":{"resourceName":"sync-folder/emp*.csv"}}',
+            condition='{"data":{"resourceName":"stream-folder/emp*.csv"}}',
             time_created=datetime.now(timezone.utc),
             mapping_id=7,
             managed=True,
         )
         health, mappings = self._base_patches()
         with health, mappings, patch(
-            "myapp.modules.mapping_routes.EventRuleService.list_function_rules", return_value=[rule]
+            "myapp.modules.mapping_routes.EventRuleService.list_stream_rules", return_value=[rule]
         ):
             response = self.client.get("/mappings/?tab=rules")
         self.assertEqual(response.status_code, 200)
@@ -121,12 +118,12 @@ class MappingPageTest(unittest.TestCase):
         self.assertIn(b"/mappings/rules/delete-selected", response.data)
         self.assertNotIn(b"Edit mapping/rule", response.data)
 
-    def test_consumer_deployment_tab_is_removed_from_resource_mappings(self) -> None:
+    def test_processor_deployment_tab_is_removed_from_resource_mappings(self) -> None:
         health, mappings = self._base_patches()
         with health, mappings:
             response = self.client.get("/mappings/?tab=deployment")
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn(b"Consumer Deployment", response.data)
+        self.assertNotIn(b"Processor Deployment", response.data)
         self.assertIn(b"Mappings stored", response.data)
 
     def test_selected_rule_edit_redirects_to_owning_mapping(self) -> None:
@@ -171,7 +168,7 @@ class MappingPageTest(unittest.TestCase):
         with patch("myapp.modules.common.MySQLService.health_check", return_value=None), patch(
             "myapp.modules.mapping_routes.MappingService.get_mapping", return_value=MAPPING
         ), patch(
-            "myapp.modules.mapping_routes.EventRuleService.delete_function_rule"
+            "myapp.modules.mapping_routes.EventRuleService.delete_stream_rule"
         ) as delete_rule, patch(
             "myapp.modules.mapping_routes.MappingService.delete_mapping", return_value=True
         ) as delete_mapping:
@@ -192,7 +189,7 @@ class MappingPageTest(unittest.TestCase):
 
     def test_selected_rules_can_be_deleted_and_mapping_reference_cleared(self) -> None:
         with patch("myapp.modules.common.MySQLService.health_check", return_value=None), patch(
-            "myapp.modules.mapping_routes.EventRuleService.delete_function_rule"
+            "myapp.modules.mapping_routes.EventRuleService.delete_stream_rule"
         ) as delete, patch(
             "myapp.modules.mapping_routes.MappingService.clear_event_rule_reference", return_value=1
         ) as clear:
@@ -205,7 +202,7 @@ class MappingPageTest(unittest.TestCase):
 
     def test_object_storage_upload_tab_lists_mapping_objects(self) -> None:
         object_record = ObjectRecord(
-            name="sync-folder/employees.csv",
+            name="stream-folder/employees.csv",
             size=1024,
             etag="etag-test",
             time_created=None,
@@ -221,7 +218,7 @@ class MappingPageTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Object Storage Upload", response.data)
         self.assertIn(b"created automatically", response.data)
-        self.assertIn(b"sync-folder/employees.csv", response.data)
+        self.assertIn(b"stream-folder/employees.csv", response.data)
         self.assertIn(b"Delete selected", response.data)
 
     def test_stream_server_tab_contains_only_server_list_and_creation(self) -> None:
@@ -253,20 +250,20 @@ class MappingPageTest(unittest.TestCase):
             "myapp.modules.mapping_routes.MappingService.get_mapping", return_value=MAPPING
         ), patch(
             "myapp.modules.mapping_routes.ObjectStorageUploadService.upload_csv",
-            return_value="sync-folder/employees.csv",
+            return_value="stream-folder/employees.csv",
         ) as upload:
             response = self.client.post(
                 "/mappings/upload",
                 data={
                     "mapping_id": "7",
-                    "folder": "sync-folder",
+                    "folder": "stream-folder",
                     "csv_file": (io.BytesIO(b"id,name\n1,Ada\n"), "employees.csv"),
                 },
                 content_type="multipart/form-data",
             )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(upload.call_args.kwargs["mapping"], MAPPING)
-        self.assertEqual(upload.call_args.kwargs["folder"], "sync-folder")
+        self.assertEqual(upload.call_args.kwargs["folder"], "stream-folder")
 
     def test_mapping_scoped_objects_can_be_deleted(self) -> None:
         with patch("myapp.modules.common.MySQLService.health_check", return_value=None), patch(
@@ -276,10 +273,10 @@ class MappingPageTest(unittest.TestCase):
         ) as delete:
             response = self.client.post(
                 "/mappings/upload/delete-selected",
-                data={"mapping_id": "7", "object_name": "sync-folder/employees.csv"},
+                data={"mapping_id": "7", "object_name": "stream-folder/employees.csv"},
             )
         self.assertEqual(response.status_code, 302)
-        delete.assert_called_once_with(mapping=MAPPING, object_names=["sync-folder/employees.csv"])
+        delete.assert_called_once_with(mapping=MAPPING, object_names=["stream-folder/employees.csv"])
 
 
 if __name__ == "__main__":

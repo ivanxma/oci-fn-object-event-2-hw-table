@@ -1,4 +1,4 @@
-"""Persistence for Object Storage resource-to-table mappings in ``fndb``."""
+"""Persistence for Object Storage resource-to-table mappings."""
 
 from __future__ import annotations
 
@@ -14,11 +14,12 @@ MAPPING_TABLE = "object_storage_mappings"
 SQL_DIRECTORY = Path(__file__).resolve().parent.parent / "sql"
 MAPPING_SCHEMA_SQL = SQL_DIRECTORY / "init_mapping_control.sql"
 MAPPING_MIGRATIONS_DIRECTORY = SQL_DIRECTORY / "mapping_migrations"
+RETIRED_OBJECT_CLEANUP_SQL = SQL_DIRECTORY / "cleanup_retired_objects.sql"
 _MIGRATION_COLUMN = re.compile(r"^\s*--\s*migration-column:\s*([A-Za-z_][A-Za-z0-9_]*)\s*$", re.MULTILINE)
 
 
 def control_database() -> str:
-    return validate_identifier(os.environ.get("CONTROL_DATABASE", "fndb"), "control database")
+    return validate_identifier(os.environ.get("CONTROL_DATABASE", ""), "control database")
 
 
 def _sql_statements(path: Path, database: str) -> tuple[str, ...]:
@@ -97,6 +98,17 @@ class MappingService:
                 if len(statements) != 1:
                     raise ValueError(f"Migration script {migration.name} must contain exactly one SQL statement.")
                 cursor.execute(statements[0])
+        cleanup = _sql_statements(RETIRED_OBJECT_CLEANUP_SQL, database)
+        cursor.execute(
+            "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=%s AND table_name=%s AND column_name=%s",
+            (database, MAPPING_TABLE, "invocation_mode"),
+        )
+        row = cursor.fetchone()
+        count = row[0] if isinstance(row, tuple) else (next(iter(row.values())) if row else 0)
+        if row and count:
+            cursor.execute(cleanup[0])
+        for statement in cleanup[1:]:
+            cursor.execute(statement)
 
     def list_mappings(self) -> list[dict[str, Any]]:
         with self.mysql.connection() as conn:

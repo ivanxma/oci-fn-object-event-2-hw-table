@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Deploy the processor for one mapping. Mapping-specific values are explicit.
+set -euo pipefail
+umask 077
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
+[[ -r "$ENV_FILE" ]] || { echo "Missing $ENV_FILE" >&2; exit 1; }
+set -a; . "$ENV_FILE"; set +a
+for value in OCI_STREAM_ID PROCESSING_MODE EXPECTED_PARTITION_COUNT PROCESSOR_REPLICA_COUNT PROCESSOR_PARTITIONS PROCESSOR_MAPPING_ID COMPARTMENT_ID REGION REGION_KEY SUBNET_ID CONTAINER_AVAILABILITY_DOMAIN PROCESSOR_SHAPE PROCESSOR_OCPUS PROCESSOR_MEMORY_GBS DB_SECRET_OCID WRITER_WORKERS PROCESSOR_IMAGE_TAG REPOSITORY_PREFIX PROCESSOR_IMAGE_NAME; do
+  [[ -n "${!value:-}" ]] || { echo "$value is required" >&2; exit 1; }
+done
+case "$PROCESSING_MODE" in
+  FIFO) [[ "$EXPECTED_PARTITION_COUNT" == 1 && "$PROCESSOR_REPLICA_COUNT" == 1 ]] || { echo 'FIFO requires 1 partition and 1 replica.' >&2; exit 1; } ;;
+  PARALLEL) (( EXPECTED_PARTITION_COUNT >= 2 && PROCESSOR_REPLICA_COUNT >= 1 && PROCESSOR_REPLICA_COUNT <= EXPECTED_PARTITION_COUNT )) || { echo 'Invalid parallel replica count.' >&2; exit 1; } ;;
+  *) echo 'PROCESSING_MODE must be FIFO or PARALLEL.' >&2; exit 1 ;;
+esac
+IFS=',' read -r -a PARTITION_LIST <<< "$PROCESSOR_PARTITIONS"
+[[ ${#PARTITION_LIST[@]} -ge 1 ]] || { echo 'PROCESSOR_PARTITIONS is required.' >&2; exit 1; }
+declare -A SEEN_PARTITIONS=()
+for partition in "${PARTITION_LIST[@]}"; do
+  [[ "$partition" =~ ^[0-9]+$ ]] && (( partition < EXPECTED_PARTITION_COUNT )) || { echo 'PROCESSOR_PARTITIONS contains an invalid partition.' >&2; exit 1; }
+  [[ -z "${SEEN_PARTITIONS[$partition]:-}" ]] || { echo 'PROCESSOR_PARTITIONS contains a duplicate partition.' >&2; exit 1; }
+  SEEN_PARTITIONS[$partition]=1
+done
+[[ "$PROCESSING_MODE" != FIFO || "$PROCESSOR_PARTITIONS" == 0 ]] || { echo 'FIFO processor must be assigned partition 0.' >&2; exit 1; }
+[[ "$WRITER_WORKERS" =~ ^[0-9]+$ ]] && (( WRITER_WORKERS >= 1 && WRITER_WORKERS <= 32 )) || { echo 'WRITER_WORKERS must be from 1 to 32.' >&2; exit 1; }
+command -v oci >/dev/null || { echo 'Missing OCI CLI.' >&2; exit 1; }
+NAMESPACE=$(oci --auth instance_principal --region "$REGION" os ns get --query data --raw-output)
+IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/${REPOSITORY_PREFIX,,}/$PROCESSOR_IMAGE_NAME:$PROCESSOR_IMAGE_TAG"
+PARTITION_SUFFIX=${PROCESSOR_PARTITIONS//,/-}
+CONTAINER_NAME="${PROCESSOR_CONTAINER_NAME_PREFIX}-${PROCESSING_MODE,,}-p${PARTITION_SUFFIX}"
+CONFIG=$(mktemp); trap 'rm -f "$CONFIG"' EXIT
+jq -n --arg name "$CONTAINER_NAME" --arg image "$IMAGE" --arg stream "$OCI_STREAM_ID" --arg mode "$PROCESSING_MODE" --arg partitions "$EXPECTED_PARTITION_COUNT" --arg replicas "$PROCESSOR_REPLICA_COUNT" --arg assignment "$PROCESSOR_PARTITIONS" --arg secret "$DB_SECRET_OCID" --arg workers "$WRITER_WORKERS" \
+  '[{displayName:$name,imageUrl:$image,isResourcePrincipalDisabled:false,environmentVariables:{OCI_STREAM_ID:$stream,PROCESSING_MODE:$mode,EXPECTED_PARTITION_COUNT:$partitions,PROCESSOR_REPLICA_COUNT:$replicas,PROCESSOR_PARTITIONS:$assignment,DB_SECRET_OCID:$secret,WRITER_WORKERS:$workers}}]' > "$CONFIG"
+TAGS=$(jq -nc --arg mapping "$PROCESSOR_MAPPING_ID" '{"managed-by":"oci-object-event-2-table","mapping-id":$mapping}')
+oci --auth instance_principal --region "$REGION" container-instances container-instance create \
+  --compartment-id "$COMPARTMENT_ID" --availability-domain "$CONTAINER_AVAILABILITY_DOMAIN" \
+  --display-name "$CONTAINER_NAME" --shape "$PROCESSOR_SHAPE" \
+  --shape-config "{\"ocpus\":$PROCESSOR_OCPUS,\"memoryInGBs\":$PROCESSOR_MEMORY_GBS}" \
+  --containers "file://$CONFIG" --vnics "[{\"subnetId\":\"$SUBNET_ID\"}]" \
+  --freeform-tags "$TAGS" \
+  --wait-for-state SUCCEEDED --wait-for-state FAILED

@@ -1,7 +1,7 @@
 """Durable capture queue for OCI Streaming messages.
 
 The unique stream/partition/offset key makes repeated delivery safe.  A
-consumer captures the exact decoded payload before invoking the loader; retry
+processor captures the exact decoded payload before invoking the loader; retry
 workers process CAPTURED/FAILED rows from MySQL, independent of retention.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ PROCESSING_MIGRATION_SQL = Path(__file__).with_name("sql") / "migrate_stream_cap
 
 def schema_sql_path() -> Path:
     """Return the packaged SQL file or an explicit operator-supplied override."""
-    value = os.environ.get("CONSUMER_SCHEMA_SQL", "").strip()
+    value = os.environ.get("PROCESSOR_SCHEMA_SQL", "").strip()
     return Path(value) if value else DEFAULT_SCHEMA_SQL
 
 
@@ -26,12 +26,12 @@ def schema_statements(path: Path | None = None) -> list[str]:
     try:
         script = (path or schema_sql_path()).read_text(encoding="utf-8")
     except OSError as error:
-        raise RuntimeError("Could not read the consumer schema SQL file.") from error
+        raise RuntimeError("Could not read the processor schema SQL file.") from error
     executable_lines = [line for line in script.splitlines() if not line.lstrip().startswith("--")]
     statements = [statement.strip() for statement in "\n".join(executable_lines).split(";")]
     statements = [statement for statement in statements if statement]
     if len(statements) != 3:
-        raise RuntimeError("Consumer schema SQL must contain the three initialization statements.")
+        raise RuntimeError("Processor schema SQL must contain the three initialization statements.")
     return statements
 
 
@@ -40,7 +40,7 @@ def migration_statements(path: Path = RETRY_MIGRATION_SQL) -> list[str]:
     try:
         script = path.read_text(encoding="utf-8")
     except OSError as error:
-        raise RuntimeError("Could not read a consumer migration SQL file.") from error
+        raise RuntimeError("Could not read a processor migration SQL file.") from error
     statements = [statement.strip() for statement in "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("--")).split(";")]
     return [statement for statement in statements if statement]
 
@@ -63,13 +63,13 @@ def retry_delay_seconds(attempts: int) -> int:
 
 
 def processing_lease_seconds(value: str | None = None) -> int:
-    """Return the bounded lease used to recover after consumer interruption."""
+    """Return the bounded lease used to recover after processor interruption."""
     try:
-        seconds = int(value if value is not None else os.environ.get("CONSUMER_PROCESSING_LEASE_SECONDS", "300"))
+        seconds = int(value if value is not None else os.environ.get("PROCESSOR_PROCESSING_LEASE_SECONDS", "300"))
     except ValueError as error:
-        raise ValueError("CONSUMER_PROCESSING_LEASE_SECONDS must be a whole number.") from error
+        raise ValueError("PROCESSOR_PROCESSING_LEASE_SECONDS must be a whole number.") from error
     if not 30 <= seconds <= 3600:
-        raise ValueError("CONSUMER_PROCESSING_LEASE_SECONDS must be from 30 to 3600.")
+        raise ValueError("PROCESSOR_PROCESSING_LEASE_SECONDS must be from 30 to 3600.")
     return seconds
 
 def checkpoint(connection: Any, *, stream_id: str, partition: str) -> str | None:
@@ -111,14 +111,14 @@ def decoded_payload(value: Any) -> dict[str, Any]:
 
 
 def claim_next(connection: Any, *, stream_id: str, partitions: list[str]) -> dict[str, Any] | None:
-    """Atomically claim only a message owned by this stream consumer."""
+    """Atomically claim only a message owned by this stream processor."""
     if not partitions:
         raise ValueError("At least one assigned partition is required.")
     cursor = connection.cursor(dictionary=True)
     placeholders = ", ".join("%s" for _ in partitions)
     lease = processing_lease_seconds()
     cursor.execute(
-        f"UPDATE stream_message_capture SET status='FAILED', last_error=COALESCE(last_error, 'Recovered after consumer interruption.'), "
+        f"UPDATE stream_message_capture SET status='FAILED', last_error=COALESCE(last_error, 'Recovered after processor interruption.'), "
         "next_retry_at=UTC_TIMESTAMP(6), processing_started_at=NULL "
         f"WHERE stream_id=%s AND partition_id IN ({placeholders}) AND status='PROCESSING' "
         "AND processing_started_at < DATE_SUB(UTC_TIMESTAMP(6), INTERVAL %s SECOND)",

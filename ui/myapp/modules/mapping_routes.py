@@ -1,4 +1,4 @@
-"""Authenticated maintenance pages for mappings, OCI rules, and Function capacity."""
+"""Authenticated maintenance pages for mappings and OCI Streaming rules."""
 
 from __future__ import annotations
 
@@ -36,7 +36,6 @@ def _service() -> MappingService:
 
 def _rule_service() -> EventRuleService:
     return EventRuleService(
-        function_id=current_app.config["OCI_FUNCTION_ID"],
         compartment_id=current_app.config["OCI_COMPARTMENT_ID"],
         region=current_app.config["OCI_REGION"],
         enabled=bool(current_app.config["OCI_EVENT_RULE_MANAGEMENT_ENABLED"]),
@@ -136,7 +135,7 @@ def _reconcile_rule(
         service.set_event_rule(mapping_id, rule.id)
         flash(f"OCI Events rule {rule.display_name} is enabled for this mapping.", "success")
     elif existing_rule_id:
-        _rule_service().delete_function_rule(existing_rule_id)
+        _rule_service().delete_stream_rule(existing_rule_id)
         service.set_event_rule(mapping_id, None)
         flash("The managed OCI Events rule was deleted; the mapping remains available.", "success")
 
@@ -159,7 +158,7 @@ def list_mappings():
 
     if active_tab == "rules":
         try:
-            rules = _rule_service().list_function_rules()
+            rules = _rule_service().list_stream_rules()
         except EventRuleError as error:
             current_app.logger.exception("Could not read OCI Events rules")
             flash(str(error), "error")
@@ -310,7 +309,7 @@ def delete_mapping(mapping_id: str):
         else:
             rule_id = mapping.get("event_rule_id")
             if rule_id:
-                _rule_service().delete_function_rule(rule_id)
+                _rule_service().delete_stream_rule(rule_id)
             if service.delete_mapping(mapping_key):
                 flash("Mapping and its managed OCI Events rule were deleted.", "success")
     except (ValueError, MySQLError, EventRuleError) as error:
@@ -350,7 +349,7 @@ def delete_selected_mappings():
                     raise ValueError(f"Mapping {mapping_id} no longer exists.")
                 rule_id = mapping.get("event_rule_id")
                 if rule_id:
-                    _rule_service().delete_function_rule(rule_id)
+                    _rule_service().delete_stream_rule(rule_id)
                     deleted_rules += 1
                 if service.delete_mapping(mapping_id):
                     deleted += 1
@@ -369,7 +368,7 @@ def delete_selected_mappings():
 @login_required
 def delete_rule(rule_id: str):
     try:
-        _rule_service().delete_function_rule(rule_id)
+        _rule_service().delete_stream_rule(rule_id)
         cleared = _service().clear_event_rule_reference(rule_id)
         flash(
             f"OCI Events rule deleted. {cleared} mapping association(s) cleared; mappings were retained.",
@@ -438,7 +437,7 @@ def delete_selected_rules():
         cleared = 0
         for rule_id in rule_ids:
             try:
-                _rule_service().delete_function_rule(rule_id)
+                _rule_service().delete_stream_rule(rule_id)
                 cleared += service.clear_event_rule_reference(rule_id)
                 deleted += 1
             except (EventRuleError, MySQLError) as error:
@@ -471,7 +470,7 @@ def upload_mapping_csv():
             stream=csv_file.stream,
         )
         flash(
-            f"Uploaded {object_name} to bucket {mapping['bucket_name']}. A matching enabled OCI rule can now invoke the Function.",
+            f"Uploaded {object_name} to bucket {mapping['bucket_name']}. A matching enabled OCI rule can now publish the event to the selected Stream.",
             "success",
         )
     except (ValueError, MySQLError, ObjectStorageUploadError) as error:

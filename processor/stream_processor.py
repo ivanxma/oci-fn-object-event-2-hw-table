@@ -1,6 +1,6 @@
-"""OCI Streaming consumer startup contract for FIFO and parallel deployments.
+"""OCI Streaming processor startup contract for FIFO and parallel deployments.
 
-The consumer captures each decoded message in MySQL before processing. This
+The processor captures each decoded message in MySQL before processing. This
 makes retries/replays independent of Streaming retention and cursor lifetime.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Any
 def validate_mode(mode: str, partitions: int, replicas: int) -> None:
     mode = mode.upper()
     if mode == "FIFO" and (partitions != 1 or replicas != 1):
-        raise ValueError("FIFO requires exactly one stream partition and one consumer replica.")
+        raise ValueError("FIFO requires exactly one stream partition and one processor replica.")
     if mode == "PARALLEL" and (partitions < 2 or not 1 <= replicas <= partitions):
         raise ValueError("PARALLEL requires at least two partitions and replicas not exceeding partitions.")
     if mode not in {"FIFO", "PARALLEL"}:
@@ -45,15 +45,15 @@ def assigned_partitions(mode: str, partitions: int, assignment: str) -> list[str
     """Validate explicit Container Instance partition ownership.
 
     OCI Container Instances do not assign Streaming partitions automatically.
-    Each running consumer is therefore given a disjoint comma-separated list.
+    Each running processor is therefore given a disjoint comma-separated list.
     """
     selected = [item.strip() for item in assignment.split(",") if item.strip()]
     if not selected or len(set(selected)) != len(selected):
-        raise ValueError("CONSUMER_PARTITIONS must contain unique assigned partition numbers.")
+        raise ValueError("PROCESSOR_PARTITIONS must contain unique assigned partition numbers.")
     if any(not item.isdigit() or not 0 <= int(item) < partitions for item in selected):
-        raise ValueError("CONSUMER_PARTITIONS contains an out-of-range partition.")
+        raise ValueError("PROCESSOR_PARTITIONS contains an out-of-range partition.")
     if mode.upper() == "FIFO" and selected != ["0"]:
-        raise ValueError("FIFO consumer must be assigned only partition 0.")
+        raise ValueError("FIFO processor must be assigned only partition 0.")
     return selected
 
 def process_one(connection: Any, processor: Any, *, stream_id: str, partitions: list[str]) -> bool:
@@ -116,8 +116,8 @@ def main() -> None:
     stream_id = os.environ.get("OCI_STREAM_ID", "")
     if not stream_id.startswith("ocid1.stream."):
         raise ValueError("OCI_STREAM_ID is required.")
-    validate_mode(mode, int(os.environ.get("EXPECTED_PARTITION_COUNT", "0")), int(os.environ.get("CONSUMER_REPLICA_COUNT", "0")))
-    partitions = assigned_partitions(mode, int(os.environ["EXPECTED_PARTITION_COUNT"]), os.environ.get("CONSUMER_PARTITIONS", ""))
+    validate_mode(mode, int(os.environ.get("EXPECTED_PARTITION_COUNT", "0")), int(os.environ.get("PROCESSOR_REPLICA_COUNT", "0")))
+    partitions = assigned_partitions(mode, int(os.environ["EXPECTED_PARTITION_COUNT"]), os.environ.get("PROCESSOR_PARTITIONS", ""))
     loader_database_config = load_database_config()
     # The inherited loader reads DB_* process variables.  Keep it pointed at
     # its control database while the durable queue has its own connection.
@@ -127,13 +127,13 @@ def main() -> None:
         ensure_schema(connection)
         connection.commit()
         oci, client = client_for_stream(stream_id, os.environ.get("OCI_REGION", ""))
-        print(f"consumer-ready mode={mode} stream={stream_id} partitions={','.join(partitions)}", flush=True)
+        print(f"processor-ready mode={mode} stream={stream_id} partitions={','.join(partitions)}", flush=True)
         while True:
             read_count = 0
             for partition in partitions:
                 read_count += run_partition_once(connection, oci=oci, client=client, stream_id=stream_id, partition=partition, processor=process_event)
             if not read_count:
-                time.sleep(float(os.environ.get("CONSUMER_POLL_SECONDS", "1")))
+                time.sleep(float(os.environ.get("PROCESSOR_POLL_SECONDS", "1")))
     finally:
         connection.close()
 

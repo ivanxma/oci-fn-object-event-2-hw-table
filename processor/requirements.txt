@@ -1,3 +1,2 @@
 mysql-connector-python>=9.7,<10
 oci>=2.140,<3
-fdk>=0.1,<1

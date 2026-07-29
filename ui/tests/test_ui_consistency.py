@@ -11,7 +11,7 @@ class UIConsistencySourceTest(unittest.TestCase):
     def test_event_tx_is_streaming_only(self) -> None:
         source = (TEMPLATES / "event_transactions.html").read_text(encoding="utf-8")
         self.assertIn("Processor-owned durable stream captures", source)
-        self.assertIn("no Function execution mode exists", source)
+        self.assertIn("Processing mode is FIFO or Parallel", source)
         self.assertNotIn("event_tx_log", source)
         self.assertNotIn("object_event</code>", source)
 

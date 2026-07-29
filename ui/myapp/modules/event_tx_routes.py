@@ -98,7 +98,7 @@ def list_event_transactions():
         if not selected_object_database and object_event_tables:
             selected_object_database = object_event_tables[0]["database_name"]
         if selected_object_database and selected_object_database not in object_databases:
-            raise ValueError("Select an available object_event table.")
+            raise ValueError("Select the available durable stream capture source.")
         object_page = _page(request.args.get("object_page"))
         object_page_size = _limit(request.args.get("object_page_size"))
         if selected_object_database:
@@ -206,14 +206,14 @@ def download_object_events():
         database = validate_identifier(request.args.get("object_database", ""), "object event database")
         allowed_databases = {item["database_name"] for item in service.object_event_tables()}
         if database not in allowed_databases:
-            raise ValueError("Select an available object_event table.")
+            raise ValueError("Select the available durable stream capture source.")
         columns, rows = service.object_event_export(
             database,
             sort_column=request.args.get("object_sort"),
             sort_direction=request.args.get("object_direction", "desc"),
         )
     except (MySQLError, ValueError):
-        flash("Could not export object storage events. Confirm this MySQL user can read the object_event table.", "error")
+        flash("Could not export object storage events. Confirm this MySQL user can read the durable stream capture table.", "error")
         return render_dashboard("event_transactions.html", active_page="event_tx", registered_tables=[], event_log_exists=False,
                                 selected_database="", selected_table="", events=[], recent_events=[], audit_logs=[], error_logs=[], selected_error_id=None, selected_error=None, recent_limit=10,
                                 registered_total=0, registered_page=1, registered_page_size=10, registered_page_count=1,

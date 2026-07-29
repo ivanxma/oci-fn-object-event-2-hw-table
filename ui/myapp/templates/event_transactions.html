@@ -20,7 +20,7 @@
     <button class="tab {{ 'active' if active_tab == 'logs' else '' }}" role="tab" data-server-tab="logs">Log <span>{{ error_logs|length }}</span></button>
   </div>
   <div id="recent-panel" class="tab-panel" {% if active_tab != 'recent' %}hidden{% endif %}>
-    <div class="panel-heading"><div><h2>Recent TX</h2><p>Current processor captures. Processing mode is FIFO or Parallel; no Function execution mode exists.</p></div></div>
+    <div class="panel-heading"><div><h2>Recent TX</h2><p>Current processor captures. Processing mode is FIFO or Parallel.</p></div></div>
     <div class="table-wrap"><table class="event-tx-table"><thead><tr><th>Event type</th><th>Processing mode</th><th>Target</th><th>Status</th><th>Object source</th><th>Message</th><th>Captured</th></tr></thead><tbody>{{ capture_rows(recent_events) }}</tbody></table></div>
   </div>
   <div id="registered-panel" class="tab-panel" {% if active_tab != 'registered' %}hidden{% endif %}>

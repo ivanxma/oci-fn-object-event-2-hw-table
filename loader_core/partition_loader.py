@@ -23,7 +23,7 @@ LOAD_LEASE_SECONDS = int(os.environ.get("LOAD_LEASE_SECONDS", "120"))
 
 
 def control_database() -> str:
-    value = os.environ.get("CONTROL_DATABASE", "fndb")
+    value = os.environ.get("CONTROL_DATABASE", "")
     if not IDENTIFIER.fullmatch(value):
         raise ValueError("CONTROL_DATABASE must be a valid MySQL identifier.")
     return value
@@ -46,7 +46,7 @@ def quote_identifier(value: str, label: str) -> str:
 class Database:
     def __init__(self) -> None:
         self.args = {
-            "host": os.environ.get("DB_HOST", "127.0.0.1"),
+            "host": os.environ.get("DB_HOST", ""),
             "port": int(os.environ.get("DB_PORT", "3306")),
             "user": os.environ.get("DB_USER", ""),
             "credential": os.environ.get("DB_CREDENTIAL", ""),
@@ -54,8 +54,8 @@ class Database:
             "connection_timeout": 15,
             "autocommit": False,
         }
-        if not self.args["user"] or not self.args["credential"]:
-            raise ValueError("Set DB_USER and DB_CREDENTIAL in the runtime configuration.")
+        if not self.args["host"] or not self.args["user"] or not self.args["credential"]:
+            raise ValueError("DB_HOST, DB_USER, and DB_CREDENTIAL are required in process-local loader configuration.")
 
     @contextmanager
     def connection(self):
@@ -86,8 +86,6 @@ def event_source(event: dict[str, Any]) -> dict[str, Any]:
         "resource_name": resource,
         "object_version": str(details.get("versionId") or details.get("eTag") or event.get("eventID") or ""),
     }
-    if event.get("_object_event_id") is not None:
-        source["object_event_id"] = int(event["_object_event_id"])
     return source
 
 
@@ -113,11 +111,16 @@ def ensure_control_tables(db: Database) -> None:
     with db.connection() as connection:
         cursor = connection.cursor()
         cursor.execute(f"CREATE DATABASE IF NOT EXISTS {quote_identifier(control_database(), 'control database')} CHARACTER SET utf8mb4")
-        # Mapping metadata is owned by the UI, but the Function upgrades older
-        # control schemas so runtime resolution remains backward compatible.
+        # Mapping metadata is owned by the UI. The processor only ensures the
+        # current Stream mapping contract and its bounded batch-control tables.
         mapping_table = control_table('object_storage_mappings')
-        cursor.execute(f"CREATE TABLE IF NOT EXISTS {mapping_table} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, compartment_name VARCHAR(255) NOT NULL, bucket_name VARCHAR(255) NOT NULL, resource_name_pattern VARCHAR(1024) NOT NULL, target_database VARCHAR(64) NOT NULL, target_table VARCHAR(64) NOT NULL, invocation_mode ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC', worker_threads SMALLINT UNSIGNED NOT NULL DEFAULT 4, event_rule_id VARCHAR(255) NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
-        for column, definition in (("invocation_mode", "ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC'"), ("worker_threads", "SMALLINT UNSIGNED NOT NULL DEFAULT 4"), ("event_rule_id", "VARCHAR(255) NULL")):
+        cursor.execute(f"CREATE TABLE IF NOT EXISTS {mapping_table} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, compartment_name VARCHAR(255) NOT NULL, bucket_name VARCHAR(255) NOT NULL, resource_name_pattern VARCHAR(1024) NOT NULL, target_database VARCHAR(64) NOT NULL, target_table VARCHAR(64) NOT NULL, worker_threads SMALLINT UNSIGNED NOT NULL DEFAULT 4, event_rule_id VARCHAR(255) NULL, stream_id VARCHAR(255) NULL, processing_mode ENUM('FIFO','PARALLEL') NOT NULL DEFAULT 'FIFO', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        for column, definition in (
+            ("worker_threads", "SMALLINT UNSIGNED NOT NULL DEFAULT 4"),
+            ("event_rule_id", "VARCHAR(255) NULL"),
+            ("stream_id", "VARCHAR(255) NULL"),
+            ("processing_mode", "ENUM('FIFO','PARALLEL') NOT NULL DEFAULT 'FIFO'"),
+        ):
             cursor.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=%s AND table_name='object_storage_mappings' AND column_name=%s", (control_database(), column))
             if not cursor.fetchone()[0]:
                 cursor.execute(f"ALTER TABLE {mapping_table} ADD COLUMN {quote_identifier(column, 'mapping column')} {definition}")
@@ -145,67 +148,12 @@ def ensure_control_tables(db: Database) -> None:
                 UNIQUE KEY uq_source_object (mapping_id, source_key)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
         )
-        cursor.execute(
-            f"""CREATE TABLE IF NOT EXISTS {control_table('event_tx_log')} (
-                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                object_event_id BIGINT UNSIGNED NULL,
-                mapping_id BIGINT UNSIGNED NULL,
-                target_database VARCHAR(64) NULL,
-                target_table VARCHAR(64) NULL,
-                batch_num BIGINT UNSIGNED NULL,
-                event_action VARCHAR(20) NOT NULL,
-                event_status VARCHAR(20) NOT NULL,
-                bucket_name VARCHAR(255) NULL,
-                resource_name VARCHAR(1024) NULL,
-                object_version VARCHAR(255) NULL,
-                invocation_mode ENUM('SYNC','DETACHED') NULL,
-                message TEXT NULL,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                KEY ix_event_object_event (object_event_id),
-                KEY ix_event_target_time (target_database, target_table, created_at)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
-        )
-        cursor.execute(
-            """SELECT 1 FROM information_schema.columns
-                 WHERE table_schema = %s AND table_name = 'event_tx_log'
-                   AND column_name = 'object_event_id'""",
-            (control_database(),),
-        )
-        if cursor.fetchone() is None:
-            cursor.execute(f"ALTER TABLE {control_table('event_tx_log')} ADD COLUMN object_event_id BIGINT UNSIGNED NULL AFTER id")
-            cursor.execute(f"ALTER TABLE {control_table('event_tx_log')} ADD KEY ix_event_object_event (object_event_id)")
-        cursor.execute(
-            """SELECT 1 FROM information_schema.columns
-                 WHERE table_schema = %s AND table_name = 'event_tx_log'
-                   AND column_name = 'invocation_mode'""",
-            (control_database(),),
-        )
-        if cursor.fetchone() is None:
-            cursor.execute(
-                f"ALTER TABLE {control_table('event_tx_log')} ADD COLUMN invocation_mode ENUM('SYNC','DETACHED') NULL AFTER object_version"
-            )
-        cursor.execute(
-            f"""CREATE TABLE IF NOT EXISTS {control_table('event_errors')} (
-                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                event_log_id BIGINT UNSIGNED NULL,
-                mapping_id BIGINT UNSIGNED NULL,
-                target_database VARCHAR(64) NULL,
-                target_table VARCHAR(64) NULL,
-                event_action VARCHAR(20) NOT NULL,
-                error_code VARCHAR(64) NOT NULL,
-                error_message TEXT NOT NULL,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                KEY ix_error_target_time (target_database, target_table, created_at)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
-        )
-
-
 def resolve_mapping(db: Database, source: dict[str, str]) -> dict[str, Any]:
     with db.connection() as connection:
         cursor = connection.cursor(dictionary=True, buffered=True)
         cursor.execute(
             f"""SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table,
-                      COALESCE(invocation_mode, 'SYNC') AS invocation_mode,
+                      COALESCE(processing_mode, 'FIFO') AS processing_mode,
                       COALESCE(worker_threads, 4) AS worker_threads
                FROM {control_table('object_storage_mappings')}
                WHERE compartment_name = %s AND bucket_name = %s""",
@@ -466,40 +414,6 @@ def validate_and_exchange(db: Database, mapping: dict[str, Any], stage: str, bat
         cursor.execute(f"ALTER TABLE {target} EXCHANGE PARTITION {quote_identifier(partition_name(batch_num), 'partition name')} WITH TABLE {stage_quoted} WITHOUT VALIDATION")
 
 
-def log_event(db: Database, source: dict[str, Any], action: str, status: str, mapping: dict[str, Any] | None = None, batch_num: int | None = None, message: str | None = None) -> int:
-    with db.connection() as connection:
-        cursor = connection.cursor()
-        cursor.execute(
-            f"""INSERT INTO {control_table('event_tx_log')}
-               (object_event_id, mapping_id, target_database, target_table, batch_num, event_action, event_status, bucket_name, resource_name, object_version, invocation_mode, message)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (source.get("object_event_id"), mapping.get("id") if mapping else None, mapping.get("target_database") if mapping else None, mapping.get("target_table") if mapping else None, batch_num, action, status, source["bucket_name"], source["resource_name"], source["object_version"], source.get("invocation_mode") or (mapping.get("invocation_mode") if mapping else None), message),
-        )
-        if source.get("object_event_id"):
-            cursor.execute(
-                f"""UPDATE {control_table('object_event')}
-                    SET completed_at = UTC_TIMESTAMP(6),
-                        duration_ms = TIMESTAMPDIFF(MICROSECOND, received_at, UTC_TIMESTAMP(6)) / 1000
-                  WHERE id = %s""",
-                (source["object_event_id"],),
-            )
-        return cursor.lastrowid
-
-
-def log_error(db: Database, source: dict[str, Any], action: str, error: Exception, mapping: dict[str, Any] | None = None, batch_num: int | None = None) -> None:
-    try:
-        event_log_id = log_event(db, source, action, "ERROR", mapping, batch_num, str(error))
-        with db.connection() as connection:
-            connection.cursor().execute(
-                f"""INSERT INTO {control_table('event_errors')}
-                   (event_log_id, mapping_id, target_database, target_table, event_action, error_code, error_message)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                (event_log_id, mapping.get("id") if mapping else None, mapping.get("target_database") if mapping else None, mapping.get("target_table") if mapping else None, action, "TARGET_TABLE_NOT_FOUND" if isinstance(error, TargetTableError) else type(error).__name__.upper()[:64], str(error)),
-            )
-    except Exception:
-        pass
-
-
 def mark_active(db: Database, record_id: int) -> None:
     with db.connection() as connection:
         connection.cursor().execute(f"UPDATE {control_table('source_object_batches')} SET lifecycle_state = 'ACTIVE' WHERE id = %s", (record_id,))
@@ -526,14 +440,12 @@ def run_load(event_path: Path, csv_path: Path, *, create: bool, batch_rows: int,
         columns = target_definition(db, mapping)
         record = allocate_or_get_batch(db, mapping, source, create=create)
         if record.get("already_active"):
-            log_event(db, source, action, "SUCCESS", mapping, record["batch_num"], "Duplicate create event ignored; matching object version already has an active batch.")
-            return {"action": action.lower(), "batch_num": record["batch_num"], "rows": 0, "target": f"{mapping['target_database']}.{mapping['target_table']}", "idempotent": True, "invocation_mode": mapping.get("invocation_mode", "SYNC"), "worker_threads": mapping.get("worker_threads", 4)}
+            return {"action": action.lower(), "batch_num": record["batch_num"], "rows": 0, "target": f"{mapping['target_database']}.{mapping['target_table']}", "idempotent": True, "processing_mode": mapping.get("processing_mode", "FIFO"), "worker_threads": mapping.get("worker_threads", 4)}
         ensure_partition(db, mapping, record["batch_num"])
         stage = create_stage_table(db, mapping, record["batch_num"])
         rows = load_csv_parallel(db, mapping, stage, record["batch_num"], columns, csv_path, batch_rows, workers)
         validate_and_exchange(db, mapping, stage, record["batch_num"])
         mark_active(db, record["id"])
-        log_event(db, source, action, "SUCCESS", mapping, record["batch_num"], f"Loaded {rows} row(s).")
         return {"event": action.lower(), "batch_num": record["batch_num"], "target": f"{mapping['target_database']}.{mapping['target_table']}", "rows": rows}
     except Exception as error:
         if record is not None:
@@ -541,7 +453,6 @@ def run_load(event_path: Path, csv_path: Path, *, create: bool, batch_rows: int,
                 mark_error(db, record["id"])
             except Exception:
                 pass
-        log_error(db, source, action, error, mapping, record.get("batch_num") if record else None)
         raise
     finally:
         if mapping is not None and stage is not None:
@@ -568,16 +479,17 @@ def run_delete(event_path: Path) -> dict[str, Any]:
             cursor.execute(f"SELECT * FROM {control_table('source_object_batches')} WHERE mapping_id = %s AND source_key = %s FOR UPDATE", (mapping["id"], source_key(mapping["id"], source)))
             record = cursor.fetchone()
             if not record or record["lifecycle_state"] == "DELETED":
-                log_event(db, source, action, "SUCCESS", mapping, None, "Object batch already absent.")
                 return {"event": "delete", "result": "already absent"}
             if record["lifecycle_state"] == "LOADING":
                 raise ValueError("This source object has a load in progress; retry the delete after it completes or is recovered.")
-            cursor.execute(f"ALTER TABLE {table_name(record['target_database'], record['target_table'])} TRUNCATE PARTITION {quote_identifier(partition_name(record['batch_num']), 'partition name')}")
+            # One active Object Storage object owns one LIST partition. Remove
+            # the partition itself so deleted objects do not leave an
+            # ever-growing set of empty partitions. A later create re-adds it
+            # through ensure_partition before loading the replacement data.
+            cursor.execute(f"ALTER TABLE {table_name(record['target_database'], record['target_table'])} DROP PARTITION {quote_identifier(partition_name(record['batch_num']), 'partition name')}")
             cursor.execute(f"UPDATE {control_table('source_object_batches')} SET lifecycle_state = 'DELETED' WHERE id = %s", (record["id"],))
-        log_event(db, source, action, "SUCCESS", mapping, record["batch_num"], "Truncated mapped batch partition.")
         return {"event": "delete", "batch_num": record["batch_num"], "target": f"{record['target_database']}.{record['target_table']}"}
-    except Exception as error:
-        log_error(db, source, action, error, mapping, record.get("batch_num") if record else None)
+    except Exception:
         raise
 
 

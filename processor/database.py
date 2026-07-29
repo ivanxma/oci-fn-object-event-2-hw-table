@@ -1,4 +1,4 @@
-"""MySQL connection for the consumer; credentials originate only in Vault."""
+"""MySQL connection for the processor; credentials originate only in Vault."""
 from __future__ import annotations
 from typing import Any
 import mysql.connector
