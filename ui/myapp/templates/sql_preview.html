@@ -13,7 +13,8 @@
     <section class="tab-panel" role="tabpanel" id="load-data-panel" aria-labelledby="load-data-tab" hidden><div class="sql-step"><span>{% if create_database_statement %}3{% else %}2{% endif %}</span><div><h2>Load CSV data</h2><p>The file path is bound safely by Connector/Python at execution time and is not exposed here.</p></div></div><pre class="sql-code"><code>{{ load_statement }}</code></pre></section>
   </div>
 </section>
-<form action="{{ url_for('imports.load', job_id=job_id) }}" method="post" class="review-footer"><div><strong>Run these statements?</strong><span>This will attempt the table creation and then execute <code>LOAD DATA LOCAL INFILE</code>.</span></div><button class="primary-button">Confirm and run SQL <span>→</span></button></form>
+<section class="content-card sql-card"><div class="panel-heading"><div><h2>Complete generated SQL</h2><p>{{ 'DDL + data import statement' if sql_mode == 'DDL_DATA' else 'DDL only' }}{% if drop_existing %}; includes confirmed drop/create{% endif %}. The data path is an explicit client-side placeholder and is never taken from the browser upload path.</p></div></div><pre class="sql-code"><code>{{ generated_sql }}</code></pre></section>
+<form action="{{ url_for('imports.load', job_id=job_id) }}" method="post" class="review-footer"><div><strong>Run the application import?</strong><span>The generated script above is an artifact only. This action uses the reviewed non-destructive application import path and does not execute generated <code>DROP TABLE</code>.</span></div><button class="primary-button">Confirm application import <span>→</span></button></form>
 {% endblock %}
 {% block scripts %}
 <script>

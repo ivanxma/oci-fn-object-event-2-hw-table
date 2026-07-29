@@ -85,9 +85,15 @@ def prepare(job_id: str):
         return redirect(url_for("imports.home"))
     try:
         columns, primary_key, add_row_id, partition_by_batch = reviewed_definition(job)
+        sql_mode = request.form.get("sql_mode", "DDL_ONLY")
+        if sql_mode not in {"DDL_ONLY", "DDL_DATA"}:
+            raise ValueError("Select DDL only or DDL + data.")
+        drop_existing = request.form.get("drop_existing") == "on"
+        if drop_existing and request.form.get("drop_confirmation", "").strip() != f"{job['database']}.{job['table']}":
+            raise ValueError("Type the exact database.table name to include DROP TABLE IF EXISTS.")
         importer = ImportService(mysql_for_request())
-        job["reviewed"] = {"columns": columns, "primary_key": primary_key, "add_row_id": add_row_id, "partition_by_batch": partition_by_batch}
-        return render_dashboard("sql_preview.html", active_page="import", job=job, job_id=job_id, ddl=importer.ddl(job["database"], job["table"], columns, primary_key, add_row_id, partition_by_batch), create_database_statement=importer.create_database_statement(job["database"]) if job["create_database"] else None, load_statement=importer.load_data_statement(job["database"], job["table"], columns, job["delimiter"], partition_by_batch))
+        job["reviewed"] = {"columns": columns, "primary_key": primary_key, "add_row_id": add_row_id, "partition_by_batch": partition_by_batch, "sql_mode": sql_mode, "drop_existing": drop_existing}
+        return render_dashboard("sql_preview.html", active_page="import", job=job, job_id=job_id, ddl=importer.ddl(job["database"], job["table"], columns, primary_key, add_row_id, partition_by_batch), create_database_statement=importer.create_database_statement(job["database"]) if job["create_database"] else None, load_statement=importer.load_data_statement(job["database"], job["table"], columns, job["delimiter"], partition_by_batch), generated_sql=importer.generated_sql(job["database"], job["table"], columns, primary_key, add_row_id, job["delimiter"], create_database=job["create_database"], partition_by_batch=partition_by_batch, include_data=sql_mode == "DDL_DATA", drop_existing=drop_existing), sql_mode=sql_mode, drop_existing=drop_existing)
     except ValueError as error:
         flash(str(error), "error")
         return redirect(url_for("imports.review", job_id=job_id))

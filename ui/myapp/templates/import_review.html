@@ -18,7 +18,7 @@
       </section>
     </div>
   </section>
-  <section class="review-footer"><div><strong>Ready to import?</strong><span>Review the exact SQL statements before the table is created or CSV rows are loaded.</span></div><button class="primary-button">Create table and load data <span>→</span></button></section>
+  <section class="review-footer"><div><strong>Generate import SQL</strong><span>Choose a preview-only script mode. SQL is not executed on this step.</span><label>Generated SQL mode<select name="sql_mode"><option value="DDL_ONLY">DDL only</option><option value="DDL_DATA">DDL + data import statement</option></select></label><label class="checkbox-field"><input id="drop-existing" type="checkbox" name="drop_existing"><span>Include <code>DROP TABLE IF EXISTS</code> before create</span></label><label id="drop-confirmation" hidden>Type <code>{{ job.database }}.{{ job.table }}</code> to confirm destructive DDL<input name="drop_confirmation" autocomplete="off"></label></div><button class="primary-button">Generate SQL <span>→</span></button></section>
 </form>
 <script>
 document.querySelectorAll('input[name="primary_key_index"]').forEach((keyInput) => {
@@ -44,6 +44,9 @@ const syncPartitionKey = () => {
 partitionByBatch.addEventListener('change', syncPartitionKey);
 document.querySelectorAll('input[name="primary_key_index"]').forEach((input) => input.addEventListener('change', syncPartitionKey));
 syncPartitionKey();
+const dropExisting = document.getElementById('drop-existing');
+const dropConfirmation = document.getElementById('drop-confirmation');
+dropExisting?.addEventListener('change', () => { dropConfirmation.hidden = !dropExisting.checked; });
 document.querySelectorAll('[data-tabs]').forEach((view) => {
   const tabs = view.querySelectorAll('[role="tab"]');
   const panels = view.querySelectorAll('[role="tabpanel"]');
