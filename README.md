@@ -175,6 +175,31 @@ troubleshooting, and validation commands.
   an empty partition; empty partitions for deleted source objects indicate
   legacy or interrupted processing and can be reconciled against
   `source_object_batches`.
+- MySQL limits a non-NDB table to 8,192 partitions in total, including
+  subpartitions. Because this loader retains one seed partition and assigns one
+  partition to each active source file, a target table can hold at most 8,191
+  active file-owned partitions. This is a concurrent active-file limit, not a
+  lifetime import count: a successfully deleted file has its partition dropped
+  and releases that capacity. Set an operational alert below the hard limit,
+  because very large partition counts can become impractical before 8,192.
+  See the [MySQL 9.7 partitioning restrictions and
+  limitations](https://dev.mysql.com/doc/refman/9.7/en/partitioning-limitations.html).
+- Do not delete Object Storage files merely to reduce the partition count while
+  their mapping rule is enabled. The resulting delete events are published to
+  Streaming and intentionally drop the corresponding target-table partitions,
+  removing those rows. First disable the mapping's OCI Events rule (or replace
+  its condition so the archived objects cannot match), confirm that processing
+  has drained, and then perform the approved archival or consolidation work.
+- To retain data while reducing the count, an administrator can manually
+  consolidate several immutable `p_batch_*` LIST partitions into one partition,
+  or move historical rows to a dedicated archive table and then remove the
+  original partitions. A merged partition no longer has the normal
+  one-file/one-partition boundary: later create, update, or delete events for
+  any merged source file are incompatible with the standard loader path.
+  Keep those objects excluded from the rule before re-enabling it, record the
+  consolidation in operational metadata, and test retry/delete behavior.
+  Sharding independent datasets across multiple target tables is the safer
+  option when source files must remain individually mutable.
 - The processor is long-running; each Stream message is captured before loading
   so a failed loader invocation remains retryable after a processor restart.
 - OCI Events is at-least-once and may retry or deliver conflicting operations
