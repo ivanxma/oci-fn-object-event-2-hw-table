@@ -49,7 +49,7 @@ class DeploymentSettings:
     db_name: str
     stream_data_db_name: str
     control_database: str
-    name_prefix: str = "object-storage-stream-consumer"
+    name_prefix: str = "object-storage-stream-processor"
     writer_workers: int = 4
 
 

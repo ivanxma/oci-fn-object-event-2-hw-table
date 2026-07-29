@@ -2,14 +2,14 @@
 
 This application turns OCI Object Storage CSV lifecycle events into controlled,
 auditable MySQL table updates. OCI Events routes object create, update, and
-delete events to OCI Streaming. A long-running OCI Container Instance consumer
+delete events to OCI Streaming. A long-running OCI Container Instance processor
 captures each stream message durably in MySQL before it invokes the existing
 CSV loader. A mapping selects the target table, Stream, and FIFO or parallel
 processing mode.
 
 The Flask operations UI provides Stream Server and Stream Content pages,
 Object Storage mapping maintenance, live OCI Events rule management, an Event
-Processor page for the consumer deployment contract, and a separate Durable
+Processor page for the processor deployment contract, and a separate Durable
 Messages page for capture, retry, archive, and retention operations.
 
 ## Application components
@@ -23,7 +23,7 @@ flowchart LR
     Publisher[CSV publisher] --> Bucket[OCI Object Storage]
     Bucket --> Events[OCI Events rule]
     Events --> Stream[OCI Streaming]
-    Stream --> Consumer[Container Instance consumer]
+    Stream --> Processor[Container Instance processor]
     Consumer --> Capture[(Durable message capture)]
     Capture --> Loader[Streaming CSV loader]
     Loader --> Bucket
@@ -68,7 +68,7 @@ chmod 600 env.sh
 ./deploy_consumer.sh
 ```
 
-`build_consumer_image.sh` builds and pushes the non-root consumer image using
+`build_consumer_image.sh` builds and pushes the non-root processor image using
 the deployment host's instance-principal OCIR credential helper; it never uses
 a static registry credential. `deploy_consumer.sh` creates
 one Container Instance for one explicit partition assignment. `deploy_ui.sh`
