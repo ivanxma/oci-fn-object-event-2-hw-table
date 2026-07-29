@@ -8,11 +8,9 @@ CSV loader. A mapping selects the target table, Stream, and FIFO or parallel
 processing mode.
 
 The Flask operations UI provides Stream Server and Stream Content pages,
-Object Storage mapping maintenance, live OCI Events rule management, and an
-Orchestration page for the consumer deployment contract. It also supports
-object testing, target/staging inspection, and durable captured-message retry
-without requiring operators to join OCI Console and control-schema data
-manually.
+Object Storage mapping maintenance, live OCI Events rule management, an Event
+Processor page for the consumer deployment contract, and a separate Durable
+Messages page for capture, retry, archive, and retention operations.
 
 ## Application components
 
@@ -88,6 +86,36 @@ Before use, confirm:
   Container Instance, repository, and test-object permissions.
 - The consumer subnet can reach MySQL and the database account can use the
   control schema plus approved target/staging objects.
+
+### IAM policy baseline
+
+Use the dynamic group that contains the UI/deployment VM instance principal.
+For the HWDemo validation compartment, the verified Container Instance policy
+resource family is `compute-container-family` (not `container-instances` or
+`container-instances-family`):
+
+```text
+Allow dynamic-group oracleidentitycloudservice/hwdemo_dg to manage compute-container-family in compartment HWDemo
+Allow dynamic-group oracleidentitycloudservice/hwdemo_dg to use virtual-network-family in compartment HWDemo
+```
+
+The first statement permits the Event Processor to list/create/manage OCI
+Container Instances. The second permits VNIC/subnet attachment during create.
+The UI also needs Vault metadata permission to populate the secret selector;
+the deployed consumer needs bundle-read permission to resolve the selected
+secret value:
+
+```text
+Allow dynamic-group oracleidentitycloudservice/hwdemo_dg to read secrets in compartment HWDemo
+Allow dynamic-group oracleidentitycloudservice/hwdemo_dg to read secret-bundles in compartment HWDemo
+Allow dynamic-group oracleidentitycloudservice/hwdemo_dg to manage streams in compartment HWDemo
+Allow dynamic-group oracleidentitycloudservice/hwdemo_dg to manage repos in compartment HWDemo
+```
+
+Apply least privilege to the actual consumer resource-principal dynamic group
+as well. It must be able to consume the assigned Stream, read the Vault bundle,
+read source Object Storage objects, and reach MySQL. Verify each permission
+with read-only preflight checks before enabling Container Instance creation.
 
 See [Deployment, configuration, IAM, and implementation details](docs/technical-details.md)
 for environment variables, policies, runtime flow, UI behavior, logging,
