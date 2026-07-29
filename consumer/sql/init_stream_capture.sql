@@ -12,10 +12,12 @@ CREATE TABLE IF NOT EXISTS stream_message_capture (
   attempts INT UNSIGNED NOT NULL DEFAULT 0,
   last_error TEXT NULL,
   next_retry_at DATETIME(6) NULL,
+  processing_started_at DATETIME(6) NULL,
   received_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   completed_at DATETIME(6) NULL,
   UNIQUE KEY uq_stream_message (stream_id, partition_id, stream_offset),
-  KEY ix_capture_retry (status, next_retry_at, received_at)
+  KEY ix_capture_retry (status, next_retry_at, received_at),
+  KEY ix_capture_processing (status, processing_started_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS stream_partition_checkpoint (

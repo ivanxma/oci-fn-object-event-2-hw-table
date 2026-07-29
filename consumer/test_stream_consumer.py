@@ -4,7 +4,7 @@ import json
 
 from stream_consumer import assigned_partitions, capture_batch, decode_stream_message, is_expired_cursor_error, process_one, validate_mode
 from vault_config import database_config_from_secret, oci_signer, parse_secret_content, stream_data_database_config
-from message_store import ensure_schema, migration_statements, retry_delay_seconds, schema_statements
+from message_store import ensure_schema, migration_statements, processing_lease_seconds, retry_delay_seconds, schema_statements
 
 
 class ConsumerModeTest(unittest.TestCase):
@@ -89,7 +89,7 @@ class ConsumerModeTest(unittest.TestCase):
         self.assertIn("stream_partition_checkpoint", statements[1])
         class Cursor:
             def __init__(self): self.executed = []
-            def execute(self, statement): self.executed.append(statement)
+            def execute(self, statement, _values=None): self.executed.append(statement)
             def fetchone(self): return (1,)
         class Connection:
             def __init__(self): self.value = Cursor()
@@ -103,6 +103,14 @@ class ConsumerModeTest(unittest.TestCase):
         self.assertEqual(retry_delay_seconds(8), 256)
         self.assertEqual(retry_delay_seconds(999), 300)
         self.assertEqual(len(migration_statements()), 1)
+
+    def test_processing_lease_is_bounded_for_restart_recovery(self):
+        self.assertEqual(processing_lease_seconds("30"), 30)
+        self.assertEqual(processing_lease_seconds("300"), 300)
+        with self.assertRaises(ValueError):
+            processing_lease_seconds("29")
+        with self.assertRaises(ValueError):
+            processing_lease_seconds("not-a-number")
 
     def test_recognizes_only_oci_expired_cursor_response(self):
         class ExpiredCursor(Exception):
