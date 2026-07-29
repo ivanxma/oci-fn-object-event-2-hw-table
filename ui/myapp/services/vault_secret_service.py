@@ -21,6 +21,16 @@ class VaultSecretRecord:
     name: str
     lifecycle_state: str
 
+@dataclass(frozen=True)
+class VaultRecord:
+    id: str
+    name: str
+
+@dataclass(frozen=True)
+class VaultKeyRecord:
+    id: str
+    name: str
+
 
 SECRET_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,254}$")
 
@@ -69,19 +79,44 @@ class VaultSecretService:
                 "'read secrets' permission in the selected compartment."
             ) from error
 
-    def create_database_secret(self, *, name: str, vault_id: str, key_id: str, host: str, port: str, user: str, password: str, database: str) -> VaultSecretRecord:
+    def list_active_vaults(self) -> list[VaultRecord]:
+        try:
+            import oci
+            signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+            client = oci.key_management.KmsVaultClient({"region": self.region}, signer=signer)
+            records = oci.pagination.list_call_get_all_results(client.list_vaults, compartment_id=self.compartment_id).data
+            return sorted([VaultRecord(str(item.id), str(item.display_name)) for item in records if str(getattr(item, "lifecycle_state", "")).upper() == "ACTIVE"], key=lambda item: item.name.lower())
+        except Exception as error:
+            raise VaultSecretError("Could not list OCI Vaults. Confirm the UI instance principal has 'read vaults' permission.") from error
+
+    def list_active_keys(self, vault_id: str) -> list[VaultKeyRecord]:
+        if not vault_id.startswith("ocid1.vault."):
+            return []
+        try:
+            import oci
+            signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+            vault_client = oci.key_management.KmsVaultClient({"region": self.region}, signer=signer)
+            endpoint = vault_client.get_vault(vault_id).data.management_endpoint
+            client = oci.key_management.KmsManagementClient({"region": self.region}, signer=signer, service_endpoint=endpoint)
+            records = oci.pagination.list_call_get_all_results(client.list_keys, compartment_id=self.compartment_id).data
+            return sorted([VaultKeyRecord(str(item.id), str(item.display_name)) for item in records if str(getattr(item, "lifecycle_state", "")).upper() == "ENABLED"], key=lambda item: item.name.lower())
+        except Exception as error:
+            raise VaultSecretError("Could not list Vault encryption keys. Confirm the UI instance principal has 'read keys' permission.") from error
+
+    def create_database_secret(self, *, name: str, vault_id: str, key_id: str, host: str, port: str, user: str, password: str, database: str, control_database: str, stream_data_database: str) -> VaultSecretRecord:
         """Create a Vault JSON secret without retaining or returning its value."""
         name, vault_id, key_id = name.strip(), vault_id.strip(), key_id.strip()
         host, port, user, database = host.strip(), port.strip(), user.strip(), database.strip()
+        control_database, stream_data_database = control_database.strip(), stream_data_database.strip()
         if not SECRET_NAME.fullmatch(name):
             raise ValueError("Secret name must start with a letter and use letters, digits, hyphens, or underscores.")
         if not vault_id.startswith("ocid1.vault.") or not key_id.startswith("ocid1.key."):
             raise ValueError("Choose valid OCI Vault and encryption key OCIDs.")
-        if not host or not user or not database or not password:
-            raise ValueError("Database host, user, password, and database are required.")
+        if not host or not user or not database or not control_database or not stream_data_database or not password:
+            raise ValueError("Database host, user, password, loader, control, and durable database names are required.")
         if not port.isdigit() or not 1 <= int(port) <= 65535:
             raise ValueError("Database port must be from 1 to 65535.")
-        payload = json.dumps({"host": host, "port": int(port), "user": user, "credential": password, "database": database}, separators=(",", ":")).encode("utf-8")
+        payload = json.dumps({"host": host, "port": int(port), "user": user, "credential": password, "database": database, "control_database": control_database, "stream_data_database": stream_data_database}, separators=(",", ":")).encode("utf-8")
         try:
             oci, client = self._client()
             content = oci.vault.models.Base64SecretContentDetails(content=base64.b64encode(payload).decode("ascii"))
@@ -95,3 +130,18 @@ class VaultSecretService:
             raise
         except Exception as error:
             raise VaultSecretError("Could not create OCI Vault database secret. Confirm the UI instance principal can manage secrets and use the selected Vault key.") from error
+
+    def update_database_secret(self, *, secret_id: str, host: str, port: str, user: str, password: str, database: str, control_database: str, stream_data_database: str) -> None:
+        if not secret_id.startswith("ocid1.vaultsecret."):
+            raise ValueError("Choose an existing OCI Vault secret to update.")
+        if not all((host.strip(), port.strip(), user.strip(), password, database.strip(), control_database.strip(), stream_data_database.strip())) or not port.strip().isdigit():
+            raise ValueError("Complete all database connectivity fields before updating the secret.")
+        payload = json.dumps({"host": host.strip(), "port": int(port), "user": user.strip(), "credential": password, "database": database.strip(), "control_database": control_database.strip(), "stream_data_database": stream_data_database.strip()}, separators=(",", ":")).encode("utf-8")
+        try:
+            oci, client = self._client()
+            content = oci.vault.models.Base64SecretContentDetails(content=base64.b64encode(payload).decode("ascii"))
+            client.update_secret(secret_id, oci.vault.models.UpdateSecretDetails(secret_content=content))
+        except (ValueError, VaultSecretError):
+            raise
+        except Exception as error:
+            raise VaultSecretError("Could not update OCI Vault database secret. Confirm the UI instance principal can manage secrets.") from error

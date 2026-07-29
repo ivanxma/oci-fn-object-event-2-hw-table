@@ -21,17 +21,13 @@ class OrchestrationServiceTest(unittest.TestCase):
         env = spec["container"]["environment_variables"]
         self.assertFalse(spec["container"]["is_resource_principal_disabled"])
         self.assertEqual(env["CONSUMER_PARTITIONS"], "0")
-        self.assertEqual(env["DB_NAME"], "stream_db")
-        self.assertEqual(env["STREAM_DATA_DB_NAME"], "stream_data")
-        self.assertEqual(env["CONTROL_DATABASE"], "stream_db")
         self.assertEqual(env["WRITER_WORKERS"], "4")
         self.assertNotIn("DB_CREDENTIAL", env)
+        self.assertNotIn("DB_HOST", env)
 
     def test_form_runtime_overrides_non_secret_values_with_validation(self):
         runtime = ConsumerRuntime.from_form({
             "image_url": "lhr.ocir.io/ns/repo:next", "db_secret_ocid": "ocid1.vaultsecret.new",
-            "db_host": "10.0.0.8", "db_port": "3307", "db_user": "stream_user",
-            "db_name": "testdb", "stream_data_db_name": "stream_data", "control_database": "stream_db",
             "writer_workers": "8",
         }, self._service().settings)
         spec = self._service().deployment_spec(mapping={"id": 7, "stream_id": "ocid1.stream.test", "processing_mode": "FIFO"}, stream_partitions=1, partition_assignment="0", runtime=runtime)

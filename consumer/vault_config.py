@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 REQUIRED = {"host", "port", "user", "credential", "database"}
+OPTIONAL_DATABASES = {"control_database", "stream_data_database"}
 
 
 def oci_signer():
@@ -25,6 +26,8 @@ def parse_secret_content(encoded: str) -> dict[str, Any]:
         raise ValueError("Vault database secret must contain base64 JSON.") from error
     if not isinstance(value, dict) or not REQUIRED <= value.keys():
         raise ValueError("Vault database secret is missing required connection fields.")
+    if any(not isinstance(value.get(key), str) or not value[key].strip() for key in OPTIONAL_DATABASES if key in value):
+        raise ValueError("Vault database secret contains an invalid database name.")
     return value
 
 
@@ -71,11 +74,14 @@ def stream_data_database_config(config: dict[str, Any]) -> dict[str, Any]:
     existing Object Storage processing logic.  Operators can isolate retained
     stream payloads, checkpoints, and retry state with ``STREAM_DATA_DB_NAME``.
     """
-    database = os.environ.get("STREAM_DATA_DB_NAME", "").strip() or str(config["database"])
+    database = str(config.get("stream_data_database") or os.environ.get("STREAM_DATA_DB_NAME", "").strip() or config["database"])
     return {**config, "database": database}
 
 
 def apply_database_environment(config: dict[str, Any]) -> None:
     """Provide the existing loader its expected process-local configuration."""
-    for key, value in {"DB_HOST": config["host"], "DB_PORT": str(config["port"]), "DB_USER": config["user"], "DB_CREDENTIAL": config["credential"]}.items():
+    values = {"DB_HOST": config["host"], "DB_PORT": str(config["port"]), "DB_USER": config["user"], "DB_CREDENTIAL": config["credential"]}
+    if config.get("control_database"):
+        values["CONTROL_DATABASE"] = str(config["control_database"])
+    for key, value in values.items():
         os.environ[key] = value

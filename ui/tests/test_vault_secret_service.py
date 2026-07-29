@@ -43,12 +43,12 @@ class VaultSecretServiceTest(unittest.TestCase):
         client = SimpleNamespace(create_secret=lambda details: (created.append(details) or SimpleNamespace(data=SimpleNamespace(id="ocid1.vaultsecret.new", secret_name="processor-db", lifecycle_state="CREATING"))))
         oci = SimpleNamespace(vault=SimpleNamespace(models=SimpleNamespace(Base64SecretContentDetails=Content, CreateSecretDetails=Details)))
         with patch.object(service, "_client", return_value=(oci, client)):
-            result = service.create_database_secret(name="processor-db", vault_id="ocid1.vault.test", key_id="ocid1.key.test", host="10.0.0.8", port="3306", user="streamuser", password="secret-value", database="stream_db")
+            result = service.create_database_secret(name="processor-db", vault_id="ocid1.vault.test", key_id="ocid1.key.test", host="10.0.0.8", port="3306", user="streamuser", password="secret-value", database="testdb", control_database="stream_db", stream_data_database="stream_data")
         self.assertEqual(result.id, "ocid1.vaultsecret.new")
         payload = json.loads(base64.b64decode(created[0].secret_content.content))
-        self.assertEqual(payload, {"host": "10.0.0.8", "port": 3306, "user": "streamuser", "credential": "secret-value", "database": "stream_db"})
+        self.assertEqual(payload, {"host": "10.0.0.8", "port": 3306, "user": "streamuser", "credential": "secret-value", "database": "testdb", "control_database": "stream_db", "stream_data_database": "stream_data"})
 
     def test_create_database_secret_rejects_invalid_ocids_before_oci_call(self):
         service = VaultSecretService(compartment_id="ocid1.compartment.test", region="uk-london-1")
         with self.assertRaisesRegex(ValueError, "Vault and encryption key"):
-            service.create_database_secret(name="processor", vault_id="no", key_id="no", host="db", port="3306", user="u", password="x", database="d")
+            service.create_database_secret(name="processor", vault_id="no", key_id="no", host="db", port="3306", user="u", password="x", database="d", control_database="c", stream_data_database="s")

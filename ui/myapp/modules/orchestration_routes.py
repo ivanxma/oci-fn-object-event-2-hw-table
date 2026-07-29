@@ -21,7 +21,8 @@ def _orchestration_service() -> ContainerOrchestrationService:
 @orchestration_bp.get("/")
 @login_required
 def index():
-    vault_secrets = []
+    vault_secrets, vaults, vault_keys = [], [], []
+    selected_vault_id = request.args.get("vault_id", "")
     mappings, streams, deployments = [], [], []
     managed_state = request.args.get("managed_state", "ALL").upper()
     active_tab = request.args.get("tab", "deployment").lower()
@@ -40,14 +41,15 @@ def index():
         except (ValueError, OrchestrationError) as error:
             flash(str(error), "warning")
     try:
-        vault_secrets = VaultSecretService(
-            compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"]
-        ).list_active_secrets()
+        vault_service = VaultSecretService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"])
+        vault_secrets = vault_service.list_active_secrets()
+        vaults = vault_service.list_active_vaults()
+        vault_keys = vault_service.list_active_keys(selected_vault_id)
     except VaultSecretError as error:
         flash(f"OCI Vault secret choices are unavailable: {error}", "warning")
     return render_dashboard(
         "orchestration.html", active_page="orchestration", active_tab=active_tab, managed_state=managed_state, mappings=mappings,
-        streams=streams, deployments=deployments, vault_secrets=vault_secrets,
+        streams=streams, deployments=deployments, vault_secrets=vault_secrets, vaults=vaults, vault_keys=vault_keys, selected_vault_id=selected_vault_id,
         settings=_orchestration_service().settings,
         orchestration_enabled=current_app.config["OCI_CONTAINER_ORCHESTRATION_ENABLED"],
     )
@@ -82,12 +84,15 @@ def deploy():
 @login_required
 def create_database_secret():
     try:
-        secret = VaultSecretService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"]).create_database_secret(
-            name=request.form.get("secret_name", ""), vault_id=request.form.get("vault_id", ""), key_id=request.form.get("key_id", ""),
-            host=request.form.get("db_host", ""), port=request.form.get("db_port", "3306"), user=request.form.get("db_user", ""),
-            password=request.form.get("db_password", ""), database=request.form.get("db_name", ""),
-        )
-        flash(f"OCI Vault database secret created: {secret.name} ({secret.id}). Select it in Processor deployment.", "success")
+        vault_service = VaultSecretService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"])
+        values = dict(host=request.form.get("db_host", ""), port=request.form.get("db_port", "3306"), user=request.form.get("db_user", ""), password=request.form.get("db_password", ""), database=request.form.get("db_name", ""), control_database=request.form.get("control_database", ""), stream_data_database=request.form.get("stream_data_database", ""))
+        existing_secret_id = request.form.get("existing_secret_id", "")
+        if existing_secret_id:
+            vault_service.update_database_secret(secret_id=existing_secret_id, **values)
+            flash("OCI Vault database secret updated as a new version. Existing processors keep the same secret OCID.", "success")
+        else:
+            secret = vault_service.create_database_secret(name=request.form.get("secret_name", ""), vault_id=request.form.get("vault_id", ""), key_id=request.form.get("key_id", ""), **values)
+            flash(f"OCI Vault database secret created: {secret.name} ({secret.id}). Select it in Processor deployment.", "success")
     except (ValueError, VaultSecretError) as error:
         flash(str(error), "error")
     return redirect(url_for("orchestration.index", tab="database-secret"))

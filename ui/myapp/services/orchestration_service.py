@@ -63,12 +63,6 @@ class ConsumerRuntime:
     """Non-secret values passed to a single Container Instance deployment."""
     image_url: str
     db_secret_ocid: str
-    db_host: str
-    db_port: str
-    db_user: str
-    db_name: str
-    stream_data_db_name: str
-    control_database: str
     writer_workers: int
 
     @classmethod
@@ -79,19 +73,13 @@ class ConsumerRuntime:
         runtime = cls(
             image_url=value("image_url", defaults.image_url),
             db_secret_ocid=value("db_secret_ocid", defaults.db_secret_ocid),
-            db_host=value("db_host", defaults.db_host),
-            db_port=value("db_port", defaults.db_port),
-            db_user=value("db_user", defaults.db_user),
-            db_name=value("db_name", defaults.db_name),
-            stream_data_db_name=value("stream_data_db_name", defaults.stream_data_db_name),
-            control_database=value("control_database", defaults.control_database),
             writer_workers=int(value("writer_workers", str(defaults.writer_workers))),
         )
         runtime.validate()
         return runtime
 
     def validate(self) -> None:
-        required = ("image_url", "db_secret_ocid", "db_host", "db_port", "db_user", "db_name", "stream_data_db_name", "control_database")
+        required = ("image_url", "db_secret_ocid")
         missing = [name for name in required if not str(getattr(self, name)).strip()]
         if missing:
             raise ValueError("Processor configuration is missing: " + ", ".join(missing) + ".")
@@ -99,12 +87,6 @@ class ConsumerRuntime:
             raise ValueError("Container image must be a valid OCI Registry image reference.")
         if not self.db_secret_ocid.startswith("ocid1.vaultsecret."):
             raise ValueError("Choose a valid OCI Vault secret.")
-        if any(char.isspace() for char in self.db_host):
-            raise ValueError("Database host cannot contain whitespace.")
-        if not self.db_port.isdigit() or not 1 <= int(self.db_port) <= 65535:
-            raise ValueError("Database port must be from 1 to 65535.")
-        if not re.fullmatch(r"[A-Za-z0-9_.$-]{1,64}", self.db_user):
-            raise ValueError("Database user contains unsupported characters.")
         if not 1 <= self.writer_workers <= 32:
             raise ValueError("Loader workers must be from 1 to 32.")
 
@@ -115,9 +97,7 @@ class ContainerOrchestrationService:
 
     def deployment_spec(self, *, mapping: dict[str, Any], stream_partitions: int, partition_assignment: str, runtime: ConsumerRuntime | None = None) -> dict[str, Any]:
         runtime = runtime or ConsumerRuntime(
-            self.settings.image_url, self.settings.db_secret_ocid, self.settings.db_host, self.settings.db_port,
-            self.settings.db_user, self.settings.db_name, self.settings.stream_data_db_name,
-            self.settings.control_database, self.settings.writer_workers,
+            self.settings.image_url, self.settings.db_secret_ocid, self.settings.writer_workers,
         )
         runtime.validate()
         mode = str(mapping.get("processing_mode") or "FIFO").upper()
@@ -149,10 +129,6 @@ class ContainerOrchestrationService:
                     "OCI_STREAM_ID": str(mapping["stream_id"]), "PROCESSING_MODE": mode,
                     "EXPECTED_PARTITION_COUNT": str(stream_partitions), "CONSUMER_REPLICA_COUNT": "1",
                     "CONSUMER_PARTITIONS": ",".join(assignments), "DB_SECRET_OCID": runtime.db_secret_ocid,
-                    "DB_HOST": runtime.db_host, "DB_PORT": runtime.db_port,
-                    "DB_USER": runtime.db_user, "DB_NAME": runtime.db_name,
-                    "STREAM_DATA_DB_NAME": runtime.stream_data_db_name,
-                    "CONTROL_DATABASE": runtime.control_database,
                     "WRITER_WORKERS": str(runtime.writer_workers),
                 },
             },
