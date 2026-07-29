@@ -12,6 +12,7 @@
     <nav class="primary-nav" aria-label="Primary navigation">
       <a class="{{ 'active' if active_page == 'import' else '' }}" href="{{ url_for('imports.home') }}">Data Import</a>
       <a class="{{ 'active' if active_page == 'mappings' else '' }}" href="{{ url_for('mappings.list_mappings') }}">Resource Mappings</a>
+      <a class="{{ 'active' if active_page == 'flow' else '' }}" href="{{ url_for('flow.index') }}">Flow</a>
       <a class="{{ 'active' if active_page == 'streaming' else '' }}" href="{{ url_for('streaming.index') }}">Streaming</a>
       <a class="{{ 'active' if active_page == 'orchestration' else '' }}" href="{{ url_for('orchestration.index') }}">Event Processor</a>
       <a class="{{ 'active' if active_page == 'durable_messages' else '' }}" href="{{ url_for('durable_messages.index') }}">Durable Messages</a>
