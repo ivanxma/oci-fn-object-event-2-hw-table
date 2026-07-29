@@ -4,7 +4,7 @@ import json
 
 from stream_consumer import assigned_partitions, capture_batch, decode_stream_message, is_expired_cursor_error, process_one, validate_mode
 from vault_config import database_config_from_secret, oci_signer, parse_secret_content, stream_data_database_config
-from message_store import ensure_schema, schema_statements
+from message_store import ensure_schema, migration_statements, retry_delay_seconds, schema_statements
 
 
 class ConsumerModeTest(unittest.TestCase):
@@ -85,16 +85,24 @@ class ConsumerModeTest(unittest.TestCase):
         statements = schema_statements()
         self.assertEqual(len(statements), 2)
         self.assertIn("stream_message_capture", statements[0])
+        self.assertIn("next_retry_at", statements[0])
         self.assertIn("stream_partition_checkpoint", statements[1])
         class Cursor:
             def __init__(self): self.executed = []
             def execute(self, statement): self.executed.append(statement)
+            def fetchone(self): return (1,)
         class Connection:
             def __init__(self): self.value = Cursor()
             def cursor(self): return self.value
         connection = Connection()
         ensure_schema(connection)
-        self.assertEqual(connection.value.executed, statements)
+        self.assertEqual(connection.value.executed[:2], statements)
+
+    def test_retry_backoff_is_bounded_and_external_migration_is_loaded(self):
+        self.assertEqual(retry_delay_seconds(1), 2)
+        self.assertEqual(retry_delay_seconds(8), 256)
+        self.assertEqual(retry_delay_seconds(999), 300)
+        self.assertEqual(len(migration_statements()), 1)
 
     def test_recognizes_only_oci_expired_cursor_response(self):
         class ExpiredCursor(Exception):

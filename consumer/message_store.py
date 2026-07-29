@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_SCHEMA_SQL = Path(__file__).with_name("sql") / "init_stream_capture.sql"
+RETRY_MIGRATION_SQL = Path(__file__).with_name("sql") / "migrate_stream_capture_retry.sql"
 
 
 def schema_sql_path() -> Path:
@@ -32,12 +33,31 @@ def schema_statements(path: Path | None = None) -> list[str]:
         raise RuntimeError("Consumer schema SQL must contain the two initialization statements.")
     return statements
 
+
+def migration_statements(path: Path = RETRY_MIGRATION_SQL) -> list[str]:
+    """Load the tracked retry migration without accepting runtime SQL text."""
+    try:
+        script = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise RuntimeError("Could not read the consumer retry migration SQL file.") from error
+    statements = [statement.strip() for statement in "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("--")).split(";")]
+    return [statement for statement in statements if statement]
+
 def ensure_schema(connection: Any) -> None:
     cursor = connection.cursor()
     for statement in schema_statements():
         # These statements are repository-owned schema initialization SQL, not
         # browser input; values remain parameterized everywhere else.
         cursor.execute(statement)
+    cursor.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='stream_message_capture' AND column_name='next_retry_at'")
+    if cursor.fetchone()[0] == 0:
+        for statement in migration_statements():
+            cursor.execute(statement)
+
+
+def retry_delay_seconds(attempts: int) -> int:
+    """Bound retries so a poison FIFO record cannot create a busy loop."""
+    return min(300, 2 ** min(9, max(1, int(attempts))))
 
 def checkpoint(connection: Any, *, stream_id: str, partition: str) -> str | None:
     cursor = connection.cursor()
@@ -67,21 +87,25 @@ def claim_next(connection: Any, *, stream_id: str, partitions: list[str]) -> dic
     placeholders = ", ".join("%s" for _ in partitions)
     cursor.execute(
         f"SELECT * FROM stream_message_capture WHERE stream_id=%s AND partition_id IN ({placeholders}) "
-        "AND status IN ('CAPTURED','FAILED') ORDER BY received_at, id LIMIT 1 FOR UPDATE",
+        "AND status IN ('CAPTURED','FAILED') AND (next_retry_at IS NULL OR next_retry_at <= UTC_TIMESTAMP(6)) "
+        "ORDER BY received_at, id LIMIT 1 FOR UPDATE",
         (stream_id, *partitions),
     )
     row = cursor.fetchone()
     if row:
-        cursor.execute("UPDATE stream_message_capture SET status='PROCESSING', attempts=attempts+1, last_error=NULL WHERE id=%s", (row["id"],))
+        cursor.execute("UPDATE stream_message_capture SET status='PROCESSING', attempts=attempts+1, last_error=NULL, next_retry_at=NULL WHERE id=%s", (row["id"],))
     connection.commit()
     return row
 
 def complete(connection: Any, capture_id: int) -> None:
     cursor = connection.cursor()
-    cursor.execute("UPDATE stream_message_capture SET status='COMPLETED', completed_at=UTC_TIMESTAMP(6) WHERE id=%s", (capture_id,))
+    cursor.execute("UPDATE stream_message_capture SET status='COMPLETED', completed_at=UTC_TIMESTAMP(6), next_retry_at=NULL WHERE id=%s", (capture_id,))
     connection.commit()
 
 def fail(connection: Any, capture_id: int, error: Exception) -> None:
     cursor = connection.cursor()
-    cursor.execute("UPDATE stream_message_capture SET status='FAILED', last_error=%s WHERE id=%s", (str(error)[:65535], capture_id))
+    cursor.execute("SELECT attempts FROM stream_message_capture WHERE id=%s", (capture_id,))
+    row = cursor.fetchone()
+    delay = retry_delay_seconds(int(row[0]) if row else 1)
+    cursor.execute("UPDATE stream_message_capture SET status='FAILED', last_error=%s, next_retry_at=DATE_ADD(UTC_TIMESTAMP(6), INTERVAL %s SECOND) WHERE id=%s", (str(error)[:65535], delay, capture_id))
     connection.commit()

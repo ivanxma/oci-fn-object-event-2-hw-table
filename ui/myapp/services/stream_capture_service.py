@@ -23,5 +23,5 @@ class StreamCaptureService:
             raise ValueError("Capture identifier is invalid.")
         with self.mysql.connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(f"UPDATE {self.table} SET status='CAPTURED', last_error=NULL WHERE id=%s AND status='FAILED'", (capture_id,))
+            cursor.execute(f"UPDATE {self.table} SET status='CAPTURED', last_error=NULL, next_retry_at=NULL WHERE id=%s AND status='FAILED'", (capture_id,))
             return cursor.rowcount == 1
