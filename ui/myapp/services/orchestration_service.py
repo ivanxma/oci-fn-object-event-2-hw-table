@@ -163,8 +163,11 @@ class ContainerOrchestrationService:
         except Exception as error:
             raise OrchestrationError(f"Could not initialize OCI Container Instances: {type(error).__name__}: {error}") from error
 
-    def list_deployments(self) -> list[dict[str, str]]:
-        """List only Container Instances created by this application's tag."""
+    def list_deployments(self, *, state_filter: str = "ALL") -> list[dict[str, str]]:
+        """List tagged Container Instances, optionally retaining ACTIVE records only."""
+        state_filter = state_filter.upper()
+        if state_filter not in {"ALL", "ACTIVE"}:
+            raise ValueError("Managed Instance state filter must be All or Active only.")
         oci, client = self._client()
         try:
             records = oci.pagination.list_call_get_all_results(client.list_container_instances, compartment_id=self.settings.compartment_id).data
@@ -172,6 +175,7 @@ class ContainerOrchestrationService:
                 {"id": str(item.id), "display_name": str(item.display_name), "lifecycle_state": str(item.lifecycle_state), "mapping_id": str((getattr(item, "freeform_tags", {}) or {}).get("mapping-id", ""))}
                 for item in records
                 if (getattr(item, "freeform_tags", {}) or {}).get("managed-by") == "oci-object-event-2-table"
+                and (state_filter == "ALL" or str(getattr(item, "lifecycle_state", "")).upper() == "ACTIVE")
             ]
         except Exception as error:
             raise OrchestrationError(f"Could not list Container Instances: {type(error).__name__}: {error}") from error
@@ -195,6 +199,43 @@ class ContainerOrchestrationService:
         except Exception as error:
             raise OrchestrationError(f"Could not create Container Instance: {type(error).__name__}: {error}") from error
 
+    def get_deployment(self, deployment_id: str) -> dict[str, Any]:
+        """Return a managed Container Instance's non-secret deployment contract."""
+        if not deployment_id.startswith("ocid1.containerinstance."):
+            raise ValueError("Container Instance identifier is invalid.")
+        try:
+            _, client = self._client()
+            item = client.get_container_instance(deployment_id).data
+            tags = getattr(item, "freeform_tags", {}) or {}
+            if tags.get("managed-by") != "oci-object-event-2-table":
+                raise OrchestrationError("Only Container Instances managed by this application can be viewed.")
+            shape_config = getattr(item, "shape_config", None)
+            containers = []
+            allowed_environment = {
+                "OCI_STREAM_ID", "PROCESSING_MODE", "EXPECTED_PARTITION_COUNT", "CONSUMER_REPLICA_COUNT",
+                "CONSUMER_PARTITIONS", "DB_SECRET_OCID", "DB_HOST", "DB_PORT", "DB_USER", "DB_NAME",
+                "STREAM_DATA_DB_NAME", "CONTROL_DATABASE", "WRITER_WORKERS",
+            }
+            for container in getattr(item, "containers", []) or []:
+                environment = getattr(container, "environment_variables", {}) or {}
+                containers.append({
+                    "display_name": str(getattr(container, "display_name", "")),
+                    "image_url": str(getattr(container, "image_url", "")),
+                    "resource_principal_enabled": not bool(getattr(container, "is_resource_principal_disabled", True)),
+                    "environment": [{"name": key, "value": str(environment[key])} for key in sorted(environment) if key in allowed_environment],
+                })
+            return {
+                "id": str(item.id), "display_name": str(item.display_name), "lifecycle_state": str(item.lifecycle_state),
+                "mapping_id": str(tags.get("mapping-id", "")), "compartment_id": str(getattr(item, "compartment_id", "")),
+                "availability_domain": str(getattr(item, "availability_domain", "")), "shape": str(getattr(item, "shape", "")),
+                "ocpus": getattr(shape_config, "ocpus", ""), "memory_gbs": getattr(shape_config, "memory_in_gbs", ""),
+                "containers": containers,
+            }
+        except (ValueError, OrchestrationError):
+            raise
+        except Exception as error:
+            raise OrchestrationError(f"Could not load Container Instance details: {type(error).__name__}: {error}") from error
+
     def delete(self, deployment_id: str) -> None:
         """Delete only an instance carrying this application's management tag."""
         if not deployment_id.startswith("ocid1.containerinstance."):
@@ -204,8 +245,11 @@ class ContainerOrchestrationService:
             records = oci.pagination.list_call_get_all_results(
                 client.list_container_instances, compartment_id=self.settings.compartment_id
             ).data
-            if not any(str(item.id) == deployment_id and (getattr(item, "freeform_tags", {}) or {}).get("managed-by") == "oci-object-event-2-table" for item in records):
+            record = next((item for item in records if str(item.id) == deployment_id and (getattr(item, "freeform_tags", {}) or {}).get("managed-by") == "oci-object-event-2-table"), None)
+            if record is None:
                 raise OrchestrationError("Only Container Instances managed by this application can be deleted.")
+            if str(getattr(record, "lifecycle_state", "")).upper() == "DELETED":
+                raise ValueError("This managed Container Instance is already deleted.")
             client.delete_container_instance(deployment_id)
         except (ValueError, OrchestrationError):
             raise

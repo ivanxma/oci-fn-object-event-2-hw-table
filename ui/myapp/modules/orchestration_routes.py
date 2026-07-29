@@ -23,6 +23,12 @@ def _orchestration_service() -> ContainerOrchestrationService:
 def index():
     vault_secrets = []
     mappings, streams, deployments = [], [], []
+    managed_state = request.args.get("managed_state", "ALL").upper()
+    active_tab = request.args.get("tab", "deployment").lower()
+    if managed_state not in {"ALL", "ACTIVE"}:
+        managed_state = "ALL"
+    if active_tab not in {"deployment", "instances"}:
+        active_tab = "deployment"
     try:
         mappings = MappingService(mysql_for_request()).list_mappings()
         streams = StreamingService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"], enabled=bool(current_app.config["OCI_STREAMING_MANAGEMENT_ENABLED"])).list_streams()
@@ -30,8 +36,8 @@ def index():
         flash(f"Could not load mapping deployment choices: {type(error).__name__}: {error}", "warning")
     if current_app.config["OCI_CONTAINER_ORCHESTRATION_ENABLED"]:
         try:
-            deployments = _orchestration_service().list_deployments()
-        except OrchestrationError as error:
+            deployments = _orchestration_service().list_deployments(state_filter=managed_state)
+        except (ValueError, OrchestrationError) as error:
             flash(str(error), "warning")
     try:
         vault_secrets = VaultSecretService(
@@ -40,7 +46,7 @@ def index():
     except VaultSecretError as error:
         flash(f"OCI Vault secret choices are unavailable: {error}", "warning")
     return render_dashboard(
-        "orchestration.html", active_page="orchestration", mappings=mappings,
+        "orchestration.html", active_page="orchestration", active_tab=active_tab, managed_state=managed_state, mappings=mappings,
         streams=streams, deployments=deployments, vault_secrets=vault_secrets,
         settings=_orchestration_service().settings,
         orchestration_enabled=current_app.config["OCI_CONTAINER_ORCHESTRATION_ENABLED"],
@@ -72,6 +78,17 @@ def deploy():
     return redirect(url_for("orchestration.index"))
 
 
+@orchestration_bp.get("/deployments/<deployment_id>")
+@login_required
+def deployment_detail(deployment_id: str):
+    try:
+        deployment = _orchestration_service().get_deployment(deployment_id)
+        return render_dashboard("orchestration_detail.html", active_page="orchestration", deployment=deployment)
+    except (ValueError, OrchestrationError) as error:
+        flash(str(error), "error")
+        return redirect(url_for("orchestration.index", tab="instances"))
+
+
 @orchestration_bp.post("/deployments/<deployment_id>/delete")
 @login_required
 def delete_deployment(deployment_id: str):
@@ -80,4 +97,20 @@ def delete_deployment(deployment_id: str):
         flash("Container Instance deletion requested.", "success")
     except (ValueError, OrchestrationError) as error:
         flash(str(error), "error")
-    return redirect(url_for("orchestration.index"))
+    return redirect(url_for("orchestration.index", tab="instances"))
+
+
+@orchestration_bp.post("/deployments/batch-delete")
+@login_required
+def delete_deployments():
+    deployment_ids = request.form.getlist("deployment_ids")
+    try:
+        if not deployment_ids:
+            raise ValueError("Select one or more active managed Container Instances.")
+        service = _orchestration_service()
+        for deployment_id in deployment_ids:
+            service.delete(deployment_id)
+        flash(f"Deletion requested for {len(deployment_ids)} managed Container Instance(s).", "success")
+    except (ValueError, OrchestrationError) as error:
+        flash(str(error), "error")
+    return redirect(url_for("orchestration.index", tab="instances", managed_state=request.form.get("managed_state", "ALL")))
