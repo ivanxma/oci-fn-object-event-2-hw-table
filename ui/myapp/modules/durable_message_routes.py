@@ -31,7 +31,12 @@ def index():
         service = _service(); status = request.args.get("capture_status", "").upper(); stream = request.args.get("capture_stream", "")
         captures = service.list_recent(status=status, stream_id=stream); archived, partitions = service.list_archived(); summary = service.summary()
         if request.args.get("capture_id"): detail = service.get(request.args["capture_id"])
-        if request.args.get("archive_id") and request.args.get("archive_partition"): archive_detail = service.get_archived(request.args["archive_partition"], request.args["archive_id"])
+        archive_reference = request.args.getlist("archive_refs")
+        if archive_reference:
+            partition_name, archive_id = archive_reference[0].rsplit(":", 1)
+            archive_detail = service.get_archived(partition_name, archive_id)
+        elif request.args.get("archive_id") and request.args.get("archive_partition"):
+            archive_detail = service.get_archived(request.args["archive_partition"], request.args["archive_id"])
     except Exception as error: flash(f"Could not load durable stream captures: {type(error).__name__}: {error}", "error")
     try:
         streams = StreamingService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"], enabled=bool(current_app.config["OCI_STREAMING_MANAGEMENT_ENABLED"])).list_streams()
@@ -91,6 +96,24 @@ def delete_archived_capture(partition_name, archive_id):
     except Exception as error: flash(f"Could not delete archived capture: {type(error).__name__}: {error}", "error")
     return redirect(url_for("durable_messages.index"))
 
+@durable_messages_bp.post("/archive/batch")
+@login_required
+def batch_archived_action():
+    try:
+        references = request.form.getlist("archive_refs")
+        if not references:
+            raise ValueError("Select one or more archived messages.")
+        if request.form.get("operation") != "delete":
+            raise ValueError("Choose an archived-message action.")
+        changed = 0
+        for reference in references:
+            partition_name, archive_id = reference.rsplit(":", 1)
+            changed += int(bool(_service().delete_archived(partition_name, archive_id)))
+        flash(f"{changed} archived message(s) deleted.", "success" if changed else "warning")
+    except Exception as error:
+        flash(f"Could not apply archived-message action: {type(error).__name__}: {error}", "error")
+    return redirect(url_for("durable_messages.index", tab="archived"))
+
 @durable_messages_bp.post("/archive/<partition_name>/delete")
 @login_required
 def delete_archive_partition(partition_name):
@@ -98,3 +121,18 @@ def delete_archive_partition(partition_name):
         changed = _service().delete_archive_partition(partition_name); flash("Archived message partition deleted." if changed else "Archived partition was not found.", "success" if changed else "warning")
     except Exception as error: flash(f"Could not delete archived partition: {type(error).__name__}: {error}", "error")
     return redirect(url_for("durable_messages.index"))
+
+@durable_messages_bp.post("/archive/partitions/batch")
+@login_required
+def batch_archive_partition_action():
+    try:
+        partition_names = request.form.getlist("partition_names")
+        if not partition_names:
+            raise ValueError("Select one or more archive partitions.")
+        if request.form.get("operation") != "delete":
+            raise ValueError("Choose an archive-partition action.")
+        changed = sum(int(bool(_service().delete_archive_partition(name))) for name in partition_names)
+        flash(f"{changed} archive partition(s) deleted.", "success" if changed else "warning")
+    except Exception as error:
+        flash(f"Could not apply archive-partition action: {type(error).__name__}: {error}", "error")
+    return redirect(url_for("durable_messages.index", tab="partitions"))
