@@ -53,6 +53,17 @@ class VaultSecretService:
         except Exception as error:
             raise VaultSecretError("Could not initialize OCI Vault access. Confirm the instance-principal configuration.") from error
 
+    def _management_client(self, vault_id: str):
+        """Use the selected Vault management endpoint for secret mutations."""
+        try:
+            import oci
+            signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+            vault_client = oci.key_management.KmsVaultClient({"region": self.region}, signer=signer)
+            endpoint = vault_client.get_vault(vault_id).data.management_endpoint
+            return oci, oci.vault.VaultsClient({"region": self.region}, signer=signer, service_endpoint=endpoint)
+        except Exception as error:
+            raise VaultSecretError("Could not initialize the selected Vault management endpoint.") from error
+
     def list_active_secrets(self) -> list[VaultSecretRecord]:
         try:
             oci, client = self._client()
@@ -118,7 +129,7 @@ class VaultSecretService:
             raise ValueError("Database port must be from 1 to 65535.")
         payload = json.dumps({"host": host, "port": int(port), "user": user, "credential": password, "database": database, "control_database": control_database, "stream_data_database": stream_data_database}, separators=(",", ":")).encode("utf-8")
         try:
-            oci, client = self._client()
+            oci, client = self._management_client(vault_id)
             content = oci.vault.models.Base64SecretContentDetails(name=f"{name}-v1", stage="CURRENT", content=base64.b64encode(payload).decode("ascii"))
             details = oci.vault.models.CreateSecretDetails(
                 compartment_id=self.compartment_id, secret_name=name, vault_id=vault_id, key_id=key_id,
