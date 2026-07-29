@@ -27,7 +27,8 @@ def index():
     captures, archived, partitions, summary, detail, archive_detail, streams = [], [], [], {}, None, None, []
     selected_archive_partition = ""
     active_tab = request.args.get("tab", "current").lower()
-    if active_tab not in {"current", "archived", "partitions"}: active_tab = "current"
+    if active_tab == "partitions": active_tab = "archived"
+    if active_tab not in {"current", "archived"}: active_tab = "current"
     try:
         service = _service(); status = request.args.get("capture_status", "").upper(); stream = request.args.get("capture_stream", "")
         captures = service.list_recent(status=status, stream_id=stream); archived, partitions = service.list_archived(); summary = service.summary()
