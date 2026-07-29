@@ -2,7 +2,7 @@ import unittest
 import base64
 import json
 
-from stream_consumer import assigned_partitions, capture_batch, decode_stream_message, is_expired_cursor_error, validate_mode
+from stream_consumer import assigned_partitions, capture_batch, decode_stream_message, is_expired_cursor_error, process_one, validate_mode
 from vault_config import database_config_from_secret, oci_signer, parse_secret_content
 from message_store import ensure_schema, schema_statements
 
@@ -95,3 +95,21 @@ class ConsumerModeTest(unittest.TestCase):
             message = "Not authenticated"
         self.assertTrue(is_expired_cursor_error(ExpiredCursor()))
         self.assertFalse(is_expired_cursor_error(OtherError()))
+
+    def test_processing_claim_is_scoped_to_stream_and_partition(self):
+        import sys
+        from unittest.mock import patch
+        class Store:
+            @staticmethod
+            def claim_next(_connection, *, stream_id, partitions):
+                self.assertEqual(stream_id, "ocid1.stream.test")
+                self.assertEqual(partitions, ["0"])
+                return None
+            @staticmethod
+            def complete(*_args):
+                raise AssertionError("complete must not be called without a claim")
+            @staticmethod
+            def fail(*_args):
+                raise AssertionError("fail must not be called without a claim")
+        with patch.dict(sys.modules, {"message_store": Store}):
+            self.assertFalse(process_one(None, lambda _payload: None, stream_id="ocid1.stream.test", partitions=["0"]))

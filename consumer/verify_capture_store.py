@@ -1,0 +1,50 @@
+"""Bounded integration check for the consumer's durable MySQL capture queue.
+
+It creates one unique verification stream record, proves deduplication and
+retry/completion, then removes only that record and its checkpoint.
+"""
+from __future__ import annotations
+
+import uuid
+
+from database import connect
+from message_store import capture, claim_next, complete, ensure_schema, fail
+from vault_config import apply_database_environment, load_database_config
+
+
+def main() -> None:
+    config = load_database_config()
+    apply_database_environment(config)
+    stream_id = f"verification-{uuid.uuid4()}"
+    connection = connect(config)
+    try:
+        ensure_schema(connection)
+        capture(connection, stream_id=stream_id, partition="0", offset=1, key="verification", payload={"verification": True})
+        capture(connection, stream_id=stream_id, partition="0", offset=1, key="verification", payload={"verification": True})
+        cursor = connection.cursor()
+        cursor.execute("SELECT COUNT(*) FROM stream_message_capture WHERE stream_id=%s", (stream_id,))
+        if cursor.fetchone()[0] != 1:
+            raise RuntimeError("Capture idempotency check failed.")
+        row = claim_next(connection, stream_id=stream_id, partitions=["0"])
+        if not row:
+            raise RuntimeError("Capture claim check failed.")
+        fail(connection, int(row["id"]), RuntimeError("verification retry"))
+        retry = claim_next(connection, stream_id=stream_id, partitions=["0"])
+        if not retry or int(retry["attempts"]) != 1:
+            raise RuntimeError("Capture retry check failed.")
+        complete(connection, int(retry["id"]))
+        cursor.execute("SELECT status, attempts FROM stream_message_capture WHERE stream_id=%s", (stream_id,))
+        status, attempts = cursor.fetchone()
+        if status != "COMPLETED" or int(attempts) != 2:
+            raise RuntimeError("Capture completion check failed.")
+        print("PASS: durable capture idempotency, retry, and completion")
+    finally:
+        cleanup = connection.cursor()
+        cleanup.execute("DELETE FROM stream_partition_checkpoint WHERE stream_id=%s", (stream_id,))
+        cleanup.execute("DELETE FROM stream_message_capture WHERE stream_id=%s", (stream_id,))
+        connection.commit()
+        connection.close()
+
+
+if __name__ == "__main__":
+    main()

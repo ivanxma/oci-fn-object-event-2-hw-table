@@ -56,10 +56,10 @@ def assigned_partitions(mode: str, partitions: int, assignment: str) -> list[str
         raise ValueError("FIFO consumer must be assigned only partition 0.")
     return selected
 
-def process_one(connection: Any, processor: Any) -> bool:
+def process_one(connection: Any, processor: Any, *, stream_id: str, partitions: list[str]) -> bool:
     """Run one durable capture through the loader; leave failure retryable."""
     from message_store import claim_next, complete, fail
-    row = claim_next(connection)
+    row = claim_next(connection, stream_id=stream_id, partitions=partitions)
     if row is None:
         return False
     try:
@@ -100,7 +100,7 @@ def run_partition_once(connection: Any, *, oci: Any, client: Any, stream_id: str
     # retaining one stale cursor through a long idle period.
     if next_cursor:
         save_checkpoint(connection, stream_id=stream_id, partition=partition, cursor_value=next_cursor)
-    process_one(connection, processor)
+    process_one(connection, processor, stream_id=stream_id, partitions=[partition])
     return len(messages)
 
 def main() -> None:

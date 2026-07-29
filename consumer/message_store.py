@@ -59,10 +59,17 @@ def capture(connection: Any, *, stream_id: str, partition: str, offset: int, key
       ON DUPLICATE KEY UPDATE received_at=received_at""", (stream_id, partition, offset, key, json.dumps(payload, separators=(",", ":"))))
     connection.commit()
 
-def claim_next(connection: Any) -> dict[str, Any] | None:
-    """Atomically claim one persisted message for loader processing."""
+def claim_next(connection: Any, *, stream_id: str, partitions: list[str]) -> dict[str, Any] | None:
+    """Atomically claim only a message owned by this stream consumer."""
+    if not partitions:
+        raise ValueError("At least one assigned partition is required.")
     cursor = connection.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM stream_message_capture WHERE status IN ('CAPTURED','FAILED') ORDER BY received_at, id LIMIT 1 FOR UPDATE")
+    placeholders = ", ".join("%s" for _ in partitions)
+    cursor.execute(
+        f"SELECT * FROM stream_message_capture WHERE stream_id=%s AND partition_id IN ({placeholders}) "
+        "AND status IN ('CAPTURED','FAILED') ORDER BY received_at, id LIMIT 1 FOR UPDATE",
+        (stream_id, *partitions),
+    )
     row = cursor.fetchone()
     if row:
         cursor.execute("UPDATE stream_message_capture SET status='PROCESSING', attempts=attempts+1, last_error=NULL WHERE id=%s", (row["id"],))
