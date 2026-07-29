@@ -396,9 +396,11 @@ class EventTransactionService:
             return cursor.fetchone()
 
     def object_event_tables(self) -> list[dict[str, str]]:
-        """Return the object-event table only when it exists in the control database."""
+        """Return the processor capture source instead of retired Function audit data."""
         with self.mysql.connection() as conn:
             cursor = conn.cursor(dictionary=True, buffered=True)
+            if self._stream_capture_exists(cursor):
+                return [{"database_name": self.stream_data_database, "table_name": STREAM_CAPTURE_TABLE}]
             cursor.execute(
                 """SELECT table_schema AS database_name, table_name AS table_name
                      FROM information_schema.tables
@@ -410,6 +412,8 @@ class EventTransactionService:
 
     def object_event_columns(self, database: str) -> list[str]:
         database = validate_identifier(database, "object event database")
+        if database == self.stream_data_database:
+            return ["event_time", "event_type", "bucket_name", "resource_name", "stream_partition", "stream_offset", "target", "message", "received_at", "completed_at", "duration_ms"]
         with self.mysql.connection() as conn:
             cursor = conn.cursor(dictionary=True, buffered=True)
             cursor.execute(
@@ -430,11 +434,35 @@ class EventTransactionService:
         sort_column: str | None = None,
         sort_direction: str = "desc",
     ) -> tuple[list[str], list[dict[str, Any]], int, str, str]:
-        """Read one safely sorted page from ``database.object_event``."""
+        """Read one safely sorted page from the active processor event source."""
         database = validate_identifier(database, "object event database")
         columns = self.object_event_columns(database)
         if not columns:
             raise ValueError("The selected object_event table is unavailable.")
+        if database == self.stream_data_database:
+            page = max(page, 1)
+            page_size = max(page_size, 1)
+            with self.mysql.connection() as conn:
+                cursor = conn.cursor(dictionary=True, buffered=True)
+                stream_data = quote_identifier(self.stream_data_database, "stream data database")
+                cursor.execute(f"SELECT COUNT(*) AS total FROM {stream_data}.`{STREAM_CAPTURE_TABLE}`")
+                total = int(cursor.fetchone()["total"])
+                rows = self._durable_capture_rows(cursor, limit=page_size, offset=(page - 1) * page_size)
+            for row in rows:
+                row.update({
+                    "event_time": row.get("event_received_at"),
+                    "event_type": row.get("event_action") or "UNKNOWN",
+                    "stream_partition": row.get("partition_id"),
+                    "stream_offset": row.get("stream_offset"),
+                    "target": f"{row.get('target_database') or '—'}.{row.get('target_table') or '—'}",
+                    "received_at": row.get("event_received_at"),
+                    "completed_at": row.get("event_completed_at"),
+                    "duration_ms": row.get("event_duration_ms"),
+                    "_lifecycle_status": str(row.get("event_status") or "CAPTURED"),
+                    "_invocation_mode": str(row.get("processing_mode") or "UNKNOWN"),
+                    "_error_id": None,
+                })
+            return columns, rows, total, "received_at", "desc"
         if sort_column not in columns:
             sort_column = "event_date" if "event_date" in columns else columns[0]
         direction = sort_direction.lower()
@@ -527,6 +555,11 @@ class EventTransactionService:
     ) -> tuple[list[str], list[dict[str, Any]]]:
         """Read the selected object-event table for its CSV export."""
         database = validate_identifier(database, "object event database")
+        if database == self.stream_data_database:
+            columns, rows, _total, _sort, _direction = self.object_event_page(
+                database, page=1, page_size=500, sort_column=sort_column, sort_direction=sort_direction
+            )
+            return columns, rows
         columns = self.object_event_columns(database)
         if not columns:
             raise ValueError("The selected object_event table is unavailable.")
