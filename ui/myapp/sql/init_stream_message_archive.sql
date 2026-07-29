@@ -1,5 +1,5 @@
 -- Registry of physical durable-message archive partitions.
-CREATE TABLE IF NOT EXISTS stream_message_archive_partitions (
+CREATE TABLE IF NOT EXISTS __ARCHIVE_REGISTRY__ (
   partition_name VARCHAR(32) NOT NULL PRIMARY KEY,
   granularity ENUM('YEAR','MONTH','WEEK') NOT NULL,
   period_key VARCHAR(16) NOT NULL,

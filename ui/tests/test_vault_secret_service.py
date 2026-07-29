@@ -22,3 +22,11 @@ class VaultSecretServiceTest(unittest.TestCase):
     def test_disabled_selection_fails_cleanly(self):
         with self.assertRaisesRegex(VaultSecretError, "disabled"):
             VaultSecretService(compartment_id="x", region="y", enabled=False).list_active_secrets()
+
+    def test_list_error_is_redacted_for_browser_use(self):
+        service = VaultSecretService(compartment_id="ocid1.compartment.test", region="uk-london-1")
+        oci = SimpleNamespace(pagination=SimpleNamespace(list_call_get_all_results=lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("opc-request-id=private endpoint"))))
+        with patch.object(service, "_client", return_value=(oci, SimpleNamespace(list_secrets=object()))):
+            with self.assertRaisesRegex(VaultSecretError, "read secrets") as raised:
+                service.list_active_secrets()
+        self.assertNotIn("opc-request-id", str(raised.exception))

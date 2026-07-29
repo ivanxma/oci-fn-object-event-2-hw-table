@@ -51,7 +51,7 @@ class StreamCaptureService:
         except OSError as error: raise RuntimeError("Could not read the durable archive SQL file.") from error
 
     def _ensure_registry(self, cursor) -> None:
-        cursor.execute(self._sql(ARCHIVE_REGISTRY_SQL))
+        cursor.execute(self._sql(ARCHIVE_REGISTRY_SQL).replace("__ARCHIVE_REGISTRY__", self.registry))
 
     def _partitions(self, cursor) -> list[dict[str, Any]]:
         self._ensure_registry(cursor)

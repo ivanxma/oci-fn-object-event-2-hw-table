@@ -65,3 +65,8 @@ class StreamCaptureServiceTest(unittest.TestCase):
         self.assertEqual(service._partition_spec("YEAR", __import__("datetime").datetime(2026, 7, 29))[2], "stream_message_archive_y_2026")
         self.assertEqual(service._partition_spec("MONTH", __import__("datetime").datetime(2026, 7, 29))[2], "stream_message_archive_m_202607")
         self.assertEqual(service._partition_spec("WEEK", __import__("datetime").datetime(2026, 7, 29))[2], "stream_message_archive_w_2026w31")
+
+    def test_archive_registry_sql_is_qualified_to_stream_data_database(self):
+        cursor = Cursor()
+        StreamCaptureService(Mysql(Connection(cursor)), "stream_data")._ensure_registry(cursor)
+        self.assertIn("`stream_data`.`stream_message_archive_partitions`", cursor.executed[0][0])

@@ -35,7 +35,7 @@ class VaultSecretService:
             signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
             return oci, oci.vault.VaultsClient({"region": self.region}, signer=signer)
         except Exception as error:
-            raise VaultSecretError(f"Could not initialize OCI Vault: {type(error).__name__}: {error}") from error
+            raise VaultSecretError("Could not initialize OCI Vault access. Confirm the instance-principal configuration.") from error
 
     def list_active_secrets(self) -> list[VaultSecretRecord]:
         try:
@@ -54,4 +54,11 @@ class VaultSecretService:
         except VaultSecretError:
             raise
         except Exception as error:
-            raise VaultSecretError(f"Could not list OCI Vault secret metadata: {type(error).__name__}: {error}") from error
+            # OCI request IDs, endpoints, and SDK responses are operational
+            # diagnostics, not browser-facing UI content.  Secret metadata
+            # listing needs the separate `read secrets` policy; reading the
+            # bundle value alone does not grant this list operation.
+            raise VaultSecretError(
+                "Could not list OCI Vault secret metadata. Confirm the UI instance principal has "
+                "'read secrets' permission in the selected compartment."
+            ) from error
