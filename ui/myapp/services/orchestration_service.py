@@ -225,12 +225,19 @@ class ContainerOrchestrationService:
                     "resource_principal_enabled": not bool(getattr(container, "is_resource_principal_disabled", True)),
                     "environment": [{"name": key, "value": str(environment[key])} for key in sorted(environment) if key in allowed_environment],
                 })
+            primary_environment = getattr((getattr(item, "containers", []) or [None])[0], "environment_variables", {}) or {}
             return {
                 "id": str(item.id), "display_name": str(item.display_name), "lifecycle_state": str(item.lifecycle_state),
                 "mapping_id": str(tags.get("mapping-id", "")), "compartment_id": str(getattr(item, "compartment_id", "")),
                 "availability_domain": str(getattr(item, "availability_domain", "")), "shape": str(getattr(item, "shape", "")),
                 "ocpus": getattr(shape_config, "ocpus", ""), "memory_gbs": getattr(shape_config, "memory_in_gbs", ""),
                 "containers": containers,
+                "replacement": {
+                    "mapping_id": str(tags.get("mapping-id", "")),
+                    "partition_assignment": str(primary_environment.get("CONSUMER_PARTITIONS", "")),
+                    "image_url": str(getattr((getattr(item, "containers", []) or [None])[0], "image_url", "")),
+                    "writer_workers": str(primary_environment.get("WRITER_WORKERS", "")),
+                },
             }
         except (ValueError, OrchestrationError):
             raise

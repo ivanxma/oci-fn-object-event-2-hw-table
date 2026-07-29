@@ -118,6 +118,8 @@ class OrchestrationServiceTest(unittest.TestCase):
             detail = service.get_deployment("ocid1.computecontainerinstance.test")
         self.assertTrue(detail["containers"][0]["resource_principal_enabled"])
         self.assertEqual([item["name"] for item in detail["containers"][0]["environment"]], ["CONSUMER_PARTITIONS", "DB_SECRET_OCID"])
+        self.assertEqual(detail["replacement"]["partition_assignment"], "0")
+        self.assertEqual(detail["replacement"]["mapping_id"], "12")
 
     def test_delete_rejects_already_deleted_instance(self):
         service = self._service()

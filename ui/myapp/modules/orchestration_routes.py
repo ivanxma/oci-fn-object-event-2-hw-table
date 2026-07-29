@@ -26,6 +26,12 @@ def index():
     mappings, streams, deployments = [], [], []
     managed_state = request.args.get("managed_state", "ALL").upper()
     active_tab = request.args.get("tab", "deployment").lower()
+    replacement = {
+        "mapping_id": request.args.get("mapping_id", ""),
+        "partition_assignment": request.args.get("partition_assignment", ""),
+        "image_url": request.args.get("image_url", ""),
+        "writer_workers": request.args.get("writer_workers", ""),
+    }
     if managed_state not in {"ALL", "ACTIVE"}:
         managed_state = "ALL"
     if active_tab not in {"deployment", "instances", "database-secret"}:
@@ -57,7 +63,7 @@ def index():
     return render_dashboard(
         "orchestration.html", active_page="orchestration", active_tab=active_tab, managed_state=managed_state, mappings=mappings,
         streams=streams, deployments=deployments, vault_secrets=vault_secrets, vaults=vaults, vault_keys=vault_keys, selected_vault_id=selected_vault_id,
-        settings=_orchestration_service().settings,
+        settings=_orchestration_service().settings, replacement=replacement,
         orchestration_enabled=current_app.config["OCI_CONTAINER_ORCHESTRATION_ENABLED"],
     )
 
