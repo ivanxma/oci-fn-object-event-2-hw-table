@@ -4,7 +4,7 @@ import json
 
 from stream_consumer import assigned_partitions, capture_batch, decode_stream_message, is_expired_cursor_error, process_one, validate_mode
 from vault_config import database_config_from_secret, oci_signer, parse_secret_content, stream_data_database_config
-from message_store import ensure_schema, migration_statements, processing_lease_seconds, retry_delay_seconds, schema_statements
+from message_store import decoded_payload, ensure_schema, migration_statements, processing_lease_seconds, retry_delay_seconds, schema_statements
 
 
 class ConsumerModeTest(unittest.TestCase):
@@ -23,6 +23,13 @@ class ConsumerModeTest(unittest.TestCase):
         self.assertEqual(decode_stream_message(value)["eventType"], "test")
         with self.assertRaises(ValueError):
             decode_stream_message("not base64")
+
+    def test_decodes_durable_mysql_json_before_loader_invocation(self):
+        self.assertEqual(decoded_payload('{"eventType":"test"}'), {"eventType": "test"})
+        with self.assertRaisesRegex(RuntimeError, "valid JSON"):
+            decoded_payload("not-json")
+        with self.assertRaisesRegex(RuntimeError, "JSON object"):
+            decoded_payload(["not", "an", "object"])
 
     def test_parses_vault_database_bundle(self):
         value = base64.b64encode(json.dumps({"host":"db","port":3306,"user":"u","credential":"p","database":"d"}).encode()).decode()

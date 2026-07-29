@@ -92,6 +92,19 @@ def capture(connection: Any, *, stream_id: str, partition: str, offset: int, key
       ON DUPLICATE KEY UPDATE received_at=received_at""", (stream_id, partition, offset, key, json.dumps(payload, separators=(",", ":"))))
     connection.commit()
 
+
+def decoded_payload(value: Any) -> dict[str, Any]:
+    """Normalize Connector/Python's JSON result before loader invocation."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("Durable capture payload is not valid JSON.") from error
+    if not isinstance(value, dict):
+        raise RuntimeError("Durable capture payload must be a JSON object.")
+    return value
+
+
 def claim_next(connection: Any, *, stream_id: str, partitions: list[str]) -> dict[str, Any] | None:
     """Atomically claim only a message owned by this stream consumer."""
     if not partitions:
@@ -114,6 +127,7 @@ def claim_next(connection: Any, *, stream_id: str, partitions: list[str]) -> dic
     )
     row = cursor.fetchone()
     if row:
+        row["payload"] = decoded_payload(row["payload"])
         cursor.execute("UPDATE stream_message_capture SET status='PROCESSING', attempts=attempts+1, last_error=NULL, next_retry_at=NULL, processing_started_at=UTC_TIMESTAMP(6) WHERE id=%s", (row["id"],))
     connection.commit()
     return row
