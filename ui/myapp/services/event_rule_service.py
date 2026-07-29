@@ -166,6 +166,9 @@ class EventRuleService:
         existing_rule_id: str | None = None,
     ) -> EventRuleRecord:
         """Create or update the one managed OCI rule owned by a mapping."""
+        stream_id = str(mapping.get("stream_id") or "")
+        if not stream_id.startswith("ocid1.stream."):
+            raise EventRuleError("A valid OCI Stream must be selected before creating an Events rule.")
         condition = rule_condition(
             compartment_id=self.compartment_id,
             bucket_name=str(mapping["bucket_name"]),
@@ -178,9 +181,6 @@ class EventRuleService:
         )[:255]
         try:
             oci, client = self._client()
-            stream_id = str(mapping.get("stream_id") or "")
-            if not stream_id.startswith("ocid1.stream."):
-                raise EventRuleError("A valid OCI Stream must be selected before creating an Events rule.")
             action = oci.events.models.CreateStreamingServiceActionDetails(
                 action_type="OSS",
                 is_enabled=True,
