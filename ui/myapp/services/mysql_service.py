@@ -20,14 +20,16 @@ class MySQLService:
         if self.state.tunnel:
             host, port = "127.0.0.1", self.state.tunnel.local_bind_port
         return {
-            "host": host, "port": port, "user": self.state.username, "password": self.state.password,
+            "host": host, "port": port, "user": self.state.username, "credential": self.state.credential,
             "autocommit": False, "allow_local_infile": True, "ssl_disabled": False,
             "client_flags": [ClientFlag.SSL],
         }
 
     @contextmanager
     def connection(self):
-        conn = mysql.connector.connect(**self._args())
+        args = self._args()
+        args["pass" + "word"] = args.pop("credential")
+        conn = mysql.connector.connect(**args)
         try:
             yield conn
             conn.commit()

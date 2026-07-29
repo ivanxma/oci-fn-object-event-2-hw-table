@@ -6,11 +6,9 @@ from flask import Blueprint, current_app, flash, jsonify, redirect, request, url
 from mysql.connector import Error as MySQLError
 
 from ..services.event_rule_service import EventRuleError, EventRuleService
-from ..services.function_configuration_service import (
-    FunctionConfigurationError,
-    FunctionConfigurationService,
-)
 from ..services.mapping_service import MappingService
+from ..services.orchestration_service import validate_deployment
+from ..services.streaming_service import StreamingError, StreamingService
 from ..services.object_storage_upload_service import (
     ObjectStorageUploadError,
     ObjectStorageUploadService,
@@ -46,10 +44,11 @@ def _rule_service() -> EventRuleService:
     )
 
 
-def _function_service() -> FunctionConfigurationService:
-    return FunctionConfigurationService(
-        function_id=current_app.config["OCI_FUNCTION_ID"],
+def _streaming_service() -> StreamingService:
+    return StreamingService(
+        compartment_id=current_app.config["OCI_COMPARTMENT_ID"],
         region=current_app.config["OCI_REGION"],
+        enabled=bool(current_app.config["OCI_STREAMING_MANAGEMENT_ENABLED"]),
     )
 
 
@@ -67,7 +66,14 @@ def _form_context(mapping: dict | None = None) -> dict:
     databases = service.list_target_databases()
     database = mapping.get("target_database", "")
     tables = service.list_target_tables(database) if database in databases else []
-    return {"mapping": mapping, "target_databases": databases, "target_tables": tables}
+    streams = []
+    try:
+        streams = _streaming_service().list_streams()
+    except StreamingError as error:
+        # Render the form so an operator can see the configuration problem, but
+        # save validation below prevents a rule from targeting an unverified stream.
+        flash(str(error), "warning")
+    return {"mapping": mapping, "target_databases": databases, "target_tables": tables, "streams": streams}
 
 
 def _rule_requested() -> bool:
@@ -106,6 +112,11 @@ def _validate_rule_request(service: MappingService, values: dict[str, str], *, e
             f"Mapping {conflict} already uses this exact compartment, bucket, and object pattern. "
             "OCI rule scopes must be mutually exclusive."
         )
+    selected = next((stream for stream in _streaming_service().list_streams() if stream.id == values["stream_id"]), None)
+    if selected is None:
+        raise ValueError("The selected OCI Stream is not available in the UI compartment.")
+    replicas = 1 if values["processing_mode"] == "FIFO" else min(selected.partitions, int(values["worker_threads"]))
+    validate_deployment(processing_mode=values["processing_mode"], partitions=selected.partitions, replicas=replicas)
 
 
 def _reconcile_rule(
@@ -134,11 +145,10 @@ def _reconcile_rule(
 @login_required
 def list_mappings():
     active_tab = request.args.get("tab", "mappings")
-    if active_tab not in {"mappings", "rules", "function", "upload"}:
+    if active_tab not in {"mappings", "rules", "deployment", "upload"}:
         active_tab = "mappings"
     mappings: list[dict] = []
     rules = []
-    function_configuration = None
     selected_upload_mapping = None
     upload_objects = []
     try:
@@ -153,15 +163,6 @@ def list_mappings():
         except EventRuleError as error:
             current_app.logger.exception("Could not read OCI Events rules")
             flash(str(error), "error")
-    elif active_tab == "function":
-        if not current_app.config["OCI_FUNCTION_CONFIGURATION_ENABLED"]:
-            flash("OCI Function configuration management is disabled for this UI deployment.", "warning")
-        else:
-            try:
-                function_configuration = _function_service().get()
-            except FunctionConfigurationError as error:
-                current_app.logger.exception("Could not read OCI Function configuration")
-                flash(str(error), "error")
     elif active_tab == "upload":
         try:
             selected_id = request.args.get("mapping_id", "").strip()
@@ -196,7 +197,6 @@ def list_mappings():
             for rule in rules
         },
         rules=rules,
-        function_configuration=function_configuration,
         selected_upload_mapping=selected_upload_mapping,
         upload_objects=upload_objects,
         upload_folders={int(mapping["id"]): default_folder(mapping["resource_name_pattern"]) for mapping in mappings},
@@ -500,23 +500,6 @@ def delete_mapping_objects():
     return redirect(url_for("mappings.list_mappings", tab="upload", mapping_id=mapping_key or ""))
 
 
-@mappings_bp.post("/function")
-@login_required
-def update_function_configuration():
-    try:
-        if not current_app.config["OCI_FUNCTION_CONFIGURATION_ENABLED"]:
-            raise FunctionConfigurationError("OCI Function configuration management is disabled.")
-        configuration = _function_service().update(request.form)
-        flash(
-            f"OCI Function {configuration.display_name} configuration updated: "
-            f"Sync {configuration.sync_timeout_seconds}s, Detached {configuration.detached_timeout_seconds}s, "
-            f"Memory {configuration.memory_in_mbs} MB.",
-            "success",
-        )
-    except (ValueError, FunctionConfigurationError) as error:
-        current_app.logger.exception("Could not update OCI Function configuration")
-        flash(str(error), "error")
-    return redirect(url_for("mappings.list_mappings", tab="function"))
 
 
 @mappings_bp.get("/tables")

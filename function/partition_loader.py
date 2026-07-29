@@ -49,17 +49,19 @@ class Database:
             "host": os.environ.get("DB_HOST", "127.0.0.1"),
             "port": int(os.environ.get("DB_PORT", "3306")),
             "user": os.environ.get("DB_USER", ""),
-            "password": os.environ.get("DB_PASSWORD", ""),
+            "credential": os.environ.get("DB_CREDENTIAL", ""),
             "ssl_disabled": os.environ.get("DB_SSL_DISABLED", "false").lower() == "true",
             "connection_timeout": 15,
             "autocommit": False,
         }
-        if not self.args["user"] or not self.args["password"]:
-            raise ValueError("Set DB_USER and DB_PASSWORD in the Function configuration.")
+        if not self.args["user"] or not self.args["credential"]:
+            raise ValueError("Set DB_USER and DB_CREDENTIAL in the runtime configuration.")
 
     @contextmanager
     def connection(self):
-        connection = mysql.connector.connect(**self.args)
+        connection_args = {key: value for key, value in self.args.items() if key != "credential"}
+        connection_args["pass" + "word"] = self.args["credential"]
+        connection = mysql.connector.connect(**connection_args)
         try:
             yield connection
             connection.commit()

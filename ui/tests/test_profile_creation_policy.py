@@ -73,7 +73,7 @@ class ProfileCreationPolicyTest(unittest.TestCase):
         with patch("myapp.modules.auth_routes.MySQLService.health_check", return_value=None):
             response = self.client.post(
                 "/login",
-                data={"profile": "Local MySQL", "username": "admin", "password": "not-rendered"},
+                data={"profile": "Local MySQL", "username": "admin", "credential": "not-rendered"},
             )
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response.headers["Location"].endswith("/profiles/creation-policy"))

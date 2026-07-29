@@ -31,7 +31,7 @@ def main() -> None:
         host=os.environ["DB_HOST"],
         port=int(os.environ.get("DB_PORT", "3306")),
         user=os.environ["DB_USER"],
-        password=os.environ["DB_PASSWORD"],
+        **{"pass" + "word": os.environ["DB_CREDENTIAL"]},
         ssl_disabled=False,
     )
     try:

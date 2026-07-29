@@ -12,6 +12,8 @@ from .modules.event_tx_routes import event_tx_bp
 from .modules.import_routes import import_bp
 from .modules.mapping_routes import mappings_bp
 from .modules.profile_routes import profile_bp
+from .modules.streaming_routes import streaming_bp
+from .modules.orchestration_routes import orchestration_bp
 from .services.profile_store import ProfileStore
 from .services.session_store import SessionStore
 
@@ -36,6 +38,12 @@ def create_app(test_config: dict | None = None) -> Flask:
         OCI_EVENT_RULE_MANAGEMENT_ENABLED=os.environ.get("OCI_EVENT_RULE_MANAGEMENT_ENABLED", "false").lower() in {"1", "true", "yes"},
         OCI_EVENT_RULE_PREFIX=os.environ.get("OCI_EVENT_RULE_PREFIX", "object-storage-heatwave"),
         OCI_OBJECT_STORAGE_NAMESPACE=os.environ.get("OCI_OBJECT_STORAGE_NAMESPACE", ""),
+        OCI_STREAMING_MANAGEMENT_ENABLED=os.environ.get("OCI_STREAMING_MANAGEMENT_ENABLED", "false").lower() in {"1", "true", "yes"},
+        OCI_CONTAINER_ORCHESTRATION_ENABLED=os.environ.get("OCI_CONTAINER_ORCHESTRATION_ENABLED", "false").lower() in {"1", "true", "yes"},
+        CONTAINER_AVAILABILITY_DOMAIN=os.environ.get("CONTAINER_AVAILABILITY_DOMAIN", ""), CONSUMER_SHAPE=os.environ.get("CONSUMER_SHAPE", ""),
+        CONSUMER_OCPUS=os.environ.get("CONSUMER_OCPUS", ""), CONSUMER_MEMORY_GBS=os.environ.get("CONSUMER_MEMORY_GBS", ""),
+        CONSUMER_IMAGE_URL=os.environ.get("CONSUMER_IMAGE_URL", ""), CONSUMER_CONTAINER_NAME_PREFIX=os.environ.get("CONSUMER_CONTAINER_NAME_PREFIX", "object-storage-stream-consumer"),
+        DB_SECRET_OCID=os.environ.get("DB_SECRET_OCID", ""), DB_HOST=os.environ.get("DB_HOST", ""), DB_PORT=os.environ.get("DB_PORT", "3306"), DB_USER=os.environ.get("DB_USER", ""), DB_NAME=os.environ.get("DB_NAME", ""), SUBNET_ID=os.environ.get("SUBNET_ID", ""),
     )
     if test_config:
         app.config.update(test_config)
@@ -54,6 +62,8 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.register_blueprint(profile_bp)
     app.register_blueprint(import_bp)
     app.register_blueprint(mappings_bp)
+    app.register_blueprint(streaming_bp)
+    app.register_blueprint(orchestration_bp)
     return app
 
 

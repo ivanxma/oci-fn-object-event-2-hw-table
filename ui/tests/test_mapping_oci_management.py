@@ -18,6 +18,8 @@ def mapping_form(**overrides: str) -> dict[str, str]:
         "target_table": "perf_t_001",
         "invocation_mode": "SYNC",
         "worker_threads": "4",
+        "stream_id": "ocid1.stream.oc1.uk-london-1.example",
+        "processing_mode": "FIFO",
     }
     values.update(overrides)
     return values
@@ -49,6 +51,14 @@ class MappingOciManagementTest(unittest.TestCase):
             with self.subTest(workers=workers):
                 with self.assertRaisesRegex(ValueError, "Worker threads"):
                     MappingService.normalize(mapping_form(worker_threads=workers))
+
+    def test_mapping_requires_stream_and_known_processing_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "OCI Stream is required"):
+            MappingService.normalize(mapping_form(stream_id=""))
+        with self.assertRaisesRegex(ValueError, "Processing mode"):
+            MappingService.normalize(mapping_form(processing_mode="UNORDERED"))
+        with self.assertRaisesRegex(ValueError, "DETACHED Function mode is retired"):
+            MappingService.normalize(mapping_form(invocation_mode="DETACHED"))
 
     def test_rule_condition_has_bucket_pattern_compartment_and_lifecycle_events(self) -> None:
         condition = json.loads(

@@ -11,7 +11,7 @@ from pathlib import Path
 class ConnectionSession:
     profile: dict
     username: str
-    password: str
+    credential: str
     tunnel: object | None = None
     imports: dict[str, dict] = field(default_factory=dict)
 
@@ -20,9 +20,9 @@ class SessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, ConnectionSession] = {}
 
-    def create(self, profile: dict, username: str, password: str, tunnel: object | None = None) -> str:
+    def create(self, profile: dict, username: str, credential: str, tunnel: object | None = None) -> str:
         session_id = secrets.token_urlsafe(32)
-        self._sessions[session_id] = ConnectionSession(profile, username, password, tunnel)
+        self._sessions[session_id] = ConnectionSession(profile, username, credential, tunnel)
         return session_id
 
     def get(self, session_id: str | None) -> ConnectionSession | None:

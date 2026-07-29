@@ -48,18 +48,18 @@ def rule_condition(*, compartment_id: str, bucket_name: str, resource_pattern: s
 
 
 class EventRuleService:
-    """Use the UI host instance principal to manage rules for one Function."""
+    """Use the UI host instance principal to manage rules for OCI Streams."""
 
     def __init__(
         self,
         *,
-        function_id: str,
+        function_id: str = "",
         compartment_id: str,
         region: str,
         enabled: bool,
         rule_prefix: str = "object-storage-heatwave",
     ) -> None:
-        self.function_id = function_id.strip()
+        self.function_id = function_id.strip()  # legacy compatibility only
         self.compartment_id = compartment_id.strip()
         self.region = region.strip()
         self.enabled = enabled
@@ -71,7 +71,6 @@ class EventRuleService:
         missing = [
             name
             for name, value in (
-                ("OCI_FUNCTION_ID", self.function_id),
                 ("OCI_COMPARTMENT_ID", self.compartment_id),
                 ("OCI_REGION", self.region),
             )
@@ -107,6 +106,16 @@ class EventRuleService:
             for action in actions
         )
 
+    @staticmethod
+    def _is_stream_rule(rule: Any) -> bool:
+        actions = getattr(getattr(rule, "actions", None), "actions", None) or []
+        return any(str(getattr(action, "action_type", "")).upper() == "OSS" for action in actions)
+
+    @staticmethod
+    def _targets_stream(rule: Any, stream_id: str) -> bool:
+        actions = getattr(getattr(rule, "actions", None), "actions", None) or []
+        return any(str(getattr(action, "action_type", "")).upper() == "OSS" and getattr(action, "stream_id", None) == stream_id for action in actions)
+
     def _record(self, rule: Any) -> EventRuleRecord:
         tags = getattr(rule, "freeform_tags", None) or {}
         return EventRuleRecord(
@@ -121,7 +130,7 @@ class EventRuleService:
         )
 
     def list_function_rules(self) -> list[EventRuleRecord]:
-        """Read live rules from OCI and retain rules targeting this Function."""
+        """Compatibility name: return live OCI Streaming rules."""
         try:
             oci, client = self._client()
             summaries = oci.pagination.list_call_get_all_results(
@@ -139,7 +148,7 @@ class EventRuleService:
                     raise
                 if str(getattr(rule, "lifecycle_state", "")).upper() == "DELETED":
                     continue
-                if self._targets_function(rule):
+                if self._is_stream_rule(rule):
                     records.append(self._record(rule))
             return sorted(records, key=lambda item: item.display_name.lower())
         except EventRuleError:
@@ -169,11 +178,14 @@ class EventRuleService:
         )[:255]
         try:
             oci, client = self._client()
-            action = oci.events.models.CreateFaaSActionDetails(
-                action_type="FAAS",
+            stream_id = str(mapping.get("stream_id") or "")
+            if not stream_id.startswith("ocid1.stream."):
+                raise EventRuleError("A valid OCI Stream must be selected before creating an Events rule.")
+            action = oci.events.models.CreateStreamingServiceActionDetails(
+                action_type="OSS",
                 is_enabled=True,
-                description="Object Storage CSV mapping",
-                function_id=self.function_id,
+                description="Object Storage CSV Streaming mapping",
+                stream_id=stream_id,
             )
             actions = oci.events.models.ActionDetailsList(actions=[action])
             if existing_rule_id:
@@ -183,9 +195,9 @@ class EventRuleService:
                     if error.status != 404:
                         raise
                 else:
-                    if not self._targets_function(existing):
+                    if not self._targets_stream(existing, stream_id):
                         raise EventRuleError(
-                            "The associated OCI rule no longer targets the configured Function; it was not overwritten."
+                            "The associated OCI rule no longer targets the selected Stream; it was not overwritten."
                         )
                     details = oci.events.models.UpdateRuleDetails(
                         display_name=existing.display_name,
@@ -217,12 +229,12 @@ class EventRuleService:
             ) from error
 
     def get_function_rule(self, rule_id: str) -> EventRuleRecord:
-        """Return one live rule after verifying its FAAS action target."""
+        """Compatibility name: return one live OCI Streaming rule."""
         try:
             _oci, client = self._client()
             rule = client.get_rule(rule_id).data
-            if not self._targets_function(rule):
-                raise EventRuleError("The selected OCI rule does not target the configured Function.")
+            if not self._is_stream_rule(rule):
+                raise EventRuleError("The selected OCI rule does not target an OCI Stream.")
             if str(getattr(rule, "lifecycle_state", "")).upper() == "DELETED":
                 raise EventRuleError("The selected OCI rule has already been deleted.")
             return self._record(rule)
@@ -234,7 +246,7 @@ class EventRuleService:
             ) from error
 
     def set_rule_enabled(self, rule_id: str, *, enabled: bool) -> EventRuleRecord:
-        """Enable or disable a rule only after verifying its Function target."""
+        """Enable or disable a rule only after verifying its Streaming target."""
         try:
             oci, client = self._client()
             self.get_function_rule(rule_id)
@@ -249,7 +261,7 @@ class EventRuleService:
             ) from error
 
     def delete_function_rule(self, rule_id: str) -> None:
-        """Delete a rule only after verifying that it targets this Function."""
+        """Delete a rule only after verifying that it targets an OCI Stream."""
         try:
             oci, client = self._client()
             try:
@@ -258,9 +270,9 @@ class EventRuleService:
                 if error.status == 404:
                     return
                 raise
-            if not self._targets_function(rule):
+            if not self._is_stream_rule(rule):
                 raise EventRuleError(
-                    "The selected OCI rule does not target the configured Function and was not deleted."
+                    "The selected OCI rule does not target an OCI Stream and was not deleted."
                 )
             client.delete_rule(rule_id)
         except EventRuleError:

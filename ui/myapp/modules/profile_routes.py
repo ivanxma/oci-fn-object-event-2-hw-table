@@ -19,7 +19,7 @@ def create():
     if request.method == "POST":
         try:
             store.save(request.form, request.files.get("ssh_key"), create_only=True)
-            flash("Profile created. Sign in with its MySQL username and password.", "success")
+            flash("Profile created. Sign in with its MySQL username and credential.", "success")
             return redirect(url_for("auth.login"))
         except (ValueError, OSError) as error:
             flash(str(error), "error")

@@ -92,7 +92,7 @@ Important protected `deploy/env.sh` values include:
 | Area | Values |
 | --- | --- |
 | OCI | compartment, region, subnet, application, repository, bucket, rule and log group |
-| Database | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, control database |
+| Database | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_CREDENTIAL`, control database |
 | Execution | `FUNCTION_TIMEOUT` (Sync, max 300), `DETACHED_TIMEOUT_SECONDS` (max 3600), `FUNCTION_MEMORY` |
 | Streaming | `BATCH_ROWS`, `WRITER_WORKERS`, `OBJECT_STORAGE_RANGE_BYTES`, `OBJECT_STORAGE_READ_TIMEOUT_SECONDS` |
 | Detached | `DETACHED_ENABLED`; Function OCID and invoke endpoint are discovered and injected by deployment |

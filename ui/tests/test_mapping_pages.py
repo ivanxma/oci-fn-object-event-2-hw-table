@@ -29,7 +29,6 @@ except ModuleNotFoundError:
 
 from myapp.app import create_app
 from myapp.services.event_rule_service import EventRuleRecord
-from myapp.services.function_configuration_service import FunctionConfiguration
 from myapp.services.object_storage_upload_service import ObjectRecord
 
 
@@ -121,31 +120,14 @@ class MappingPageTest(unittest.TestCase):
         self.assertIn(b"/mappings/rules/delete-selected", response.data)
         self.assertNotIn(b"Edit mapping/rule", response.data)
 
-    def test_function_configuration_tab_has_global_capacity_fields(self) -> None:
-        configuration = FunctionConfiguration(
-            display_name="object-storage-heatwave5",
-            lifecycle_state="ACTIVE",
-            shape="GENERIC_X86",
-            memory_in_mbs=1024,
-            sync_timeout_seconds=300,
-            detached_timeout_seconds=3600,
-            provisioned_concurrency=0,
-            writer_workers=4,
-            batch_rows=10000,
-            object_storage_range_bytes=33554432,
-            object_storage_read_timeout_seconds=300,
-            image="example/image:1",
-            time_updated=datetime.now(timezone.utc),
-        )
+    def test_consumer_deployment_tab_replaces_function_capacity(self) -> None:
         health, mappings = self._base_patches()
-        with health, mappings, patch(
-            "myapp.modules.mapping_routes.FunctionConfigurationService.get", return_value=configuration
-        ):
-            response = self.client.get("/mappings/?tab=function")
+        with health, mappings:
+            response = self.client.get("/mappings/?tab=deployment")
         self.assertEqual(response.status_code, 200)
-        for label in (b"Sync timeout", b"Detached timeout", b"Memory", b"Provisioned concurrency", b"Default writer workers"):
-            self.assertIn(label, response.data)
-        self.assertNotIn(b"not-rendered", response.data)
+        self.assertIn(b"Consumer deployment", response.data)
+        self.assertIn(b"Open Orchestration", response.data)
+        self.assertNotIn(b"OCI Function Configuration", response.data)
 
     def test_selected_rule_edit_redirects_to_owning_mapping(self) -> None:
         rule = EventRuleRecord(

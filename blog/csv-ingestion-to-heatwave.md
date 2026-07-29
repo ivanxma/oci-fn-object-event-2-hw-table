@@ -155,7 +155,7 @@ The Flask UI is where an operator defines and reviews the operable flow:
 - link each transaction to its raw Object Storage event and any error record;
 - allow safe operations such as retrying a failed eligible event, disabling a mapping, or viewing a paged sample of the target table.
 
-Do not load an entire large table into the browser. Server-page event history and target-table samples. Keep passwords server-side only for the active connection, and apply authorization to mapping changes and retry actions.
+Do not load an entire large table into the browser. Server-page event history and target-table samples. Keep credentials server-side only for the active connection, and apply authorization to mapping changes and retry actions.
 
 ## Track events through to an issue
 

@@ -16,17 +16,17 @@ def login():
     store = current_app.extensions["profile_store"]
     if request.method == "POST":
         profile = store.get(request.form.get("profile", ""))
-        username, password = request.form.get("username", ""), request.form.get("password", "")
-        if not profile or not username or not password:
-            flash("Choose a profile and enter a username and password.", "error")
+        username, credential = request.form.get("username", ""), request.form.get("credential", "")
+        if not profile or not username or not credential:
+            flash("Choose a profile and enter a username and database credential.", "error")
         else:
             tunnel = None
             try:
                 if profile["mode"] == "ssh":
                     tunnel = open_tunnel(profile, store.key_path(profile))
-                provisional = type("State", (), {"profile": profile, "username": username, "password": password, "tunnel": tunnel})()
+                provisional = type("State", (), {"profile": profile, "username": username, "credential": credential, "tunnel": tunnel})()
                 MySQLService(provisional).health_check()
-                connection_id = current_app.extensions["session_store"].create(profile, username, password, tunnel)
+                connection_id = current_app.extensions["session_store"].create(profile, username, credential, tunnel)
                 session.clear()
                 session["connection_id"] = connection_id
                 if store.profile_creation_enabled():

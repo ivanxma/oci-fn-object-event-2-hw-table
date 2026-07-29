@@ -22,9 +22,10 @@ UI_CONTAINER_NAME="${UI_CONTAINER_NAME:-$UI_SERVICE_NAME}"
 UI_BIND_PORT="${UI_BIND_PORT:-8080}"
 UI_SERVER_NAME="${UI_SERVER_NAME:-_}"
 CONTROL_DATABASE="${CONTROL_DATABASE:-${DB_NAME:-fndb}}"
-OCI_FUNCTION_CONFIGURATION_ENABLED="${OCI_FUNCTION_CONFIGURATION_ENABLED:-${OCI_TIMEOUT_DEPLOY_ENABLED:-true}}"
 OCI_EVENT_RULE_MANAGEMENT_ENABLED="${OCI_EVENT_RULE_MANAGEMENT_ENABLED:-true}"
-OCI_EVENT_RULE_PREFIX="${OCI_EVENT_RULE_PREFIX:-${FUNCTION_NAME:-object-storage-heatwave}}"
+OCI_STREAMING_MANAGEMENT_ENABLED="${OCI_STREAMING_MANAGEMENT_ENABLED:-false}"
+OCI_CONTAINER_ORCHESTRATION_ENABLED="${OCI_CONTAINER_ORCHESTRATION_ENABLED:-false}"
+OCI_EVENT_RULE_PREFIX="${OCI_EVENT_RULE_PREFIX:-object-storage-heatwave}"
 RUNTIME_ENV="$ROOT_DIR/ui/.ui-runtime.env"
 INSTANCE_DIR="$ROOT_DIR/ui/instance"
 SOURCE_TLS_CERT_FILE="${TLS_CERT_FILE:-}"
@@ -35,18 +36,15 @@ TLS_KEY_FILE="$DEPLOY_TLS_DIR/tls.key"
 CURRENT_USER=$(id -un)
 CURRENT_GROUP=$(id -gn)
 
-OCI_FUNCTION_ID=""
-if [[ "$OCI_FUNCTION_CONFIGURATION_ENABLED" == "true" || "$OCI_EVENT_RULE_MANAGEMENT_ENABLED" == "true" ]]; then
-  for value in COMPARTMENT_ID APP_NAME FUNCTION_NAME REGION; do
-    [[ -n "${!value:-}" ]] || { echo "$value is required when OCI Function or Events management is enabled." >&2; exit 1; }
+if [[ "$OCI_EVENT_RULE_MANAGEMENT_ENABLED" == "true" || "$OCI_STREAMING_MANAGEMENT_ENABLED" == "true" ]]; then
+  for value in COMPARTMENT_ID REGION; do
+    [[ -n "${!value:-}" ]] || { echo "$value is required when OCI Streaming or Events management is enabled." >&2; exit 1; }
   done
-  OCI=(oci --auth instance_principal)
-  APP_ID=$("${OCI[@]}" fn application list --compartment-id "$COMPARTMENT_ID" --all \
-    --query "data[?\"display-name\"=='$APP_NAME'].id | [0]" --raw-output)
-  [[ -n "$APP_ID" && "$APP_ID" != null ]] || { echo "Function application $APP_NAME was not found." >&2; exit 1; }
-  OCI_FUNCTION_ID=$("${OCI[@]}" fn function list --application-id "$APP_ID" --all \
-    --query "data[?\"display-name\"=='$FUNCTION_NAME'].id | [0]" --raw-output)
-  [[ -n "$OCI_FUNCTION_ID" && "$OCI_FUNCTION_ID" != null ]] || { echo "Function $FUNCTION_NAME was not found in $APP_NAME." >&2; exit 1; }
+fi
+if [[ "$OCI_CONTAINER_ORCHESTRATION_ENABLED" == "true" ]]; then
+  for value in SUBNET_ID CONTAINER_AVAILABILITY_DOMAIN CONSUMER_SHAPE CONSUMER_OCPUS CONSUMER_MEMORY_GBS CONSUMER_IMAGE_URL DB_SECRET_OCID DB_HOST DB_PORT DB_USER DB_NAME; do
+    [[ -n "${!value:-}" ]] || { echo "$value is required when Container orchestration is enabled." >&2; exit 1; }
+  done
 fi
 
 case "$UI_BIND_PORT" in
@@ -78,9 +76,9 @@ sudo chmod 644 "$TLS_CERT_FILE"
 
 # The UI keeps database credentials in its server-side session only.  The
 # deployment environment contributes the Flask signing key, control DB, and
-# non-secret OCI Function identity used for timeout reconciliation.
-printf 'FLASK_SECRET_KEY=%s\nCONTROL_DATABASE=%s\nSESSION_COOKIE_SECURE=1\nOCI_FUNCTION_CONFIGURATION_ENABLED=%s\nOCI_EVENT_RULE_MANAGEMENT_ENABLED=%s\nOCI_EVENT_RULE_PREFIX=%s\nOCI_FUNCTION_ID=%s\nOCI_COMPARTMENT_ID=%s\nOCI_REGION=%s\nOCI_OBJECT_STORAGE_NAMESPACE=%s\n' \
-  "$FLASK_SECRET_KEY" "$CONTROL_DATABASE" "$OCI_FUNCTION_CONFIGURATION_ENABLED" "$OCI_EVENT_RULE_MANAGEMENT_ENABLED" "$OCI_EVENT_RULE_PREFIX" "$OCI_FUNCTION_ID" "${COMPARTMENT_ID:-}" "${REGION:-}" "${OBJECT_STORAGE_NAMESPACE:-}" > "$RUNTIME_ENV"
+# non-secret OCI Streaming/Events scope. No Function lookup or ID is required.
+printf 'FLASK_SECRET_KEY=%s\nCONTROL_DATABASE=%s\nSESSION_COOKIE_SECURE=1\nOCI_FUNCTION_CONFIGURATION_ENABLED=false\nOCI_EVENT_RULE_MANAGEMENT_ENABLED=%s\nOCI_STREAMING_MANAGEMENT_ENABLED=%s\nOCI_CONTAINER_ORCHESTRATION_ENABLED=%s\nOCI_EVENT_RULE_PREFIX=%s\nOCI_FUNCTION_ID=\nOCI_COMPARTMENT_ID=%s\nOCI_REGION=%s\nOCI_OBJECT_STORAGE_NAMESPACE=%s\nSUBNET_ID=%s\nCONTAINER_AVAILABILITY_DOMAIN=%s\nCONSUMER_SHAPE=%s\nCONSUMER_OCPUS=%s\nCONSUMER_MEMORY_GBS=%s\nCONSUMER_IMAGE_URL=%s\nCONSUMER_CONTAINER_NAME_PREFIX=%s\nDB_SECRET_OCID=%s\nDB_HOST=%s\nDB_PORT=%s\nDB_USER=%s\nDB_NAME=%s\n' \
+  "$FLASK_SECRET_KEY" "$CONTROL_DATABASE" "$OCI_EVENT_RULE_MANAGEMENT_ENABLED" "$OCI_STREAMING_MANAGEMENT_ENABLED" "$OCI_CONTAINER_ORCHESTRATION_ENABLED" "$OCI_EVENT_RULE_PREFIX" "${COMPARTMENT_ID:-}" "${REGION:-}" "${OBJECT_STORAGE_NAMESPACE:-}" "${SUBNET_ID:-}" "${CONTAINER_AVAILABILITY_DOMAIN:-}" "${CONSUMER_SHAPE:-}" "${CONSUMER_OCPUS:-}" "${CONSUMER_MEMORY_GBS:-}" "${CONSUMER_IMAGE_URL:-}" "${CONSUMER_CONTAINER_NAME_PREFIX:-object-storage-stream-consumer}" "${DB_SECRET_OCID:-}" "${DB_HOST:-}" "${DB_PORT:-3306}" "${DB_USER:-}" "${DB_NAME:-}" > "$RUNTIME_ENV"
 chmod 600 "$RUNTIME_ENV"
 
 # A system service uses the system Podman store/runtime rather than a user's

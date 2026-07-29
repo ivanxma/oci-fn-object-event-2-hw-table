@@ -3,7 +3,7 @@
 `setup.sh` prepares a pre-created empty control/target database for a repeatable
 Object Storage ingestion test. It validates the deployed Function and OCI Events
 rule, creates the partitioned target table and resource mapping, and adds a
-non-secret direct-MySQL UI profile. It never stores the MySQL password in the UI
+non-secret direct-MySQL UI profile. It never stores the MySQL credential in the UI
 profile. `--smoke-test` uploads 100 rows, waits for successful ingestion, deletes
 the object, waits for successful partition cleanup, and verifies zero final rows.
 `--reset` clears only mutable batch/target state and deliberately preserves

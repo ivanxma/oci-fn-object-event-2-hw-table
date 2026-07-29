@@ -357,7 +357,7 @@ An error message should identify the failed phase and preserve safe context. Use
 - `No space left on device` for the obsolete local-download design;
 - `FunctionInvokeTimeout` or HTTP 504 when the execution budget is exceeded.
 
-Do not log database passwords, OCIR tokens, SSH keys, full sensitive row values, or signed URLs. OCI Functions invocation logs complement the control database, but a terminal control record is necessary because a detached caller receives only submission acknowledgement rather than the final worker result.
+Do not log database credentials, registry secrets, SSH keys, full sensitive row values, or signed URLs. OCI Functions invocation logs complement the control database, but a terminal control record is necessary because a detached caller receives only submission acknowledgement rather than the final worker result.
 
 One current limitation is that a secondary audit-write failure can be suppressed while handling the original exception. Production hardening should send an independent structured error to OCI Logging and, where possible, a detached failure destination so an audit database outage does not make a failed event invisible.
 

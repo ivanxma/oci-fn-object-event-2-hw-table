@@ -21,7 +21,7 @@ set -a
 . "$ENV_FILE"
 set +a
 
-for value in COMPARTMENT_ID APP_NAME FUNCTION_NAME RULE_NAME REGION DB_HOST DB_USER DB_PASSWORD CONTROL_DATABASE OBJECT_STORAGE_BUCKET_NAME UI_SERVICE_NAME UI_CONTAINER_NAME; do
+for value in COMPARTMENT_ID APP_NAME FUNCTION_NAME RULE_NAME REGION DB_HOST DB_USER DB_CREDENTIAL CONTROL_DATABASE OBJECT_STORAGE_BUCKET_NAME UI_SERVICE_NAME UI_CONTAINER_NAME; do
   [[ -n "${!value:-}" ]] || { echo "Missing $value in $ENV_FILE" >&2; exit 1; }
 done
 for command in oci jq podman sudo; do
@@ -69,13 +69,13 @@ export EVENT_RULE_ID BUCKET_NAME="$OBJECT_STORAGE_BUCKET_NAME"
 sudo podman exec --user 10001 \
   -e PROFILE_NAME="$PROFILE_NAME" -e PROFILE_HOST="$DB_HOST" -e PROFILE_PORT="${DB_PORT:-3306}" -e PROFILE_DATABASE="$CONTROL_DATABASE" \
   "$UI_CONTAINER_NAME" python -c 'import os; from pathlib import Path; from myapp.services.profile_store import ProfileStore; store=ProfileStore(Path("/app/instance/profiles.json"),Path("/app/instance/keys")); name=os.environ["PROFILE_NAME"]; store.save({"name":name,"mode":"direct","host":os.environ["PROFILE_HOST"],"port":os.environ["PROFILE_PORT"],"database":os.environ["PROFILE_DATABASE"]},original_name=name)'
-echo "UI profile ready: $PROFILE_NAME (no password stored)"
+echo "UI profile ready: $PROFILE_NAME (no credential stored)"
 
 DB_SETUP_ARGS=()
 [[ "$RESET" == true ]] && DB_SETUP_ARGS+=(--reset)
-sudo --preserve-env=DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,CONTROL_DATABASE,TARGET_DATABASE,TARGET_TABLE,RESOURCE_NAME_PATTERN,COMPARTMENT_NAME,BUCKET_NAME,INVOCATION_MODE,WRITER_WORKERS,EVENT_RULE_ID \
+sudo --preserve-env=DB_HOST,DB_PORT,DB_USER,DB_CREDENTIAL,CONTROL_DATABASE,TARGET_DATABASE,TARGET_TABLE,RESOURCE_NAME_PATTERN,COMPARTMENT_NAME,BUCKET_NAME,INVOCATION_MODE,WRITER_WORKERS,EVENT_RULE_ID \
   podman run --rm --user 0 --network host \
-  -e DB_HOST -e DB_PORT -e DB_USER -e DB_PASSWORD -e CONTROL_DATABASE \
+  -e DB_HOST -e DB_PORT -e DB_USER -e DB_CREDENTIAL -e CONTROL_DATABASE \
   -e TARGET_DATABASE -e TARGET_TABLE -e RESOURCE_NAME_PATTERN -e COMPARTMENT_NAME \
   -e BUCKET_NAME -e INVOCATION_MODE -e WRITER_WORKERS -e EVENT_RULE_ID \
   -v "$ROOT_DIR/performance_test/setup_db.py:/opt/setup_db.py:ro,Z" \
@@ -91,17 +91,17 @@ if [[ "$SMOKE_TEST" == true ]]; then
   "${OCI[@]}" os object put --bucket-name "$OBJECT_STORAGE_BUCKET_NAME" --name "$OBJECT_NAME" --file "$SMOKE_FILE" --force >/dev/null
   echo "Smoke object uploaded: $OBJECT_NAME"
   export OBJECT_NAME EXPECTED_ACTION=CREATE EXPECTED_ROWS=100 EVENT_WAIT_SECONDS="${EVENT_WAIT_SECONDS:-360}"
-  sudo --preserve-env=DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,CONTROL_DATABASE,TARGET_DATABASE,TARGET_TABLE,OBJECT_NAME,EXPECTED_ACTION,EXPECTED_ROWS,EVENT_WAIT_SECONDS \
+  sudo --preserve-env=DB_HOST,DB_PORT,DB_USER,DB_CREDENTIAL,CONTROL_DATABASE,TARGET_DATABASE,TARGET_TABLE,OBJECT_NAME,EXPECTED_ACTION,EXPECTED_ROWS,EVENT_WAIT_SECONDS \
     podman run --rm --user 0 --network host \
-    -e DB_HOST -e DB_PORT -e DB_USER -e DB_PASSWORD -e CONTROL_DATABASE \
+    -e DB_HOST -e DB_PORT -e DB_USER -e DB_CREDENTIAL -e CONTROL_DATABASE \
     -e TARGET_DATABASE -e TARGET_TABLE -e OBJECT_NAME -e EXPECTED_ACTION -e EXPECTED_ROWS -e EVENT_WAIT_SECONDS \
     -v "$ROOT_DIR/performance_test/wait_event.py:/opt/wait_event.py:ro,Z" \
     "$UI_SERVICE_NAME:latest" python /opt/wait_event.py
   "${OCI[@]}" os object delete --bucket-name "$OBJECT_STORAGE_BUCKET_NAME" --name "$OBJECT_NAME" --force
   export EXPECTED_ACTION=DELETE EXPECTED_ROWS=0
-  sudo --preserve-env=DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,CONTROL_DATABASE,TARGET_DATABASE,TARGET_TABLE,OBJECT_NAME,EXPECTED_ACTION,EXPECTED_ROWS,EVENT_WAIT_SECONDS \
+  sudo --preserve-env=DB_HOST,DB_PORT,DB_USER,DB_CREDENTIAL,CONTROL_DATABASE,TARGET_DATABASE,TARGET_TABLE,OBJECT_NAME,EXPECTED_ACTION,EXPECTED_ROWS,EVENT_WAIT_SECONDS \
     podman run --rm --user 0 --network host \
-    -e DB_HOST -e DB_PORT -e DB_USER -e DB_PASSWORD -e CONTROL_DATABASE \
+    -e DB_HOST -e DB_PORT -e DB_USER -e DB_CREDENTIAL -e CONTROL_DATABASE \
     -e TARGET_DATABASE -e TARGET_TABLE -e OBJECT_NAME -e EXPECTED_ACTION -e EXPECTED_ROWS -e EVENT_WAIT_SECONDS \
     -v "$ROOT_DIR/performance_test/wait_event.py:/opt/wait_event.py:ro,Z" \
     "$UI_SERVICE_NAME:latest" python /opt/wait_event.py

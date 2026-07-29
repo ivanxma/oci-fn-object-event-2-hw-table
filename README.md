@@ -2,17 +2,17 @@
 
 This application turns OCI Object Storage CSV lifecycle events into controlled,
 auditable MySQL table updates. OCI Events routes object create, update, and
-delete events to an OCI Function. A mapping selects the target table and either
-Sync or Detached execution. CSV rows are streamed into parallel staging-table
-writers, then a partition exchange publishes one file's data atomically.
+delete events to OCI Streaming. A long-running OCI Container Instance consumer
+captures each stream message durably in MySQL before it invokes the existing
+CSV loader. A mapping selects the target table, Stream, and FIFO or parallel
+processing mode.
 
-The Flask operations UI provides one place to create and maintain mappings,
-manage live OCI Events rules, configure Function capacity, upload or remove test
-objects, inspect target and staging tables, and trace event timing, transaction
-status, detached work, and errors. This operational view makes setup,
-verification, troubleshooting, retry decisions, and orphaned-stage cleanup
-available without requiring operators to join OCI Console and control-schema
-data manually.
+The Flask operations UI provides Stream Server and Stream Content pages,
+Object Storage mapping maintenance, live OCI Events rule management, and an
+Orchestration page for the consumer deployment contract. It also supports
+object testing, target/staging inspection, and durable captured-message retry
+without requiring operators to join OCI Console and control-schema data
+manually.
 
 ## Application components
 
@@ -24,10 +24,10 @@ flowchart LR
     UI --> Target[(Mapped MySQL tables)]
     Publisher[CSV publisher] --> Bucket[OCI Object Storage]
     Bucket --> Events[OCI Events rule]
-    Events --> Intake[OCI Function intake]
-    Intake --> Control
-    Intake -->|Sync| Loader[Streaming CSV loader]
-    Intake -->|Detached self-invocation| Loader
+    Events --> Stream[OCI Streaming]
+    Stream --> Consumer[Container Instance consumer]
+    Consumer --> Capture[(Durable message capture)]
+    Capture --> Loader[Streaming CSV loader]
     Loader --> Bucket
     Loader --> Stage[(Parallel staging tables)]
     Stage -->|Atomic partition exchange| Target
@@ -42,12 +42,13 @@ flowchart LR
   parallel database writers without creating a full temporary CSV file.
 - Publishes one file atomically with MySQL partition exchange; delete events
   retire the corresponding partition.
-- Chooses Sync or Detached processing dynamically from each mapping.
-- Records raw events, execution mode, lifecycle status, timing, transaction
-  audit, and actionable error detail.
-- Provides operational UI workflows for mappings, live OCI Rules, Function
-  configuration, Object Storage testing, registered-table data, stage cleanup,
-  Event TX, and detached-process monitoring.
+- Chooses FIFO (one Stream partition/one consumer) or parallel partition
+  assignments from each mapping.
+- Captures raw Stream events before processing, so failed records can be
+  retried independently of Stream cursor retention.
+- Provides operational UI workflows for Streams, mappings, live OCI Rules,
+  consumer orchestration, Object Storage testing, registered-table data, and
+  captured-message retry.
 
 ## Deployment and configuration
 
@@ -58,31 +59,34 @@ On an Oracle Linux deployment host configured with an OCI instance principal:
 
 ```sh
 cd deploy
-./bootstrap.sh
+./bootstrap_streaming.sh
 cp env.sh.example env.sh
 chmod 600 env.sh
-# Set OCI, database, Function, rule, logging, HTTPS, and UI values in env.sh.
-./deploy.sh
+# Set OCI, database, Vault, Stream, image, rule, HTTPS, and UI values in env.sh.
+./build_consumer_image.sh
+./verify_streaming_deployment.sh
 ./deploy_ui.sh
+# Only after the documented full verification gate:
+./deploy_consumer.sh
 ```
 
-`deploy.sh` builds and deploys the Function, discovers its OCID and invoke
-endpoint, applies Function timeouts/capacity, and creates or updates the base
-Object Storage rule. `deploy_ui.sh` deploys the Flask container behind nginx
-HTTPS and discovers the same OCI resources for live rule and Function
-management. Keep `deploy/env.sh`, database passwords, OCIR tokens, TLS private
-keys, and Flask secrets out of Git.
+`build_consumer_image.sh` builds and pushes the non-root consumer image using
+the deployment host's instance-principal OCIR credential helper; it never uses
+a static registry credential. `deploy_consumer.sh` creates
+one Container Instance for one explicit partition assignment. `deploy_ui.sh`
+deploys the Flask container behind nginx HTTPS. Keep `deploy/env.sh`, database
+database credentials, Vault values, TLS private keys, and Flask secrets out of Git.
 
 Before use, confirm:
 
 - Object events are enabled on each source bucket.
 - The Events rule covers create, update, and delete and its bucket/object filter
   matches exactly one mapping.
-- The Function resource principal can read source objects and can invoke the
-  Function for Detached processing.
-- The deployment/UI instance principal has the scoped Function, Events,
-  Logging, repository, and test-object permissions it needs.
-- The Function subnet can reach MySQL and the database account can use the
+- The consumer resource principal can read source objects, consume the Stream,
+  and read the DB secret from Vault.
+- The deployment/UI instance principal has scoped Streaming, Events,
+  Container Instance, repository, and test-object permissions.
+- The consumer subnet can reach MySQL and the database account can use the
   control schema plus approved target/staging objects.
 
 See [Deployment, configuration, IAM, and implementation details](docs/technical-details.md)
@@ -94,16 +98,15 @@ troubleshooting, and validation commands.
 - One CSV file is one complete logical partition of a mapped table. Many files
   may map to one table, but active files must not contain overlapping business
   records.
-- Atomicity is limited to one file. Multiple object operations are not one
-  transaction and neither Sync nor Detached processing guarantees FIFO order.
+- FIFO requires one Stream partition and one consumer; parallel mode allows
+  independent partition processing and does not guarantee global FIFO order.
 - Move records between files by completing removal from the source file before
   adding them to the destination, or use an external sequenced publication
   workflow.
 - Target tables must already satisfy the loader contract: compatible columns,
   LIST partitioning by `batch_num`, and `batch_num` in every unique key.
-- Sync execution is limited to 300 seconds. Detached execution can be
-  configured up to 3,600 seconds, but it is still bounded; split very large
-  files into ordered, independently owned chunks or use a durable queue.
+- The consumer is long-running; each Stream message is captured before loading
+  so a failed loader invocation remains retryable after a consumer restart.
 - OCI Events is at-least-once and may retry or deliver conflicting operations
   out of order. Publishers must avoid simultaneous updates to the same logical
   data set.
