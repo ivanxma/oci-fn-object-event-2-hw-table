@@ -119,6 +119,8 @@ selected Vault and key:
 
 ```
 Allow dynamic-group <dynamic-group> to manage secrets in compartment <compartment>
+Allow dynamic-group <dynamic-group> to read vaults in compartment <compartment>
+Allow dynamic-group <dynamic-group> to read keys in compartment <compartment>
 Allow dynamic-group <dynamic-group> to use keys in compartment <compartment>
 ```
 

@@ -40,13 +40,20 @@ def index():
             deployments = _orchestration_service().list_deployments(state_filter=managed_state)
         except (ValueError, OrchestrationError) as error:
             flash(str(error), "warning")
+    vault_service = VaultSecretService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"])
     try:
-        vault_service = VaultSecretService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"])
         vault_secrets = vault_service.list_active_secrets()
-        vaults = vault_service.list_active_vaults()
-        vault_keys = vault_service.list_active_keys(selected_vault_id)
     except VaultSecretError as error:
         flash(f"OCI Vault secret choices are unavailable: {error}", "warning")
+    try:
+        vaults = vault_service.list_active_vaults()
+    except VaultSecretError as error:
+        flash(f"OCI Vault choices are unavailable: {error}", "warning")
+    if selected_vault_id:
+        try:
+            vault_keys = vault_service.list_active_keys(selected_vault_id)
+        except VaultSecretError as error:
+            flash(f"OCI Vault encryption-key choices are unavailable: {error}", "warning")
     return render_dashboard(
         "orchestration.html", active_page="orchestration", active_tab=active_tab, managed_state=managed_state, mappings=mappings,
         streams=streams, deployments=deployments, vault_secrets=vault_secrets, vaults=vaults, vault_keys=vault_keys, selected_vault_id=selected_vault_id,
