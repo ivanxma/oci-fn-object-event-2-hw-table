@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from typing import Any
 
 from .mapping_service import control_database
@@ -13,12 +15,16 @@ EVENT_LOG_TABLE = "event_tx_log"
 OBJECT_EVENT_TABLE = "object_event"
 EVENT_ERROR_TABLE = "event_errors"
 SOURCE_BATCH_TABLE = "source_object_batches"
+STREAM_CAPTURE_TABLE = "stream_message_capture"
 STALE_LOADING_MINUTES = 10
 
 
 class EventTransactionService:
-    def __init__(self, mysql) -> None:
+    def __init__(self, mysql, stream_data_database: str | None = None) -> None:
         self.mysql = mysql
+        self.stream_data_database = validate_identifier(
+            stream_data_database or os.environ.get("STREAM_DATA_DB_NAME", "stream_data"), "stream data database"
+        )
 
     @staticmethod
     def _table_exists(cursor, table_name: str) -> bool:
@@ -35,6 +41,58 @@ class EventTransactionService:
             (control_database(), table_name, column_name),
         )
         return cursor.fetchone() is not None
+
+    def _stream_capture_exists(self, cursor) -> bool:
+        cursor.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = %s AND table_name = %s",
+            (self.stream_data_database, STREAM_CAPTURE_TABLE),
+        )
+        return cursor.fetchone() is not None
+
+    def _durable_capture_rows(self, cursor, *, limit: int, offset: int = 0, database: str = "", table: str = "") -> list[dict[str, Any]]:
+        """Read the processor's authoritative capture lifecycle and mapping."""
+        stream_data = quote_identifier(self.stream_data_database, "stream data database")
+        control = quote_identifier(control_database(), "control database")
+        filters, values = [], []
+        if database:
+            filters.append("mapping.target_database = %s")
+            values.append(database)
+        if table:
+            filters.append("mapping.target_table = %s")
+            values.append(table)
+        where = f" WHERE {' AND '.join(filters)}" if filters else ""
+        cursor.execute(
+            f"""SELECT capture.id, capture.stream_id, capture.partition_id, capture.stream_offset,
+                       capture.payload, capture.status, capture.attempts, capture.last_error,
+                       capture.received_at AS event_received_at, capture.completed_at AS event_completed_at,
+                       CASE WHEN capture.completed_at IS NULL THEN NULL
+                            ELSE TIMESTAMPDIFF(MICROSECOND, capture.received_at, capture.completed_at) / 1000 END AS event_duration_ms,
+                       mapping.id AS mapping_id, mapping.target_database, mapping.target_table, mapping.processing_mode
+                  FROM {stream_data}.`stream_message_capture` AS capture
+                  LEFT JOIN {control}.`object_storage_mappings` AS mapping ON mapping.stream_id = capture.stream_id
+                  {where} ORDER BY capture.id DESC LIMIT %s OFFSET %s""",
+            (*values, limit, offset),
+        )
+        rows = cursor.fetchall()
+        for row in rows:
+            payload = row.get("payload")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError:
+                    payload = {}
+            payload = payload if isinstance(payload, dict) else {}
+            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+            details = data.get("additionalDetails") if isinstance(data.get("additionalDetails"), dict) else {}
+            event_type = payload.get("eventType") or payload.get("type") or "UNKNOWN"
+            row["event_action"] = self._event_action(event_type) or str(event_type)
+            row["event_status"] = str(row.get("status") or "CAPTURED")
+            row["bucket_name"] = details.get("bucketName") or data.get("bucketName")
+            row["resource_name"] = data.get("resourceName") or details.get("resourceName")
+            row["message"] = row.get("last_error") or f"Stream partition {row.get('partition_id')} · offset {row.get('stream_offset')}"
+            row["batch_num"] = None
+            row["processing_mode"] = str(row.get("processing_mode") or "UNKNOWN")
+        return rows
 
     def _transaction_mode_sql(self, cursor, *, include_object_event: bool = False, alias: str = "tx") -> str:
         """Return processor ordering mode, never retired Function invocation mode."""
@@ -220,6 +278,17 @@ class EventTransactionService:
         page, page_size = max(page, 1), max(page_size, 1)
         with self.mysql.connection() as conn:
             cursor = conn.cursor(dictionary=True, buffered=True)
+            if self._stream_capture_exists(cursor):
+                stream_data = quote_identifier(self.stream_data_database, "stream data database")
+                control = quote_identifier(control_database(), "control database")
+                cursor.execute(
+                    f"""SELECT COUNT(*) AS total FROM {stream_data}.`stream_message_capture` AS capture
+                          INNER JOIN {control}.`object_storage_mappings` AS mapping ON mapping.stream_id = capture.stream_id
+                         WHERE mapping.target_database = %s AND mapping.target_table = %s""",
+                    (database, table),
+                )
+                total = int(cursor.fetchone()["total"])
+                return self._durable_capture_rows(cursor, limit=page_size, offset=(page - 1) * page_size, database=database, table=table), total
             if not self._table_exists(cursor, EVENT_LOG_TABLE):
                 return [], 0
             control = quote_identifier(control_database(), "control database")
@@ -232,7 +301,7 @@ class EventTransactionService:
             total = int(cursor.fetchone()["total"])
             cursor.execute(
                 f"""SELECT tx.id, tx.mapping_id, tx.batch_num, tx.event_action, tx.event_status, tx.bucket_name,
-                              tx.resource_name, tx.object_version, tx.message, tx.created_at, {invocation_mode} AS invocation_mode{timing}
+                              tx.resource_name, tx.object_version, tx.message, tx.created_at, {invocation_mode} AS processing_mode{timing}
                        FROM {control}.`event_tx_log`
                        AS tx{timing_join}
                        WHERE tx.target_database = %s AND tx.target_table = %s
@@ -277,13 +346,15 @@ class EventTransactionService:
     def recent_events_all(self, limit: int) -> list[dict[str, Any]]:
         with self.mysql.connection() as conn:
             cursor = conn.cursor(dictionary=True, buffered=True)
+            if self._stream_capture_exists(cursor):
+                return self._durable_capture_rows(cursor, limit=limit)
             if not self._table_exists(cursor, EVENT_LOG_TABLE):
                 return []
             timing, timing_join = self._event_timing_sql(cursor)
             invocation_mode = self._transaction_mode_sql(cursor, include_object_event=bool(timing_join))
             cursor.execute(
                 f"""SELECT tx.id, tx.mapping_id, tx.target_database, tx.target_table, tx.batch_num, tx.event_action,
-                              tx.event_status, tx.bucket_name, tx.resource_name, tx.object_version, tx.message, tx.created_at, {invocation_mode} AS invocation_mode{timing}
+                              tx.event_status, tx.bucket_name, tx.resource_name, tx.object_version, tx.message, tx.created_at, {invocation_mode} AS processing_mode{timing}
                        FROM {quote_identifier(control_database(), 'control database')}.`event_tx_log`
                        AS tx{timing_join}
                        ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""",
@@ -398,7 +469,10 @@ class EventTransactionService:
         for row in rows:
             row["_lifecycle_status"] = self._raw_event_lifecycle(row)
             row["_error_id"] = None
-            row["_invocation_mode"] = "UNKNOWN"
+            row["_processing_mode"] = "UNKNOWN"
+            # Keep the legacy template field populated during the UI migration;
+            # its value is now the mapping processing mode, never Sync/Detached.
+            row["_invocation_mode"] = row["_processing_mode"]
             if not event_log_exists:
                 continue
             error_join = f"LEFT JOIN {control}.`event_errors` AS err ON err.event_log_id = tx.id" if error_log_exists else ""
@@ -429,7 +503,8 @@ class EventTransactionService:
             if linked:
                 row["_lifecycle_status"] = linked["event_status"]
                 row["_error_id"] = linked["error_id"]
-                row["_invocation_mode"] = linked["invocation_mode"] or row["_invocation_mode"]
+                row["_processing_mode"] = linked["invocation_mode"] or row["_processing_mode"]
+                row["_invocation_mode"] = row["_processing_mode"]
 
     @staticmethod
     def _raw_event_lifecycle(row: dict[str, Any]) -> str:
