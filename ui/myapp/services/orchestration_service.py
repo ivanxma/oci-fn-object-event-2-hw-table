@@ -47,6 +47,7 @@ class DeploymentSettings:
     db_user: str
     db_name: str
     stream_data_db_name: str
+    control_database: str
     name_prefix: str = "object-storage-stream-consumer"
 
 
@@ -58,7 +59,7 @@ class ContainerOrchestrationService:
         mode = str(mapping.get("processing_mode") or "FIFO").upper()
         assignments = assigned_partitions(partition_assignment, partition_count=stream_partitions, mode=mode)
         validate_deployment(processing_mode=mode, partitions=stream_partitions, replicas=1)
-        required = ("compartment_id", "region", "subnet_id", "availability_domain", "shape", "image_url", "db_secret_ocid", "db_host", "db_port", "db_user", "db_name", "stream_data_db_name")
+        required = ("compartment_id", "region", "subnet_id", "availability_domain", "shape", "image_url", "db_secret_ocid", "db_host", "db_port", "db_user", "db_name", "stream_data_db_name", "control_database")
         missing = [name for name in required if not str(getattr(self.settings, name)).strip()]
         if missing:
             raise ValueError("Container orchestration is missing: " + ", ".join(missing) + ".")
@@ -87,6 +88,7 @@ class ContainerOrchestrationService:
                     "DB_HOST": self.settings.db_host, "DB_PORT": self.settings.db_port,
                     "DB_USER": self.settings.db_user, "DB_NAME": self.settings.db_name,
                     "STREAM_DATA_DB_NAME": self.settings.stream_data_db_name,
+                    "CONTROL_DATABASE": self.settings.control_database,
                 },
             },
         }

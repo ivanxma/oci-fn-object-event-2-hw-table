@@ -6,7 +6,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
 [[ -r "$ENV_FILE" ]] || { echo "Missing $ENV_FILE" >&2; exit 1; }
 set -a; . "$ENV_FILE"; set +a
-for value in OCI_STREAM_ID PROCESSING_MODE EXPECTED_PARTITION_COUNT CONSUMER_REPLICA_COUNT CONSUMER_PARTITIONS COMPARTMENT_ID REGION REGION_KEY SUBNET_ID CONTAINER_AVAILABILITY_DOMAIN CONSUMER_SHAPE CONSUMER_OCPUS CONSUMER_MEMORY_GBS DB_SECRET_OCID DB_HOST DB_PORT DB_USER DB_NAME STREAM_DATA_DB_NAME CONSUMER_IMAGE_TAG REPOSITORY_PREFIX CONSUMER_IMAGE_NAME; do
+for value in OCI_STREAM_ID PROCESSING_MODE EXPECTED_PARTITION_COUNT CONSUMER_REPLICA_COUNT CONSUMER_PARTITIONS COMPARTMENT_ID REGION REGION_KEY SUBNET_ID CONTAINER_AVAILABILITY_DOMAIN CONSUMER_SHAPE CONSUMER_OCPUS CONSUMER_MEMORY_GBS DB_SECRET_OCID DB_HOST DB_PORT DB_USER DB_NAME STREAM_DATA_DB_NAME CONTROL_DATABASE CONSUMER_IMAGE_TAG REPOSITORY_PREFIX CONSUMER_IMAGE_NAME; do
   [[ -n "${!value:-}" ]] || { echo "$value is required" >&2; exit 1; }
 done
 case "$PROCESSING_MODE" in
@@ -29,8 +29,8 @@ IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/${REPOSITORY_PREFIX,,}/$CONSUMER_IMAGE_NAM
 PARTITION_SUFFIX=${CONSUMER_PARTITIONS//,/-}
 CONTAINER_NAME="${CONSUMER_CONTAINER_NAME_PREFIX}-${PROCESSING_MODE,,}-p${PARTITION_SUFFIX}"
 CONFIG=$(mktemp); trap 'rm -f "$CONFIG"' EXIT
-jq -n --arg name "$CONTAINER_NAME" --arg image "$IMAGE" --arg stream "$OCI_STREAM_ID" --arg mode "$PROCESSING_MODE" --arg partitions "$EXPECTED_PARTITION_COUNT" --arg replicas "$CONSUMER_REPLICA_COUNT" --arg assignment "$CONSUMER_PARTITIONS" --arg secret "$DB_SECRET_OCID" --arg host "$DB_HOST" --arg port "$DB_PORT" --arg user "$DB_USER" --arg database "$DB_NAME" --arg streamdata "$STREAM_DATA_DB_NAME" \
-  '[{displayName:$name,imageUrl:$image,isResourcePrincipalDisabled:false,environmentVariables:{OCI_STREAM_ID:$stream,PROCESSING_MODE:$mode,EXPECTED_PARTITION_COUNT:$partitions,CONSUMER_REPLICA_COUNT:$replicas,CONSUMER_PARTITIONS:$assignment,DB_SECRET_OCID:$secret,DB_HOST:$host,DB_PORT:$port,DB_USER:$user,DB_NAME:$database,STREAM_DATA_DB_NAME:$streamdata}}]' > "$CONFIG"
+jq -n --arg name "$CONTAINER_NAME" --arg image "$IMAGE" --arg stream "$OCI_STREAM_ID" --arg mode "$PROCESSING_MODE" --arg partitions "$EXPECTED_PARTITION_COUNT" --arg replicas "$CONSUMER_REPLICA_COUNT" --arg assignment "$CONSUMER_PARTITIONS" --arg secret "$DB_SECRET_OCID" --arg host "$DB_HOST" --arg port "$DB_PORT" --arg user "$DB_USER" --arg database "$DB_NAME" --arg streamdata "$STREAM_DATA_DB_NAME" --arg control "$CONTROL_DATABASE" \
+  '[{displayName:$name,imageUrl:$image,isResourcePrincipalDisabled:false,environmentVariables:{OCI_STREAM_ID:$stream,PROCESSING_MODE:$mode,EXPECTED_PARTITION_COUNT:$partitions,CONSUMER_REPLICA_COUNT:$replicas,CONSUMER_PARTITIONS:$assignment,DB_SECRET_OCID:$secret,DB_HOST:$host,DB_PORT:$port,DB_USER:$user,DB_NAME:$database,STREAM_DATA_DB_NAME:$streamdata,CONTROL_DATABASE:$control}}]' > "$CONFIG"
 oci --auth instance_principal container-instances container-instance create \
   --compartment-id "$COMPARTMENT_ID" --availability-domain "$CONTAINER_AVAILABILITY_DOMAIN" \
   --display-name "$CONTAINER_NAME" --shape "$CONSUMER_SHAPE" \
