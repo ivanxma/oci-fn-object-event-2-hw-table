@@ -79,6 +79,16 @@ def index():
     for mapping in mappings:
         mapping_id = str(mapping["id"])
         flow_processors = [item for item in deployments if str(item.get("mapping_id", "")) == mapping_id]
+        # OCI retains deleted Container Instances in list responses.  Prefer a
+        # live replacement and only show a deleted record when no live
+        # processor exists for the mapping.
+        flow_processors.sort(
+            key=lambda item: (
+                str(item.get("lifecycle_state", "")).upper() != "ACTIVE",
+                str(item.get("lifecycle_state", "")).upper() in {"DELETED", "DELETING"},
+                str(item.get("id", "")),
+            )
+        )
         processor = flow_processors[0] if flow_processors else None
         secret_id = _processor_secret_id(processor or {}) or str(config.get("DB_SECRET_OCID") or "")
         stream = stream_by_id.get(str(mapping.get("stream_id") or ""))
