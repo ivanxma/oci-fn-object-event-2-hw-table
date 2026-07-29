@@ -15,6 +15,13 @@ def test_csv_headers_match_target_columns_case_insensitively(tmp_path):
     assert list(csv_batches(source, ["employee_id", "first_name"], 100)) == [[("1", "Jane")]]
 
 
+def test_csv_lone_dash_is_bound_as_null(tmp_path):
+    source = tmp_path / "employees.csv"
+    source.write_text("EMPLOYEE_ID,MANAGER_ID\n1,-\n", encoding="utf-8")
+
+    assert list(csv_batches(source, ["employee_id", "manager_id"], 100)) == [[("1", None)]]
+
+
 def test_csv_case_insensitive_duplicate_headers_are_rejected(tmp_path):
     source = tmp_path / "duplicate.csv"
     source.write_text("ID,id\n1,2\n", encoding="utf-8")

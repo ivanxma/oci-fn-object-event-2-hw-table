@@ -377,8 +377,14 @@ def drop_stage_table(db: Database, mapping: dict[str, Any], stage: str) -> None:
         )
 
 
-def csv_batches(csv_source: Path | TextIO, columns: list[str], batch_rows: int) -> Iterator[list[tuple[str, ...]]]:
-    """Read CSV batches from either a path or an already-open text stream."""
+def csv_batches(csv_source: Path | TextIO, columns: list[str], batch_rows: int) -> Iterator[list[tuple[str | None, ...]]]:
+    """Read CSV batches and convert a lone missing-value marker to SQL NULL.
+
+    Object Storage CSV sources commonly encode absent scalar values as ``-``.
+    Binding that literal to a nullable numeric or date column fails in strict
+    MySQL mode.  Only a complete marker is converted, so hyphenated text is
+    preserved.
+    """
     if isinstance(csv_source, Path):
         with csv_source.open(newline="", encoding="utf-8") as source:
             yield from csv_batches(source, columns, batch_rows)
@@ -402,9 +408,13 @@ def csv_batches(csv_source: Path | TextIO, columns: list[str], batch_rows: int) 
         if unknown:
             details.append(f"unknown: {', '.join(unknown)}")
         raise ValueError(f"CSV columns do not match target table ({'; '.join(details)}).")
-    batch: list[tuple[str, ...]] = []
+    batch: list[tuple[str | None, ...]] = []
     for row in reader:
-        batch.append(tuple((row.get(header_by_folded_name[column.casefold()]) or "").strip() for column in columns))
+        values: list[str | None] = []
+        for column in columns:
+            value = (row.get(header_by_folded_name[column.casefold()]) or "").strip()
+            values.append(None if value == "-" else value)
+        batch.append(tuple(values))
         if len(batch) >= batch_rows:
             yield batch
             batch = []
@@ -412,7 +422,7 @@ def csv_batches(csv_source: Path | TextIO, columns: list[str], batch_rows: int) 
         yield batch
 
 
-def insert_batch(db: Database, mapping: dict[str, Any], stage: str, batch_num: int, columns: list[str], rows: list[tuple[str, ...]]) -> int:
+def insert_batch(db: Database, mapping: dict[str, Any], stage: str, batch_num: int, columns: list[str], rows: list[tuple[str | None, ...]]) -> int:
     names = ", ".join([quote_identifier("batch_num", "batch column"), *(quote_identifier(column, "target column") for column in columns)])
     placeholders = ", ".join(["%s"] * (len(columns) + 1))
     with db.connection() as connection:
