@@ -9,12 +9,11 @@ import uuid
 
 from database import connect
 from message_store import capture, claim_next, complete, ensure_schema, fail
-from vault_config import apply_database_environment, load_database_config
+from vault_config import load_database_config, stream_data_database_config
 
 
 def main() -> None:
-    config = load_database_config()
-    apply_database_environment(config)
+    config = stream_data_database_config(load_database_config())
     stream_id = f"verification-{uuid.uuid4()}"
     connection = connect(config)
     try:

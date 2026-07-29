@@ -14,7 +14,7 @@ def _orchestration_service() -> ContainerOrchestrationService:
         enabled=bool(config["OCI_CONTAINER_ORCHESTRATION_ENABLED"]), compartment_id=config["OCI_COMPARTMENT_ID"], region=config["OCI_REGION"],
         subnet_id=config["SUBNET_ID"], availability_domain=config["CONTAINER_AVAILABILITY_DOMAIN"], shape=config["CONSUMER_SHAPE"],
         ocpus=float(config["CONSUMER_OCPUS"] or 0), memory_gbs=float(config["CONSUMER_MEMORY_GBS"] or 0), image_url=config["CONSUMER_IMAGE_URL"],
-        db_secret_ocid=config["DB_SECRET_OCID"], db_host=config["DB_HOST"], db_port=config["DB_PORT"], db_user=config["DB_USER"], db_name=config["DB_NAME"],
+        db_secret_ocid=config["DB_SECRET_OCID"], db_host=config["DB_HOST"], db_port=config["DB_PORT"], db_user=config["DB_USER"], db_name=config["DB_NAME"], stream_data_db_name=config["STREAM_DATA_DB_NAME"],
         name_prefix=config["CONSUMER_CONTAINER_NAME_PREFIX"],
     ))
 
@@ -24,7 +24,7 @@ def index():
     captures = []
     mappings, streams, deployments = [], [], []
     try:
-        captures = StreamCaptureService(mysql_for_request()).list_recent()
+        captures = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"]).list_recent()
     except Exception as error:
         flash(f"Could not load durable stream captures: {type(error).__name__}: {error}", "error")
     try:
@@ -61,7 +61,7 @@ def deploy():
 @login_required
 def retry_capture(capture_id: str):
     try:
-        retried = StreamCaptureService(mysql_for_request()).retry(int(capture_id))
+        retried = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"]).retry(int(capture_id))
         flash("Capture queued for retry." if retried else "Only failed captures can be retried.", "success" if retried else "warning")
     except Exception as error:
         flash(f"Could not retry capture: {error}", "error")

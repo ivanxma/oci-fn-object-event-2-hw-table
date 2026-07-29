@@ -63,6 +63,18 @@ def load_database_config() -> dict[str, Any]:
     except Exception as error:
         raise RuntimeError(f"Could not load database credentials from Vault: {type(error).__name__}") from error
 
+
+def stream_data_database_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the dedicated durable-stream database configuration.
+
+    ``DB_NAME`` remains the loader/control database for compatibility with the
+    existing Object Storage processing logic.  Operators can isolate retained
+    stream payloads, checkpoints, and retry state with ``STREAM_DATA_DB_NAME``.
+    """
+    database = os.environ.get("STREAM_DATA_DB_NAME", "").strip() or str(config["database"])
+    return {**config, "database": database}
+
+
 def apply_database_environment(config: dict[str, Any]) -> None:
     """Provide the existing loader its expected process-local configuration."""
     for key, value in {"DB_HOST": config["host"], "DB_PORT": str(config["port"]), "DB_USER": config["user"], "DB_CREDENTIAL": config["credential"]}.items():

@@ -106,7 +106,7 @@ def run_partition_once(connection: Any, *, oci: Any, client: Any, stream_id: str
 def main() -> None:
     from database import connect
     from message_store import ensure_schema
-    from vault_config import apply_database_environment, load_database_config
+    from vault_config import apply_database_environment, load_database_config, stream_data_database_config
     from stream_client import client_for_stream
     from loader import process_event
     mode = os.environ.get("PROCESSING_MODE", "").upper()
@@ -115,9 +115,11 @@ def main() -> None:
         raise ValueError("OCI_STREAM_ID is required.")
     validate_mode(mode, int(os.environ.get("EXPECTED_PARTITION_COUNT", "0")), int(os.environ.get("CONSUMER_REPLICA_COUNT", "0")))
     partitions = assigned_partitions(mode, int(os.environ["EXPECTED_PARTITION_COUNT"]), os.environ.get("CONSUMER_PARTITIONS", ""))
-    database_config = load_database_config()
-    apply_database_environment(database_config)
-    connection = connect(database_config)
+    loader_database_config = load_database_config()
+    # The inherited loader reads DB_* process variables.  Keep it pointed at
+    # its control database while the durable queue has its own connection.
+    apply_database_environment(loader_database_config)
+    connection = connect(stream_data_database_config(loader_database_config))
     try:
         ensure_schema(connection)
         connection.commit()
