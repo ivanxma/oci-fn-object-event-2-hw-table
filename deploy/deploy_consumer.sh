@@ -37,4 +37,5 @@ oci --auth instance_principal container-instances container-instance create \
   --display-name "$CONTAINER_NAME" --shape "$CONSUMER_SHAPE" \
   --shape-config "{\"ocpus\":$CONSUMER_OCPUS,\"memoryInGBs\":$CONSUMER_MEMORY_GBS}" \
   --containers "file://$CONFIG" --vnics "[{\"subnetId\":\"$SUBNET_ID\"}]" \
+  --freeform-tags '{"managed-by":"oci-object-event-2-table"}' \
   --wait-for-state SUCCEEDED --wait-for-state FAILED
