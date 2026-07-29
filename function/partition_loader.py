@@ -296,6 +296,14 @@ def allocate_or_get_batch(db: Database, mapping: dict[str, Any], source: dict[st
                 )
                 record["lifecycle_state"] = "ERROR"
             if create and record["lifecycle_state"] == "ACTIVE":
+                if record["object_version"] == source["object_version"]:
+                    # OCI Events and Streaming are at-least-once.  A replay of
+                    # the exact create event has already been committed through
+                    # partition exchange, so it is a successful no-op rather
+                    # than a failed load that would keep a durable capture in
+                    # the retry queue forever.
+                    record["already_active"] = True
+                    return record
                 raise ValueError("This object already has an active batch; use the update scenario for a replacement.")
             cursor.execute(
                 f"INSERT IGNORE INTO {control_table('target_batch_sequences')} (target_database, target_table, next_batch_num) VALUES (%s, %s, %s)",
@@ -517,6 +525,9 @@ def run_load(event_path: Path, csv_path: Path, *, create: bool, batch_rows: int,
         mapping = resolve_mapping(db, source)
         columns = target_definition(db, mapping)
         record = allocate_or_get_batch(db, mapping, source, create=create)
+        if record.get("already_active"):
+            log_event(db, source, action, "SUCCESS", mapping, record["batch_num"], "Duplicate create event ignored; matching object version already has an active batch.")
+            return {"action": action.lower(), "batch_num": record["batch_num"], "rows": 0, "target": f"{mapping['target_database']}.{mapping['target_table']}", "idempotent": True, "invocation_mode": mapping.get("invocation_mode", "SYNC"), "worker_threads": mapping.get("worker_threads", 4)}
         ensure_partition(db, mapping, record["batch_num"])
         stage = create_stage_table(db, mapping, record["batch_num"])
         rows = load_csv_parallel(db, mapping, stage, record["batch_num"], columns, csv_path, batch_rows, workers)

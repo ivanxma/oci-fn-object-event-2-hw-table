@@ -13,18 +13,17 @@ class Cursor:
         if len(self.parameters or ()) == 3:
             return (1,) if (self.parameters[1], self.parameters[2]) in self.columns else None
         if len(self.parameters or ()) == 2:
-            return (1,) if self.parameters[1] == "object_event" else None
+            return (1,) if self.parameters[1] in {"object_event", "object_storage_mappings"} else None
         return None
 
 
-def test_transaction_mode_uses_snapshots_not_current_mapping():
-    cursor = Cursor({("event_tx_log", "invocation_mode"), ("object_event", "invocation_mode")})
+def test_transaction_mode_uses_mapping_processing_mode():
+    cursor = Cursor({("object_storage_mappings", "processing_mode")})
     service = EventTransactionService(None)
 
     expression = service._transaction_mode_sql(cursor, include_object_event=True)
 
-    assert expression == "COALESCE(tx.invocation_mode, object_event.invocation_mode, 'UNKNOWN')"
-    assert "object_storage_mappings" not in expression
+    assert expression == "COALESCE((SELECT mapping.processing_mode FROM `fndb`.`object_storage_mappings` AS mapping WHERE mapping.id = tx.mapping_id), 'UNKNOWN')"
 
 
 def test_completed_raw_event_does_not_fall_back_to_received():

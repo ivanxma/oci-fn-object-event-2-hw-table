@@ -37,13 +37,11 @@ class EventTransactionService:
         return cursor.fetchone() is not None
 
     def _transaction_mode_sql(self, cursor, *, include_object_event: bool = False, alias: str = "tx") -> str:
-        """Return the immutable mode snapshot, never the mapping's current mode."""
-        candidates: list[str] = []
-        if self._column_exists(cursor, EVENT_LOG_TABLE, "invocation_mode"):
-            candidates.append(f"{alias}.invocation_mode")
-        if include_object_event and self._table_exists(cursor, OBJECT_EVENT_TABLE) and self._column_exists(cursor, OBJECT_EVENT_TABLE, "invocation_mode"):
-            candidates.append("object_event.invocation_mode")
-        return f"COALESCE({', '.join(candidates)}, 'UNKNOWN')" if candidates else "'UNKNOWN'"
+        """Return processor ordering mode, never retired Function invocation mode."""
+        if not self._table_exists(cursor, MAPPING_TABLE) or not self._column_exists(cursor, MAPPING_TABLE, "processing_mode"):
+            return "'UNKNOWN'"
+        control = quote_identifier(control_database(), "control database")
+        return f"COALESCE((SELECT mapping.processing_mode FROM {control}.`object_storage_mappings` AS mapping WHERE mapping.id = {alias}.mapping_id), 'UNKNOWN')"
 
     def _event_timing_sql(self, cursor, alias: str = "tx") -> tuple[str, str]:
         """Return optional Object Storage timing projection and join."""
@@ -400,7 +398,7 @@ class EventTransactionService:
         for row in rows:
             row["_lifecycle_status"] = self._raw_event_lifecycle(row)
             row["_error_id"] = None
-            row["_invocation_mode"] = row.get("invocation_mode") or "UNKNOWN"
+            row["_invocation_mode"] = "UNKNOWN"
             if not event_log_exists:
                 continue
             error_join = f"LEFT JOIN {control}.`event_errors` AS err ON err.event_log_id = tx.id" if error_log_exists else ""
