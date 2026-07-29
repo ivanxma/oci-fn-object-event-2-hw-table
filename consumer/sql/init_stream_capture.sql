@@ -27,3 +27,22 @@ CREATE TABLE IF NOT EXISTS stream_partition_checkpoint (
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (stream_id, partition_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Processor-owned transaction lifecycle.  This replaces the retired Function
+-- audit tables and is updated with every durable-capture state transition.
+CREATE TABLE IF NOT EXISTS stream_event_tx_log (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  capture_id BIGINT UNSIGNED NOT NULL,
+  stream_id VARCHAR(255) NOT NULL,
+  partition_id VARCHAR(32) NOT NULL,
+  stream_offset BIGINT NOT NULL,
+  event_status ENUM('CAPTURED','PROCESSING','COMPLETED','FAILED') NOT NULL,
+  attempts INT UNSIGNED NOT NULL DEFAULT 0,
+  message TEXT NULL,
+  received_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  completed_at DATETIME(6) NULL,
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  UNIQUE KEY uq_stream_event_tx_capture (capture_id),
+  KEY ix_stream_event_tx_status (event_status, updated_at),
+  KEY ix_stream_event_tx_source (stream_id, partition_id, stream_offset)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

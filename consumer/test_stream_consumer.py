@@ -90,7 +90,7 @@ class ConsumerModeTest(unittest.TestCase):
 
     def test_external_schema_sql_is_loaded_and_executed(self):
         statements = schema_statements()
-        self.assertEqual(len(statements), 2)
+        self.assertEqual(len(statements), 3)
         self.assertIn("stream_message_capture", statements[0])
         self.assertIn("next_retry_at", statements[0])
         self.assertIn("stream_partition_checkpoint", statements[1])
@@ -103,7 +103,7 @@ class ConsumerModeTest(unittest.TestCase):
             def cursor(self): return self.value
         connection = Connection()
         ensure_schema(connection)
-        self.assertEqual(connection.value.executed[:2], statements)
+        self.assertEqual(connection.value.executed[:3], statements)
 
     def test_retry_backoff_is_bounded_and_external_migration_is_loaded(self):
         self.assertEqual(retry_delay_seconds(1), 2)

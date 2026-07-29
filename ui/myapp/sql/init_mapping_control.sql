@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS __CONTROL_DATABASE__.object_storage_mappings (
     target_database VARCHAR(64) NOT NULL,
     target_table VARCHAR(64) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    invocation_mode ENUM('SYNC','DETACHED') NOT NULL DEFAULT 'SYNC',
     worker_threads SMALLINT UNSIGNED NOT NULL DEFAULT 4,
     event_rule_id VARCHAR(255) NULL,
     stream_id VARCHAR(255) NULL,

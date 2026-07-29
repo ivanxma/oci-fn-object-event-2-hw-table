@@ -60,12 +60,6 @@ class MappingService:
     @staticmethod
     def normalize(form: dict[str, Any]) -> dict[str, str]:
         """Validate browser input before it is used in a parameterized statement."""
-        # The long-running Container Instance replaces the legacy detached
-        # Function reinvocation path.  Keep the existing column for migration
-        # compatibility, but do not create new mappings that depend on it.
-        mode = (form.get("invocation_mode") or "SYNC").strip().upper()
-        if mode != "SYNC":
-            raise ValueError("Streaming processor mappings must use SYNC loader mode; DETACHED Function mode is retired.")
         try:
             workers = int(form.get("worker_threads") or 4)
         except (TypeError, ValueError) as error:
@@ -84,7 +78,6 @@ class MappingService:
             "resource_name_pattern": _required_text(form.get("resource_name_pattern"), "Resource name pattern", 1024),
             "target_database": validate_identifier((form.get("target_database") or "").strip(), "target database"),
             "target_table": validate_identifier((form.get("target_table") or "").strip().lstrip("."), "target table"),
-            "invocation_mode": mode,
             "worker_threads": str(workers),
             "stream_id": stream_id,
             "processing_mode": processing_mode,
@@ -110,7 +103,7 @@ class MappingService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             self._ensure_schema(cursor)
             cursor.execute(
-                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, event_rule_id, stream_id, processing_mode "
+                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, worker_threads, event_rule_id, stream_id, processing_mode "
                 f"FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} ORDER BY compartment_name, bucket_name, resource_name_pattern"
             )
             return cursor.fetchall()
@@ -136,7 +129,7 @@ class MappingService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             self._ensure_schema(cursor)
             cursor.execute(
-                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, event_rule_id, stream_id, processing_mode "
+                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, worker_threads, event_rule_id, stream_id, processing_mode "
                 f"FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} WHERE id = %s",
                 (mapping_id,),
             )
@@ -147,7 +140,7 @@ class MappingService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             self._ensure_schema(cursor)
             cursor.execute(
-                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, event_rule_id, stream_id, processing_mode "
+                f"SELECT id, compartment_name, bucket_name, resource_name_pattern, target_database, target_table, worker_threads, event_rule_id, stream_id, processing_mode "
                 f"FROM {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} WHERE event_rule_id = %s LIMIT 1",
                 (rule_id,),
             )
@@ -159,8 +152,8 @@ class MappingService:
             self._ensure_schema(cursor)
             cursor.execute(
                 f"INSERT INTO {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} "
-                "(compartment_name, bucket_name, resource_name_pattern, target_database, target_table, invocation_mode, worker_threads, stream_id, processing_mode) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads", "stream_id", "processing_mode")),
+                "(compartment_name, bucket_name, resource_name_pattern, target_database, target_table, worker_threads, stream_id, processing_mode) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "worker_threads", "stream_id", "processing_mode")),
             )
             return int(cursor.lastrowid)
 
@@ -176,8 +169,8 @@ class MappingService:
                 return False
             cursor.execute(
                 f"UPDATE {quote_identifier(control_database(), 'mapping database')}.{quote_identifier(MAPPING_TABLE, 'mapping table')} "
-                "SET compartment_name = %s, bucket_name = %s, resource_name_pattern = %s, target_database = %s, target_table = %s, invocation_mode = %s, worker_threads = %s, stream_id = %s, processing_mode = %s WHERE id = %s",
-                (*tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "invocation_mode", "worker_threads", "stream_id", "processing_mode")), mapping_id),
+                "SET compartment_name = %s, bucket_name = %s, resource_name_pattern = %s, target_database = %s, target_table = %s, worker_threads = %s, stream_id = %s, processing_mode = %s WHERE id = %s",
+                (*tuple(values[column] for column in ("compartment_name", "bucket_name", "resource_name_pattern", "target_database", "target_table", "worker_threads", "stream_id", "processing_mode")), mapping_id),
             )
             return True
 

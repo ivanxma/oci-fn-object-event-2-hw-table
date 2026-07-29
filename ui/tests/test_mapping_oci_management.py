@@ -57,8 +57,7 @@ class MappingOciManagementTest(unittest.TestCase):
             MappingService.normalize(mapping_form(stream_id=""))
         with self.assertRaisesRegex(ValueError, "Processing mode"):
             MappingService.normalize(mapping_form(processing_mode="UNORDERED"))
-        with self.assertRaisesRegex(ValueError, "DETACHED Function mode is retired"):
-            MappingService.normalize(mapping_form(invocation_mode="DETACHED"))
+        self.assertEqual(MappingService.normalize(mapping_form(invocation_mode="DETACHED"))["processing_mode"], "FIFO")
 
     def test_rule_condition_has_bucket_pattern_compartment_and_lifecycle_events(self) -> None:
         condition = json.loads(

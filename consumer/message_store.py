@@ -30,8 +30,8 @@ def schema_statements(path: Path | None = None) -> list[str]:
     executable_lines = [line for line in script.splitlines() if not line.lstrip().startswith("--")]
     statements = [statement.strip() for statement in "\n".join(executable_lines).split(";")]
     statements = [statement for statement in statements if statement]
-    if len(statements) != 2:
-        raise RuntimeError("Consumer schema SQL must contain the two initialization statements.")
+    if len(statements) != 3:
+        raise RuntimeError("Consumer schema SQL must contain the three initialization statements.")
     return statements
 
 
@@ -90,6 +90,11 @@ def capture(connection: Any, *, stream_id: str, partition: str, offset: int, key
       (stream_id, partition_id, stream_offset, message_key, payload)
       VALUES (%s,%s,%s,%s,%s)
       ON DUPLICATE KEY UPDATE received_at=received_at""", (stream_id, partition, offset, key, json.dumps(payload, separators=(",", ":"))))
+    cursor.execute("""INSERT INTO stream_event_tx_log
+      (capture_id, stream_id, partition_id, stream_offset, event_status, attempts, received_at)
+      SELECT id, stream_id, partition_id, stream_offset, status, attempts, received_at
+        FROM stream_message_capture WHERE stream_id=%s AND partition_id=%s AND stream_offset=%s
+      ON DUPLICATE KEY UPDATE updated_at=updated_at""", (stream_id, partition, offset))
     connection.commit()
 
 
@@ -129,12 +134,14 @@ def claim_next(connection: Any, *, stream_id: str, partitions: list[str]) -> dic
     if row:
         row["payload"] = decoded_payload(row["payload"])
         cursor.execute("UPDATE stream_message_capture SET status='PROCESSING', attempts=attempts+1, last_error=NULL, next_retry_at=NULL, processing_started_at=UTC_TIMESTAMP(6) WHERE id=%s", (row["id"],))
+        cursor.execute("UPDATE stream_event_tx_log SET event_status='PROCESSING', attempts=attempts+1, message=NULL, completed_at=NULL WHERE capture_id=%s", (row["id"],))
     connection.commit()
     return row
 
 def complete(connection: Any, capture_id: int) -> None:
     cursor = connection.cursor()
     cursor.execute("UPDATE stream_message_capture SET status='COMPLETED', completed_at=UTC_TIMESTAMP(6), next_retry_at=NULL, processing_started_at=NULL WHERE id=%s", (capture_id,))
+    cursor.execute("UPDATE stream_event_tx_log SET event_status='COMPLETED', completed_at=UTC_TIMESTAMP(6), message=NULL WHERE capture_id=%s", (capture_id,))
     connection.commit()
 
 def fail(connection: Any, capture_id: int, error: Exception) -> None:
@@ -143,4 +150,5 @@ def fail(connection: Any, capture_id: int, error: Exception) -> None:
     row = cursor.fetchone()
     delay = retry_delay_seconds(int(row[0]) if row else 1)
     cursor.execute("UPDATE stream_message_capture SET status='FAILED', last_error=%s, next_retry_at=DATE_ADD(UTC_TIMESTAMP(6), INTERVAL %s SECOND), processing_started_at=NULL WHERE id=%s", (str(error)[:65535], delay, capture_id))
+    cursor.execute("UPDATE stream_event_tx_log SET event_status='FAILED', message=%s WHERE capture_id=%s", (str(error)[:65535], capture_id))
     connection.commit()
