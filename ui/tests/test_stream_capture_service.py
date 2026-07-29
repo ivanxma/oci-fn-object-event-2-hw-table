@@ -16,6 +16,7 @@ class Cursor:
             self.rowcount = self.insert_rows
         elif sql.startswith("DELETE FROM"):
             self.rowcount = self.delete_rows
+    def fetchone(self): return None
 
 
 class Connection:
@@ -41,8 +42,8 @@ class StreamCaptureServiceTest(unittest.TestCase):
         cursor = Cursor()
         connection = Connection(cursor)
         service = StreamCaptureService(Mysql(connection), "stream_data")
-        self.assertTrue(service.archive(9))
-        insert_sql = next(sql for sql, _ in cursor.executed if sql.startswith("INSERT INTO"))
+        self.assertTrue(service.archive(9, "MONTH"))
+        insert_sql = next(sql for sql, _ in cursor.executed if sql.startswith("INSERT INTO") and "SELECT id" in sql)
         delete_sql = next(sql for sql, _ in cursor.executed if sql.startswith("DELETE FROM"))
         self.assertIn("status IN ('COMPLETED','FAILED')", insert_sql)
         self.assertIn("status IN ('COMPLETED','FAILED')", delete_sql)
@@ -51,10 +52,16 @@ class StreamCaptureServiceTest(unittest.TestCase):
     def test_archive_does_not_delete_when_message_is_not_terminal(self):
         cursor = Cursor(insert_rows=0)
         connection = Connection(cursor)
-        self.assertFalse(StreamCaptureService(Mysql(connection), "stream_data").archive(9))
+        self.assertFalse(StreamCaptureService(Mysql(connection), "stream_data").archive(9, "WEEK"))
         self.assertFalse(any(sql.startswith("DELETE FROM") for sql, _ in cursor.executed))
         self.assertTrue(connection.rolled_back)
 
     def test_invalid_identifiers_are_rejected_before_sql(self):
         with self.assertRaisesRegex(ValueError, "invalid"):
-            StreamCaptureService(Mysql(Connection(Cursor())), "stream_data").delete_archived("0")
+            StreamCaptureService._identifier("0")
+
+    def test_partition_selection_generates_isolated_physical_tables(self):
+        service = StreamCaptureService(Mysql(Connection(Cursor())), "stream_data")
+        self.assertEqual(service._partition_spec("YEAR", __import__("datetime").datetime(2026, 7, 29))[2], "stream_message_archive_y_2026")
+        self.assertEqual(service._partition_spec("MONTH", __import__("datetime").datetime(2026, 7, 29))[2], "stream_message_archive_m_202607")
+        self.assertEqual(service._partition_spec("WEEK", __import__("datetime").datetime(2026, 7, 29))[2], "stream_message_archive_w_2026w31")

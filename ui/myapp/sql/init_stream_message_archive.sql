@@ -1,20 +1,9 @@
--- Operator archive for terminal durable Stream captures.
--- The UI runs this idempotent, repository-owned statement before archive use.
-CREATE TABLE IF NOT EXISTS stream_message_archive (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  capture_id BIGINT UNSIGNED NOT NULL,
-  stream_id VARCHAR(255) NOT NULL,
-  partition_id VARCHAR(32) NOT NULL,
-  stream_offset BIGINT NOT NULL,
-  message_key TEXT NULL,
-  payload JSON NOT NULL,
-  status VARCHAR(32) NOT NULL,
-  attempts INT UNSIGNED NOT NULL,
-  last_error TEXT NULL,
-  received_at DATETIME(6) NOT NULL,
-  completed_at DATETIME(6) NULL,
-  archived_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  UNIQUE KEY uq_archived_capture (capture_id),
-  KEY ix_archive_stream_time (stream_id, archived_at),
-  KEY ix_archive_status_time (status, archived_at)
+-- Registry of physical durable-message archive partitions.
+CREATE TABLE IF NOT EXISTS stream_message_archive_partitions (
+  partition_name VARCHAR(32) NOT NULL PRIMARY KEY,
+  granularity ENUM('YEAR','MONTH','WEEK') NOT NULL,
+  period_key VARCHAR(16) NOT NULL,
+  table_name VARCHAR(64) NOT NULL UNIQUE,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  KEY ix_archive_partition_period (granularity, period_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

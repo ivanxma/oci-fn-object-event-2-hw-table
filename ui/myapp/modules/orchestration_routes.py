@@ -22,19 +22,19 @@ def _orchestration_service() -> ContainerOrchestrationService:
 @orchestration_bp.get("/")
 @login_required
 def index():
-    captures, archived_captures, vault_secrets, capture_summary, capture_detail, archive_detail = [], [], [], {}, None, None
+    captures, archived_captures, archive_partitions, vault_secrets, capture_summary, capture_detail, archive_detail = [], [], [], [], {}, None, None
     mappings, streams, deployments = [], [], []
     try:
         capture_service = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"])
         capture_status = request.args.get("capture_status", "").upper()
         capture_stream = request.args.get("capture_stream", "")
         captures = capture_service.list_recent(status=capture_status, stream_id=capture_stream)
-        archived_captures = capture_service.list_archived()
+        archived_captures, archive_partitions = capture_service.list_archived()
         capture_summary = capture_service.summary()
         if request.args.get("capture_id"):
             capture_detail = capture_service.get(request.args["capture_id"])
-        if request.args.get("archive_id"):
-            archive_detail = capture_service.get(request.args["archive_id"], archived=True)
+        if request.args.get("archive_id") and request.args.get("archive_partition"):
+            archive_detail = capture_service.get_archived(request.args["archive_partition"], request.args["archive_id"])
     except Exception as error:
         flash(f"Could not load durable stream captures: {type(error).__name__}: {error}", "error")
     try:
@@ -54,7 +54,7 @@ def index():
     except VaultSecretError as error:
         flash(f"OCI Vault secret choices are unavailable: {error}", "warning")
     return render_dashboard(
-        "orchestration.html", active_page="orchestration", captures=captures, archived_captures=archived_captures,
+        "orchestration.html", active_page="orchestration", captures=captures, archived_captures=archived_captures, archive_partitions=archive_partitions,
         capture_summary=capture_summary, capture_detail=capture_detail, archive_detail=archive_detail,
         capture_status=request.args.get("capture_status", "").upper(), capture_stream=request.args.get("capture_stream", ""), mappings=mappings,
         streams=streams, deployments=deployments, vault_secrets=vault_secrets,
@@ -102,19 +102,30 @@ def retry_capture(capture_id: str):
 @login_required
 def archive_capture(capture_id: str):
     try:
-        archived = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"]).archive(capture_id)
+        archived = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"]).archive(capture_id, request.form.get("archive_granularity", "MONTH"))
         flash("Durable message archived." if archived else "Only completed or failed messages can be archived.", "success" if archived else "warning")
     except Exception as error:
         flash(f"Could not archive capture: {type(error).__name__}: {error}", "error")
     return redirect(url_for("orchestration.index"))
 
 
-@orchestration_bp.post("/archive/<archive_id>/delete")
+@orchestration_bp.post("/archive/<partition_name>/<archive_id>/delete")
 @login_required
-def delete_archived_capture(archive_id: str):
+def delete_archived_capture(partition_name: str, archive_id: str):
     try:
-        deleted = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"]).delete_archived(archive_id)
+        deleted = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"]).delete_archived(partition_name, archive_id)
         flash("Archived durable message deleted." if deleted else "Archived message was not found.", "success" if deleted else "warning")
     except Exception as error:
         flash(f"Could not delete archived capture: {type(error).__name__}: {error}", "error")
+    return redirect(url_for("orchestration.index"))
+
+
+@orchestration_bp.post("/archive/<partition_name>/delete")
+@login_required
+def delete_archive_partition(partition_name: str):
+    try:
+        deleted = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"]).delete_archive_partition(partition_name)
+        flash("Archived message partition deleted." if deleted else "Archived partition was not found.", "success" if deleted else "warning")
+    except Exception as error:
+        flash(f"Could not delete archived partition: {type(error).__name__}: {error}", "error")
     return redirect(url_for("orchestration.index"))
