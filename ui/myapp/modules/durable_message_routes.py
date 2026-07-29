@@ -1,3 +1,5 @@
+import json
+
 from flask import Blueprint, current_app, flash, redirect, request, url_for
 from .common import login_required, mysql_for_request, render_dashboard
 from ..services.stream_capture_service import StreamCaptureService
@@ -6,6 +8,18 @@ from ..services.streaming_service import StreamingService
 durable_messages_bp = Blueprint("durable_messages", __name__, url_prefix="/durable-messages")
 
 def _service(): return StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"])
+
+def _message_summary(payload):
+    """Return a compact, non-mutating durable-message preview for the table."""
+    try:
+        value = json.loads(payload) if isinstance(payload, str) else payload
+        data = value.get("data", {}) if isinstance(value, dict) else {}
+        details = data.get("additionalDetails", {}) if isinstance(data, dict) else {}
+        event_type = str(value.get("eventType") or value.get("type") or "Message")
+        resource = str(data.get("resourceName") or details.get("objectName") or "")
+        return f"{event_type} · {resource}" if resource else event_type
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return "Structured message (select View selected)"
 
 @durable_messages_bp.get("/")
 @login_required
@@ -29,6 +43,8 @@ def index():
         stream_id = str(record.get("stream_id", ""))
         if stream_id in stream_names:
             record["stream_id"] = f"{stream_names[stream_id]} — {stream_id}"
+    for record in captures:
+        record["message_summary"] = _message_summary(record.get("payload"))
     return render_dashboard("durable_messages.html", active_page="durable_messages", active_tab=active_tab, captures=captures, archived_captures=archived, archive_partitions=partitions, capture_summary=summary, capture_detail=detail, archive_detail=archive_detail, streams=streams, capture_status=request.args.get("capture_status", "").upper(), capture_stream=request.args.get("capture_stream", ""))
 
 @durable_messages_bp.post("/captures/<capture_id>/retry")

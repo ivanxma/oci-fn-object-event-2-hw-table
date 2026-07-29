@@ -96,7 +96,7 @@ class StreamCaptureService:
         with self.mysql.connection() as conn:
             cursor = conn.cursor(dictionary=True, buffered=True)
             try:
-                cursor.execute(f"SELECT id, stream_id, partition_id, stream_offset, status, attempts, last_error, received_at, completed_at FROM {self.table}{where} ORDER BY id DESC LIMIT %s", (*values, limit))
+                cursor.execute(f"SELECT id, stream_id, partition_id, stream_offset, message_key, payload, status, attempts, last_error, received_at, completed_at FROM {self.table}{where} ORDER BY id DESC LIMIT %s", (*values, limit))
                 return cursor.fetchall()
             except Exception as error:
                 if getattr(error, "errno", None) == 1146: return []
