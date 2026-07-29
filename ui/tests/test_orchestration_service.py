@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from myapp.services.orchestration_service import ContainerOrchestrationService, DeploymentSettings, OrchestrationError, assigned_partitions, validate_deployment
+from myapp.services.orchestration_service import ConsumerRuntime, ContainerOrchestrationService, DeploymentSettings, OrchestrationError, assigned_partitions, validate_deployment
 
 class OrchestrationServiceTest(unittest.TestCase):
     def _service(self):
@@ -24,7 +24,21 @@ class OrchestrationServiceTest(unittest.TestCase):
         self.assertEqual(env["DB_NAME"], "stream_db")
         self.assertEqual(env["STREAM_DATA_DB_NAME"], "stream_data")
         self.assertEqual(env["CONTROL_DATABASE"], "stream_db")
+        self.assertEqual(env["WRITER_WORKERS"], "4")
         self.assertNotIn("DB_CREDENTIAL", env)
+
+    def test_form_runtime_overrides_non_secret_values_with_validation(self):
+        runtime = ConsumerRuntime.from_form({
+            "image_url": "lhr.ocir.io/ns/repo:next", "db_secret_ocid": "ocid1.vaultsecret.new",
+            "db_host": "10.0.0.8", "db_port": "3307", "db_user": "stream_user",
+            "db_name": "testdb", "stream_data_db_name": "stream_data", "control_database": "stream_db",
+            "writer_workers": "8",
+        }, self._service().settings)
+        spec = self._service().deployment_spec(mapping={"id": 7, "stream_id": "ocid1.stream.test", "processing_mode": "FIFO"}, stream_partitions=1, partition_assignment="0", runtime=runtime)
+        self.assertEqual(spec["container"]["image_url"], "lhr.ocir.io/ns/repo:next")
+        self.assertEqual(spec["container"]["environment_variables"]["WRITER_WORKERS"], "8")
+        with self.assertRaisesRegex(ValueError, "valid OCI Vault secret"):
+            ConsumerRuntime.from_form({"db_secret_ocid": "not-a-secret"}, self._service().settings)
 
     def test_rejects_non_positive_resources(self):
         settings = DeploymentSettings(True, "ocid1.compartment.test", "uk-london-1", "ocid1.subnet.test", "AD-1", "CI.Standard.E4.Flex", 0, 16, "lhr.ocir.io/ns/repo:tag", "ocid1.vaultsecret.test", "db", "3306", "streamuser", "stream_db", "stream_data", "stream_db")

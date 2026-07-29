@@ -43,6 +43,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         CONTAINER_AVAILABILITY_DOMAIN=os.environ.get("CONTAINER_AVAILABILITY_DOMAIN", ""), CONSUMER_SHAPE=os.environ.get("CONSUMER_SHAPE", ""),
         CONSUMER_OCPUS=os.environ.get("CONSUMER_OCPUS", ""), CONSUMER_MEMORY_GBS=os.environ.get("CONSUMER_MEMORY_GBS", ""),
         CONSUMER_IMAGE_URL=os.environ.get("CONSUMER_IMAGE_URL", ""), CONSUMER_CONTAINER_NAME_PREFIX=os.environ.get("CONSUMER_CONTAINER_NAME_PREFIX", "object-storage-stream-consumer"),
+        WRITER_WORKERS=os.environ.get("WRITER_WORKERS", "4"),
         DB_SECRET_OCID=os.environ.get("DB_SECRET_OCID", ""), DB_HOST=os.environ.get("DB_HOST", ""), DB_PORT=os.environ.get("DB_PORT", "3306"), DB_USER=os.environ.get("DB_USER", ""), DB_NAME=os.environ.get("DB_NAME", ""), STREAM_DATA_DB_NAME=os.environ.get("STREAM_DATA_DB_NAME", ""), SUBNET_ID=os.environ.get("SUBNET_ID", ""),
     )
     if test_config:
