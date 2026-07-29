@@ -37,4 +37,4 @@ oci --auth instance_principal container-instances container-instance create \
   --display-name "$CONTAINER_NAME" --shape "$CONSUMER_SHAPE" \
   --shape-config "{\"ocpus\":$CONSUMER_OCPUS,\"memoryInGBs\":$CONSUMER_MEMORY_GBS}" \
   --containers "file://$CONFIG" --vnics "[{\"subnetId\":\"$SUBNET_ID\"}]" \
-  --wait-for-state ACTIVE --wait-for-state FAILED
+  --wait-for-state SUCCEEDED --wait-for-state FAILED
