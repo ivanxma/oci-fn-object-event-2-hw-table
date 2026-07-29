@@ -24,7 +24,7 @@ flowchart LR
     Bucket --> Events[OCI Events rule]
     Events --> Stream[OCI Streaming]
     Stream --> Processor[Container Instance processor]
-    Consumer --> Capture[(Durable message capture)]
+    Processor --> Capture[(Durable message capture)]
     Capture --> Loader[Streaming CSV loader]
     Loader --> Bucket
     Loader --> Stage[(Parallel staging tables)]
@@ -40,12 +40,12 @@ flowchart LR
   parallel database writers without creating a full temporary CSV file.
 - Publishes one file atomically with MySQL partition exchange; delete events
   retire the corresponding partition.
-- Chooses FIFO (one Stream partition/one consumer) or parallel partition
+- Chooses FIFO (one Stream partition/one processor) or parallel partition
   assignments from each mapping.
 - Captures raw Stream events before processing, so failed records can be
   retried independently of Stream cursor retention.
 - Provides operational UI workflows for Streams, mappings, live OCI Rules,
-  consumer orchestration, Object Storage testing, registered-table data, and
+  processor orchestration, Object Storage testing, registered-table data, and
   captured-message retry.
 
 ## Deployment and configuration
@@ -80,11 +80,11 @@ Before use, confirm:
 - Object events are enabled on each source bucket.
 - The Events rule covers create, update, and delete and its bucket/object filter
   matches exactly one mapping.
-- The consumer resource principal can read source objects, consume the Stream,
+- The processor resource principal can read source objects, consume the Stream,
   and read the DB secret from Vault.
 - The deployment/UI instance principal has scoped Streaming, Events,
   Container Instance, repository, and test-object permissions.
-- The consumer subnet can reach MySQL and the database account can use the
+- The processor subnet can reach MySQL and the database account can use the
   control schema plus approved target/staging objects.
 
 ### IAM policy baseline
@@ -107,7 +107,7 @@ Allow dynamic-group <dynamic-group> to manage repos in compartment <compartment>
 
 `compute-container-family` permits Event Processor list/create/manage
 operations. `virtual-network-family` permits VNIC/subnet attachment. Streams
-cover the UI Stream Server/Content operations and consumer assignment. `read
+cover the UI Stream Server/Content operations and processor assignment. `read
 secrets` lists metadata for the UI selector; `read secret-bundles` retrieves
 the selected value at runtime. Repositories permit the approved OCIR image
 workflow through the instance principal.
@@ -119,7 +119,7 @@ also grant use of the approved tag namespace at tenancy scope:
 Allow dynamic-group <dynamic-group> to use tag-namespaces in tenancy
 ```
 
-Apply least privilege to the actual consumer resource-principal dynamic group
+Apply least privilege to the actual processor resource-principal dynamic group
 as well. It must be able to consume the assigned Stream, read the Vault bundle,
 read source Object Storage objects, and reach MySQL. Verify each permission
 with read-only preflight checks before enabling Container Instance creation.
@@ -133,14 +133,14 @@ troubleshooting, and validation commands.
 - One CSV file is one complete logical partition of a mapped table. Many files
   may map to one table, but active files must not contain overlapping business
   records.
-- FIFO requires one Stream partition and one consumer; parallel mode allows
+- FIFO requires one Stream partition and one processor; parallel mode allows
   independent partition processing and does not guarantee global FIFO order.
 - Move records between files by completing removal from the source file before
   adding them to the destination, or use an external sequenced publication
   workflow.
 - Target tables must already satisfy the loader contract: compatible columns,
   LIST partitioning by `batch_num`, and `batch_num` in every unique key.
-- The consumer is long-running; each Stream message is captured before loading
+- The processor is long-running; each Stream message is captured before loading
   so a failed loader invocation remains retryable after a consumer restart.
 - OCI Events is at-least-once and may retry or deliver conflicting operations
   out of order. Publishers must avoid simultaneous updates to the same logical
