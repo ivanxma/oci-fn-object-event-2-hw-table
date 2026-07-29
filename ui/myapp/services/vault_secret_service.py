@@ -129,7 +129,9 @@ class VaultSecretService:
         except (ValueError, VaultSecretError):
             raise
         except Exception as error:
-            raise VaultSecretError("Could not create OCI Vault database secret. Confirm the UI instance principal can manage secrets and use the selected Vault key.") from error
+            code = str(getattr(error, "code", "") or type(error).__name__)
+            status = str(getattr(error, "status", "") or "unknown")
+            raise VaultSecretError(f"Could not create OCI Vault database secret (OCI {code}, status {status}). Confirm the UI instance principal can manage secrets and use the selected Vault key.") from error
 
     def update_database_secret(self, *, secret_id: str, host: str, port: str, user: str, password: str, database: str, control_database: str, stream_data_database: str) -> None:
         if not secret_id.startswith("ocid1.vaultsecret."):
@@ -144,4 +146,6 @@ class VaultSecretService:
         except (ValueError, VaultSecretError):
             raise
         except Exception as error:
-            raise VaultSecretError("Could not update OCI Vault database secret. Confirm the UI instance principal can manage secrets.") from error
+            code = str(getattr(error, "code", "") or type(error).__name__)
+            status = str(getattr(error, "status", "") or "unknown")
+            raise VaultSecretError(f"Could not update OCI Vault database secret (OCI {code}, status {status}). Confirm the UI instance principal can manage secrets.") from error
