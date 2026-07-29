@@ -13,7 +13,7 @@ class OrchestrationError(RuntimeError):
 def validate_deployment(*, processing_mode: str, partitions: int, replicas: int) -> None:
     mode = processing_mode.upper()
     if mode == "FIFO" and (partitions != 1 or replicas != 1):
-        raise ValueError("FIFO deployment requires one stream partition and one consumer replica.")
+        raise ValueError("FIFO deployment requires one stream partition and one processor replica.")
     if mode == "PARALLEL" and (partitions < 2 or not 1 <= replicas <= partitions):
         raise ValueError("Parallel deployment requires at least two partitions and replicas no greater than partitions.")
     if mode not in {"FIFO", "PARALLEL"}:
@@ -89,7 +89,7 @@ class ConsumerRuntime:
         required = ("image_url", "db_secret_ocid", "db_host", "db_port", "db_user", "db_name", "stream_data_db_name", "control_database")
         missing = [name for name in required if not str(getattr(self, name)).strip()]
         if missing:
-            raise ValueError("Consumer configuration is missing: " + ", ".join(missing) + ".")
+            raise ValueError("Processor configuration is missing: " + ", ".join(missing) + ".")
         if any(char.isspace() for char in self.image_url) or ":" not in self.image_url:
             raise ValueError("Container image must be a valid OCI Registry image reference.")
         if not self.db_secret_ocid.startswith("ocid1.vaultsecret."):

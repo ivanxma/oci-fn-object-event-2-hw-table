@@ -65,7 +65,7 @@ class MappingService:
         # compatibility, but do not create new mappings that depend on it.
         mode = (form.get("invocation_mode") or "SYNC").strip().upper()
         if mode != "SYNC":
-            raise ValueError("Streaming consumer mappings must use SYNC loader mode; DETACHED Function mode is retired.")
+            raise ValueError("Streaming processor mappings must use SYNC loader mode; DETACHED Function mode is retired.")
         try:
             workers = int(form.get("worker_threads") or 4)
         except (TypeError, ValueError) as error:
