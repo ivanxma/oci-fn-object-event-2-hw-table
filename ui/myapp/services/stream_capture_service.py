@@ -120,7 +120,7 @@ class StreamCaptureService:
                 table = self._partition_table(partition["table_name"])
                 cursor.execute(f"SELECT COUNT(*) AS total FROM {table}"); partition["message_count"] = int(cursor.fetchone()["total"])
                 partitions.append(partition)
-                cursor.execute(f"SELECT id, capture_id, stream_id, partition_id, stream_offset, status, attempts, archived_at FROM {table} ORDER BY id DESC LIMIT %s", (limit,))
+                cursor.execute(f"SELECT id, capture_id, stream_id, partition_id, stream_offset, payload, status, attempts, archived_at FROM {table} ORDER BY id DESC LIMIT %s", (limit,))
                 rows.extend([{**row, "archive_partition": partition["partition_name"]} for row in cursor.fetchall()])
         return sorted(rows, key=lambda item: item["archived_at"], reverse=True)[:limit], partitions
 
