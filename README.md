@@ -119,6 +119,7 @@ selected Vault and key:
 
 ```
 Allow dynamic-group <dynamic-group> to manage secrets in compartment <compartment>
+Allow dynamic-group <dynamic-group> to use secret-family in compartment <compartment>
 Allow dynamic-group <dynamic-group> to read vaults in compartment <compartment>
 Allow dynamic-group <dynamic-group> to read keys in compartment <compartment>
 Allow dynamic-group <dynamic-group> to use keys in compartment <compartment>
@@ -127,7 +128,8 @@ Allow dynamic-group <dynamic-group> to use keys in compartment <compartment>
 The create form requires an existing Vault OCID and a symmetric encryption-key
 OCID from that Vault. It sends the submitted connection JSON directly to OCI
 Vault and returns only the resulting secret OCID; it does not store or display
-the credential. The processor resource principal still needs only `read
+the credential. `use secret-family` is required for the `CreateSecret`
+operation in addition to `manage secrets`. The processor resource principal still needs only `read
 secret-bundles` to resolve that OCID at runtime.
 
 If the deployment applies **defined tags** (freeform tags do not need this),

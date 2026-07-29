@@ -42,7 +42,7 @@ class VaultSecretServiceTest(unittest.TestCase):
             def __init__(self, **kwargs): self.__dict__.update(kwargs)
         client = SimpleNamespace(create_secret=lambda details: (created.append(details) or SimpleNamespace(data=SimpleNamespace(id="ocid1.vaultsecret.new", secret_name="processor-db", lifecycle_state="CREATING"))))
         oci = SimpleNamespace(vault=SimpleNamespace(models=SimpleNamespace(Base64SecretContentDetails=Content, CreateSecretDetails=Details)))
-        with patch.object(service, "_management_client", return_value=(oci, client)):
+        with patch.object(service, "_client", return_value=(oci, client)):
             result = service.create_database_secret(name="processor-db", vault_id="ocid1.vault.test", key_id="ocid1.key.test", host="10.0.0.8", port="3306", user="streamuser", password="secret-value", database="testdb", control_database="stream_db", stream_data_database="stream_data")
         self.assertEqual(result.id, "ocid1.vaultsecret.new")
         payload = json.loads(base64.b64decode(created[0].secret_content.content))
