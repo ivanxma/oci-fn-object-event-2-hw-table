@@ -63,6 +63,9 @@ chmod 600 env.sh
 # Set OCI, database, Vault, Stream, image, rule, HTTPS, and UI values in env.sh.
 ./build_consumer_image.sh
 ./verify_streaming_deployment.sh
+# Optional bounded integration check against the configured durable database.
+# On OL9 it uses the project-local Python 3.12 verifier environment.
+./verify_durable_capture.sh
 ./deploy_ui.sh
 # Only after the documented full verification gate:
 ./deploy_consumer.sh
