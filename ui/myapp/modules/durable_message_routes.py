@@ -11,6 +11,8 @@ def _service(): return StreamCaptureService(mysql_for_request(), current_app.con
 @login_required
 def index():
     captures, archived, partitions, summary, detail, archive_detail, streams = [], [], [], {}, None, None, []
+    active_tab = request.args.get("tab", "current").lower()
+    if active_tab not in {"current", "archived", "partitions"}: active_tab = "current"
     try:
         service = _service(); status = request.args.get("capture_status", "").upper(); stream = request.args.get("capture_stream", "")
         captures = service.list_recent(status=status, stream_id=stream); archived, partitions = service.list_archived(); summary = service.summary()
@@ -27,7 +29,7 @@ def index():
         stream_id = str(record.get("stream_id", ""))
         if stream_id in stream_names:
             record["stream_id"] = f"{stream_names[stream_id]} — {stream_id}"
-    return render_dashboard("durable_messages.html", active_page="durable_messages", captures=captures, archived_captures=archived, archive_partitions=partitions, capture_summary=summary, capture_detail=detail, archive_detail=archive_detail, streams=streams, capture_status=request.args.get("capture_status", "").upper(), capture_stream=request.args.get("capture_stream", ""))
+    return render_dashboard("durable_messages.html", active_page="durable_messages", active_tab=active_tab, captures=captures, archived_captures=archived, archive_partitions=partitions, capture_summary=summary, capture_detail=detail, archive_detail=archive_detail, streams=streams, capture_status=request.args.get("capture_status", "").upper(), capture_stream=request.args.get("capture_stream", ""))
 
 @durable_messages_bp.post("/captures/<capture_id>/retry")
 @login_required
