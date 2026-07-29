@@ -34,6 +34,26 @@ def archive_capture(capture_id):
     except Exception as error: flash(f"Could not archive capture: {type(error).__name__}: {error}", "error")
     return redirect(url_for("durable_messages.index"))
 
+@durable_messages_bp.post("/captures/batch")
+@login_required
+def batch_capture_action():
+    try:
+        capture_ids = request.form.getlist("capture_ids")
+        if not capture_ids:
+            raise ValueError("Select one or more durable messages.")
+        service, operation = _service(), request.form.get("operation", "")
+        if operation == "retry":
+            changed = sum(1 for capture_id in capture_ids if service.retry(capture_id))
+            flash(f"{changed} failed capture(s) queued for retry.", "success" if changed else "warning")
+        elif operation == "archive":
+            changed = sum(1 for capture_id in capture_ids if service.archive(capture_id, request.form.get("archive_granularity", "MONTH")))
+            flash(f"{changed} terminal capture(s) archived.", "success" if changed else "warning")
+        else:
+            raise ValueError("Choose a durable message action.")
+    except Exception as error:
+        flash(f"Could not apply durable message action: {type(error).__name__}: {error}", "error")
+    return redirect(url_for("durable_messages.index"))
+
 @durable_messages_bp.post("/archive/<partition_name>/<archive_id>/delete")
 @login_required
 def delete_archived_capture(partition_name, archive_id):
