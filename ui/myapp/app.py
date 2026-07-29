@@ -14,6 +14,7 @@ from .modules.mapping_routes import mappings_bp
 from .modules.profile_routes import profile_bp
 from .modules.streaming_routes import streaming_bp
 from .modules.orchestration_routes import orchestration_bp
+from .modules.durable_message_routes import durable_messages_bp
 from .services.profile_store import ProfileStore
 from .services.session_store import SessionStore
 
@@ -65,6 +66,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.register_blueprint(mappings_bp)
     app.register_blueprint(streaming_bp)
     app.register_blueprint(orchestration_bp)
+    app.register_blueprint(durable_messages_bp)
     return app
 
 

@@ -1,6 +1,5 @@
 from flask import Blueprint, current_app, flash, redirect, request, url_for
 from .common import login_required, mysql_for_request, render_dashboard
-from ..services.stream_capture_service import StreamCaptureService
 from ..services.mapping_service import MappingService
 from ..services.orchestration_service import ConsumerRuntime, ContainerOrchestrationService, DeploymentSettings, OrchestrationError
 from ..services.streaming_service import StreamingService
@@ -22,21 +21,8 @@ def _orchestration_service() -> ContainerOrchestrationService:
 @orchestration_bp.get("/")
 @login_required
 def index():
-    captures, archived_captures, archive_partitions, vault_secrets, capture_summary, capture_detail, archive_detail = [], [], [], [], {}, None, None
+    vault_secrets = []
     mappings, streams, deployments = [], [], []
-    try:
-        capture_service = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"])
-        capture_status = request.args.get("capture_status", "").upper()
-        capture_stream = request.args.get("capture_stream", "")
-        captures = capture_service.list_recent(status=capture_status, stream_id=capture_stream)
-        archived_captures, archive_partitions = capture_service.list_archived()
-        capture_summary = capture_service.summary()
-        if request.args.get("capture_id"):
-            capture_detail = capture_service.get(request.args["capture_id"])
-        if request.args.get("archive_id") and request.args.get("archive_partition"):
-            archive_detail = capture_service.get_archived(request.args["archive_partition"], request.args["archive_id"])
-    except Exception as error:
-        flash(f"Could not load durable stream captures: {type(error).__name__}: {error}", "error")
     try:
         mappings = MappingService(mysql_for_request()).list_mappings()
         streams = StreamingService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"], enabled=bool(current_app.config["OCI_STREAMING_MANAGEMENT_ENABLED"])).list_streams()
@@ -54,9 +40,7 @@ def index():
     except VaultSecretError as error:
         flash(f"OCI Vault secret choices are unavailable: {error}", "warning")
     return render_dashboard(
-        "orchestration.html", active_page="orchestration", captures=captures, archived_captures=archived_captures, archive_partitions=archive_partitions,
-        capture_summary=capture_summary, capture_detail=capture_detail, archive_detail=archive_detail,
-        capture_status=request.args.get("capture_status", "").upper(), capture_stream=request.args.get("capture_stream", ""), mappings=mappings,
+        "orchestration.html", active_page="orchestration", mappings=mappings,
         streams=streams, deployments=deployments, vault_secrets=vault_secrets,
         settings=_orchestration_service().settings,
         orchestration_enabled=current_app.config["OCI_CONTAINER_ORCHESTRATION_ENABLED"],
@@ -85,47 +69,4 @@ def deploy():
         flash(f"Container Instance requested: {result['display_name']} ({result['lifecycle_state']}).", "success")
     except (ValueError, OrchestrationError, VaultSecretError) as error:
         flash(str(error), "error")
-    return redirect(url_for("orchestration.index"))
-
-@orchestration_bp.post("/captures/<capture_id>/retry")
-@login_required
-def retry_capture(capture_id: str):
-    try:
-        retried = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"]).retry(int(capture_id))
-        flash("Capture queued for retry." if retried else "Only failed captures can be retried.", "success" if retried else "warning")
-    except Exception as error:
-        flash(f"Could not retry capture: {error}", "error")
-    return redirect(url_for("orchestration.index"))
-
-
-@orchestration_bp.post("/captures/<capture_id>/archive")
-@login_required
-def archive_capture(capture_id: str):
-    try:
-        archived = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"]).archive(capture_id, request.form.get("archive_granularity", "MONTH"))
-        flash("Durable message archived." if archived else "Only completed or failed messages can be archived.", "success" if archived else "warning")
-    except Exception as error:
-        flash(f"Could not archive capture: {type(error).__name__}: {error}", "error")
-    return redirect(url_for("orchestration.index"))
-
-
-@orchestration_bp.post("/archive/<partition_name>/<archive_id>/delete")
-@login_required
-def delete_archived_capture(partition_name: str, archive_id: str):
-    try:
-        deleted = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"]).delete_archived(partition_name, archive_id)
-        flash("Archived durable message deleted." if deleted else "Archived message was not found.", "success" if deleted else "warning")
-    except Exception as error:
-        flash(f"Could not delete archived capture: {type(error).__name__}: {error}", "error")
-    return redirect(url_for("orchestration.index"))
-
-
-@orchestration_bp.post("/archive/<partition_name>/delete")
-@login_required
-def delete_archive_partition(partition_name: str):
-    try:
-        deleted = StreamCaptureService(mysql_for_request(), current_app.config["STREAM_DATA_DB_NAME"]).delete_archive_partition(partition_name)
-        flash("Archived message partition deleted." if deleted else "Archived partition was not found.", "success" if deleted else "warning")
-    except Exception as error:
-        flash(f"Could not delete archived partition: {type(error).__name__}: {error}", "error")
     return redirect(url_for("orchestration.index"))
