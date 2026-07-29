@@ -28,6 +28,13 @@ def main() -> None:
         if not row:
             raise RuntimeError("Capture claim check failed.")
         fail(connection, int(row["id"]), RuntimeError("verification retry"))
+        cursor.execute("SELECT next_retry_at > UTC_TIMESTAMP(6) FROM stream_message_capture WHERE stream_id=%s", (stream_id,))
+        if cursor.fetchone()[0] != 1:
+            raise RuntimeError("Capture retry backoff check failed.")
+        # This verifier proves the manual-retry path without waiting for the
+        # exponential schedule. It touches only its unique temporary record.
+        cursor.execute("UPDATE stream_message_capture SET next_retry_at=UTC_TIMESTAMP(6) WHERE stream_id=%s", (stream_id,))
+        connection.commit()
         retry = claim_next(connection, stream_id=stream_id, partitions=["0"])
         if not retry or int(retry["attempts"]) != 1:
             raise RuntimeError("Capture retry check failed.")
