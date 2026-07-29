@@ -43,7 +43,14 @@ def main() -> None:
         status, attempts = cursor.fetchone()
         if status != "COMPLETED" or int(attempts) != 2:
             raise RuntimeError("Capture completion check failed.")
-        print("PASS: durable capture idempotency, retry, and completion")
+        capture(connection, stream_id=stream_id, partition="0", offset=2, key="recovery", payload={"verification": "recovery"})
+        cursor.execute("UPDATE stream_message_capture SET status='PROCESSING', processing_started_at=DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 301 SECOND) WHERE stream_id=%s AND stream_offset=2", (stream_id,))
+        connection.commit()
+        recovered = claim_next(connection, stream_id=stream_id, partitions=["0"])
+        if not recovered or int(recovered["stream_offset"]) != 2:
+            raise RuntimeError("Interrupted processing recovery check failed.")
+        complete(connection, int(recovered["id"]))
+        print("PASS: durable capture idempotency, scheduled retry, completion, and interrupted-processing recovery")
     finally:
         cleanup = connection.cursor()
         cleanup.execute("DELETE FROM stream_partition_checkpoint WHERE stream_id=%s", (stream_id,))
