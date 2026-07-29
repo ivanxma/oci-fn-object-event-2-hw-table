@@ -194,3 +194,20 @@ class ContainerOrchestrationService:
             raise
         except Exception as error:
             raise OrchestrationError(f"Could not create Container Instance: {type(error).__name__}: {error}") from error
+
+    def delete(self, deployment_id: str) -> None:
+        """Delete only an instance carrying this application's management tag."""
+        if not deployment_id.startswith("ocid1.containerinstance."):
+            raise ValueError("Container Instance identifier is invalid.")
+        try:
+            oci, client = self._client()
+            records = oci.pagination.list_call_get_all_results(
+                client.list_container_instances, compartment_id=self.settings.compartment_id
+            ).data
+            if not any(str(item.id) == deployment_id and (getattr(item, "freeform_tags", {}) or {}).get("managed-by") == "oci-object-event-2-table" for item in records):
+                raise OrchestrationError("Only Container Instances managed by this application can be deleted.")
+            client.delete_container_instance(deployment_id)
+        except (ValueError, OrchestrationError):
+            raise
+        except Exception as error:
+            raise OrchestrationError(f"Could not delete Container Instance: {type(error).__name__}: {error}") from error

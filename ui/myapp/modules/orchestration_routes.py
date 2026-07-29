@@ -70,3 +70,14 @@ def deploy():
     except (ValueError, OrchestrationError, VaultSecretError) as error:
         flash(str(error), "error")
     return redirect(url_for("orchestration.index"))
+
+
+@orchestration_bp.post("/deployments/<deployment_id>/delete")
+@login_required
+def delete_deployment(deployment_id: str):
+    try:
+        _orchestration_service().delete(deployment_id)
+        flash("Container Instance deletion requested.", "success")
+    except (ValueError, OrchestrationError) as error:
+        flash(str(error), "error")
+    return redirect(url_for("orchestration.index"))

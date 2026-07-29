@@ -77,3 +77,12 @@ class OrchestrationServiceTest(unittest.TestCase):
         with patch.object(service, "_client", side_effect=RuntimeError("api unavailable")):
             with self.assertRaisesRegex(OrchestrationError, "Could not create Container Instance: RuntimeError"):
                 service.create(mapping={"stream_id": "ocid1.stream.test", "processing_mode": "FIFO"}, stream_partitions=1, partition_assignment="0")
+
+    def test_delete_rejects_unmanaged_instance_before_mutation(self):
+        service = self._service()
+        client = SimpleNamespace(list_container_instances=object(), delete_container_instance=lambda *_args: self.fail("delete must not run"))
+        record = SimpleNamespace(id="ocid1.containerinstance.test", freeform_tags={})
+        oci = SimpleNamespace(pagination=SimpleNamespace(list_call_get_all_results=lambda *_args, **_kwargs: SimpleNamespace(data=[record])))
+        with patch.object(service, "_client", return_value=(oci, client)):
+            with self.assertRaisesRegex(OrchestrationError, "managed by this application"):
+                service.delete("ocid1.containerinstance.test")
