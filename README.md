@@ -112,6 +112,22 @@ secrets` lists metadata for the UI selector; `read secret-bundles` retrieves
 the selected value at runtime. Repositories permit the approved OCIR image
 workflow through the instance principal.
 
+To enable the Event Processor **Database Secret** tab to create a new JSON
+database-connectivity secret, grant the UI/deployment principal the following
+additional least-privilege permissions in the compartment containing the
+selected Vault and key:
+
+```
+Allow dynamic-group <dynamic-group> to manage secrets in compartment <compartment>
+Allow dynamic-group <dynamic-group> to use keys in compartment <compartment>
+```
+
+The create form requires an existing Vault OCID and a symmetric encryption-key
+OCID from that Vault. It sends the submitted connection JSON directly to OCI
+Vault and returns only the resulting secret OCID; it does not store or display
+the credential. The processor resource principal still needs only `read
+secret-bundles` to resolve that OCID at runtime.
+
 If the deployment applies **defined tags** (freeform tags do not need this),
 also grant use of the approved tag namespace at tenancy scope:
 

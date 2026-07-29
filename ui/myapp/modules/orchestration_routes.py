@@ -27,7 +27,7 @@ def index():
     active_tab = request.args.get("tab", "deployment").lower()
     if managed_state not in {"ALL", "ACTIVE"}:
         managed_state = "ALL"
-    if active_tab not in {"deployment", "instances"}:
+    if active_tab not in {"deployment", "instances", "database-secret"}:
         active_tab = "deployment"
     try:
         mappings = MappingService(mysql_for_request()).list_mappings()
@@ -76,6 +76,21 @@ def deploy():
     except (ValueError, OrchestrationError, VaultSecretError) as error:
         flash(str(error), "error")
     return redirect(url_for("orchestration.index"))
+
+
+@orchestration_bp.post("/database-secret")
+@login_required
+def create_database_secret():
+    try:
+        secret = VaultSecretService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"]).create_database_secret(
+            name=request.form.get("secret_name", ""), vault_id=request.form.get("vault_id", ""), key_id=request.form.get("key_id", ""),
+            host=request.form.get("db_host", ""), port=request.form.get("db_port", "3306"), user=request.form.get("db_user", ""),
+            password=request.form.get("db_password", ""), database=request.form.get("db_name", ""),
+        )
+        flash(f"OCI Vault database secret created: {secret.name} ({secret.id}). Select it in Processor deployment.", "success")
+    except (ValueError, VaultSecretError) as error:
+        flash(str(error), "error")
+    return redirect(url_for("orchestration.index", tab="database-secret"))
 
 
 @orchestration_bp.get("/deployments/<deployment_id>")
