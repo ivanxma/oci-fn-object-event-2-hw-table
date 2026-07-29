@@ -62,6 +62,16 @@ def _object_name(event: dict[str, Any], source: dict[str, str]) -> str:
     return str(details.get("objectName") or source["resource_name"])
 
 
+def _oci_signer() -> Any:
+    """Use the deployment principal; VM validation opts into instance principal."""
+    mode = os.environ.get("OCI_AUTH_MODE", "resource_principal").strip().lower()
+    if mode == "resource_principal":
+        return oci.auth.signers.get_resource_principals_signer()
+    if mode == "instance_principal":
+        return oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+    raise ValueError("OCI_AUTH_MODE must be resource_principal or instance_principal.")
+
+
 def _write_event_audit(db: Database, event: dict[str, Any]) -> int:
     """Persist the received CloudEvent for the Event TX Object Storage Event view."""
     data = event.get("data") or {}
@@ -200,7 +210,7 @@ def _object_stream(event: dict[str, Any], source: dict[str, str]) -> ObjectStora
     namespace = str(details.get("namespace") or os.environ.get("OBJECT_STORAGE_NAMESPACE") or "")
     if not namespace:
         raise ValueError("Object Storage event must include a namespace or set OBJECT_STORAGE_NAMESPACE.")
-    signer = oci.auth.signers.get_resource_principals_signer()
+    signer = _oci_signer()
     # A large CSV can take longer to consume than the SDK's default read
     # timeout because ingestion pauses briefly while writer workers commit each
     # batch.  Keep the HTTP response open for the whole Function invocation.
@@ -272,12 +282,16 @@ def _run_delete(db: Database, event: dict[str, Any], source: dict[str, Any]) -> 
             raise
 
 
-def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
+def process_cloud_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Execute a CloudEvent without constructing an FDK HTTP response.
+
+    The Streaming consumer calls this directly after durable capture.  The
+    Function handler below remains a thin HTTP adapter for legacy callers.
+    """
     db: Database | None = None
     source: dict[str, str] | None = None
     mapping: dict[str, Any] | None = None
     try:
-        event = json.loads(data.getvalue().decode("utf-8") if data else "{}")
         if not isinstance(event, dict):
             raise ValueError("Expected an Object Storage CloudEvent JSON object.")
         db = Database()
@@ -308,7 +322,7 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
                 raise ValueError("Mapping requests DETACHED mode but detached execution is not enabled or FUNCTION_ID is missing.")
             # A Function invocation runs with a resource-principal identity;
             # instance principals are only available on Compute instances.
-            signer = oci.auth.signers.get_resource_principals_signer()
+            signer = _oci_signer()
             invoke_endpoint = os.environ.get("FUNCTION_INVOKE_ENDPOINT", "")
             if not invoke_endpoint:
                 raise ValueError("Mapping requests DETACHED mode but FUNCTION_INVOKE_ENDPOINT is missing.")
@@ -322,9 +336,9 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
             worker_event["_object_event_id"] = object_event_id
             worker_event["_invocation_mode"] = source["invocation_mode"]
             client.invoke_function(function_id=function_id, invoke_function_body=json.dumps(worker_event).encode(), fn_intent="cloudevent", fn_invoke_type="detached")
-            return response.Response(ctx, response_data=json.dumps({"status": "detached_submitted", "mapping_id": mapping["id"], "worker_threads": mapping.get("worker_threads", 4)}), headers={"Content-Type": "application/json"}, status_code=202)
+            return {"status": "detached_submitted", "mapping_id": mapping["id"], "worker_threads": mapping.get("worker_threads", 4)}
         result = _run_delete(db, event, source) if action == "DELETE" else _run_load(db, event, source, create=action == "CREATE")
-        return response.Response(ctx, response_data=json.dumps({"status": "success", **result}), headers={"Content-Type": "application/json"}, status_code=200)
+        return {"status": "success", **result}
     except Exception as error:
         if db is not None and source is not None and not getattr(error, "event_logged", False):
             action = "UNKNOWN"
@@ -334,5 +348,16 @@ def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
                 except ValueError:
                     pass
             log_error(db, source, action, error, mapping)
+        raise
+
+
+def handler(ctx: Any, data: io.BytesIO | None = None) -> response.Response:
+    """Legacy OCI Function HTTP adapter around the shared loader path."""
+    try:
+        event = json.loads(data.getvalue().decode("utf-8") if data else "{}")
+        result = process_cloud_event(event)
+        status = 202 if result.get("status") == "detached_submitted" else 200
+        return response.Response(ctx, response_data=json.dumps(result), headers={"Content-Type": "application/json"}, status_code=status)
+    except Exception as error:
         message = "Target table is not ready for partition exchange." if isinstance(error, TargetTableError) else str(error)
         return response.Response(ctx, response_data=json.dumps({"status": "error", "message": message}), headers={"Content-Type": "application/json"}, status_code=500)

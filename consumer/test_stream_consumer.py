@@ -125,3 +125,13 @@ class ConsumerModeTest(unittest.TestCase):
                 raise AssertionError("fail must not be called without a claim")
         with patch.dict(sys.modules, {"message_store": Store}):
             self.assertFalse(process_one(None, lambda _payload: None, stream_id="ocid1.stream.test", partitions=["0"]))
+
+    def test_loader_uses_shared_processing_path_without_fdk_response(self):
+        import sys
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from loader import process_event
+        received = []
+        with patch.dict(sys.modules, {"func": SimpleNamespace(process_cloud_event=lambda event: received.append(event))}):
+            process_event({"eventType": "test"})
+        self.assertEqual(received, [{"eventType": "test"}])

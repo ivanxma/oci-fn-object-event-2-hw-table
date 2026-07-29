@@ -58,20 +58,6 @@ class EventTransactionService:
             f" LEFT JOIN {control}.`object_event` AS object_event ON object_event.id = {alias}.object_event_id",
         )
 
-    def detached_processes(self, limit: int = 200) -> list[dict[str, Any]]:
-        """Return mapping-driven detached work for operational monitoring."""
-        with self.mysql.connection() as conn:
-            cursor = conn.cursor(dictionary=True, buffered=True)
-            control = quote_identifier(control_database(), "control database")
-            invocation_mode = self._transaction_mode_sql(cursor)
-            cursor.execute(f"""SELECT tx.id, tx.mapping_id, tx.event_action, tx.event_status,
-                tx.target_database, tx.target_table, tx.bucket_name, tx.resource_name,
-                tx.message, tx.created_at, {invocation_mode} AS invocation_mode,
-                COALESCE(m.worker_threads, 4) AS worker_threads
-                FROM {control}.event_tx_log tx LEFT JOIN {control}.object_storage_mappings m ON m.id=tx.mapping_id
-                WHERE {invocation_mode}='DETACHED' ORDER BY tx.created_at DESC, tx.id DESC LIMIT %s""", (limit,))
-            return cursor.fetchall()
-
     def registered_tables(self) -> tuple[list[dict[str, Any]], bool]:
         with self.mysql.connection() as conn:
             cursor = conn.cursor(dictionary=True, buffered=True)
