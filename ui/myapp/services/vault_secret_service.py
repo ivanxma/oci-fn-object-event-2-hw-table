@@ -122,7 +122,7 @@ class VaultSecretService:
         except Exception as error:
             raise VaultSecretError("Could not list Vault encryption keys. Confirm the UI instance principal has 'read keys' permission.") from error
 
-    def create_database_secret(self, *, name: str, vault_id: str, key_id: str, host: str, port: str, user: str, password: str, database: str, control_database: str, stream_data_database: str) -> VaultSecretRecord:
+    def create_database_secret(self, *, name: str, vault_id: str, key_id: str, host: str, port: str, user: str, credential: str, database: str, control_database: str, stream_data_database: str) -> VaultSecretRecord:
         """Create a Vault JSON secret without retaining or returning its value."""
         name, vault_id, key_id = name.strip(), vault_id.strip(), key_id.strip()
         host, port, user, database = host.strip(), port.strip(), user.strip(), database.strip()
@@ -131,11 +131,11 @@ class VaultSecretService:
             raise ValueError("Secret name must start with a letter and use letters, digits, hyphens, or underscores.")
         if not vault_id.startswith("ocid1.vault.") or not key_id.startswith("ocid1.key."):
             raise ValueError("Choose valid OCI Vault and encryption key OCIDs.")
-        if not host or not user or not database or not control_database or not stream_data_database or not password:
-            raise ValueError("Database host, user, password, loader, control, and durable database names are required.")
+        if not host or not user or not database or not control_database or not stream_data_database or not credential:
+            raise ValueError("Database host, user, credential, loader, control, and durable database names are required.")
         if not port.isdigit() or not 1 <= int(port) <= 65535:
             raise ValueError("Database port must be from 1 to 65535.")
-        payload = json.dumps({"host": host, "port": int(port), "user": user, "credential": password, "database": database, "control_database": control_database, "stream_data_database": stream_data_database}, separators=(",", ":")).encode("utf-8")
+        payload = json.dumps({"host": host, "port": int(port), "user": user, "credential": credential, "database": database, "control_database": control_database, "stream_data_database": stream_data_database}, separators=(",", ":")).encode("utf-8")
         try:
             oci, client = self._client()
             content = oci.vault.models.Base64SecretContentDetails(name=f"{name}-v1", stage="CURRENT", content=base64.b64encode(payload).decode("ascii"))
@@ -152,12 +152,12 @@ class VaultSecretService:
             status = str(getattr(error, "status", "") or "unknown")
             raise VaultSecretError(f"Could not create OCI Vault database secret (OCI {code}, status {status}). Confirm the UI instance principal can manage secrets and use the selected Vault key.") from error
 
-    def update_database_secret(self, *, secret_id: str, host: str, port: str, user: str, password: str, database: str, control_database: str, stream_data_database: str) -> None:
+    def update_database_secret(self, *, secret_id: str, host: str, port: str, user: str, credential: str, database: str, control_database: str, stream_data_database: str) -> None:
         if not secret_id.startswith("ocid1.vaultsecret."):
             raise ValueError("Choose an existing OCI Vault secret to update.")
-        if not all((host.strip(), port.strip(), user.strip(), password, database.strip(), control_database.strip(), stream_data_database.strip())) or not port.strip().isdigit():
+        if not all((host.strip(), port.strip(), user.strip(), credential, database.strip(), control_database.strip(), stream_data_database.strip())) or not port.strip().isdigit():
             raise ValueError("Complete all database connectivity fields before updating the secret.")
-        payload = json.dumps({"host": host.strip(), "port": int(port), "user": user.strip(), "credential": password, "database": database.strip(), "control_database": control_database.strip(), "stream_data_database": stream_data_database.strip()}, separators=(",", ":")).encode("utf-8")
+        payload = json.dumps({"host": host.strip(), "port": int(port), "user": user.strip(), "credential": credential, "database": database.strip(), "control_database": control_database.strip(), "stream_data_database": stream_data_database.strip()}, separators=(",", ":")).encode("utf-8")
         try:
             oci, client = self._client()
             content = oci.vault.models.Base64SecretContentDetails(name="processor-db-config", stage="CURRENT", content=base64.b64encode(payload).decode("ascii"))

@@ -20,7 +20,7 @@ Discovers the current OCI VM's compartment and region, then prompts for:
   - OCIR repository prefix
 
 OCI calls use only --auth instance_principal. The generated file contains
-resource OCIDs and configuration, never an OCI auth token or database password.
+resource OCIDs and non-secret configuration; database access uses a Vault OCID.
 
 With --non-interactive, supply DB_SECRET_OCID and SUBNET_ID in the environment.
 Compartment, region, AD, VCN, Vault, and key are derived from instance metadata

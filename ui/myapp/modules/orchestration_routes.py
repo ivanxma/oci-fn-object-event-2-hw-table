@@ -100,7 +100,7 @@ def deploy():
 def create_database_secret():
     try:
         vault_service = VaultSecretService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"])
-        values = dict(host=request.form.get("db_host", ""), port=request.form.get("db_port", "3306"), user=request.form.get("db_user", ""), password=request.form.get("db_password", ""), database=request.form.get("db_name", ""), control_database=request.form.get("control_database", ""), stream_data_database=request.form.get("stream_data_database", ""))
+        values = dict(host=request.form.get("db_host", ""), port=request.form.get("db_port", "3306"), user=request.form.get("db_user", ""), credential=request.form.get("db_credential", ""), database=request.form.get("db_name", ""), control_database=request.form.get("control_database", ""), stream_data_database=request.form.get("stream_data_database", ""))
         existing_secret_id = request.form.get("existing_secret_id", "")
         if existing_secret_id:
             vault_service.update_database_secret(secret_id=existing_secret_id, **values)

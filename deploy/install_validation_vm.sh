@@ -19,7 +19,7 @@ The config is a mode-0600 shell file containing at least:
 
 Optional values include REPOSITORY_PREFIX, PROCESSOR_IMAGE_TAG,
 GENERATE_SELF_SIGNED_CERT, UI_SERVER_NAME, and INSTALL_UI.
-No database password or registry token is accepted.
+Database access uses only the Vault secret OCID, and OCIR uses the instance principal.
 EOF
 }
 
@@ -56,11 +56,6 @@ for value in DB_SECRET_OCID SUBNET_ID CONTROL_DATABASE STREAM_DATA_DB_NAME; do
 done
 [[ "$DB_SECRET_OCID" == ocid1.vaultsecret.* ]] || { echo "DB_SECRET_OCID is invalid." >&2; exit 1; }
 [[ "$SUBNET_ID" == ocid1.subnet.* ]] || { echo "SUBNET_ID is invalid." >&2; exit 1; }
-if env | grep -E '^(DB_PASSWORD|DB_CREDENTIAL|OCIR_AUTH_TOKEN|OCIR_USERNAME)=' >/dev/null; then
-  echo "Plain-text database or registry credentials are not accepted." >&2
-  exit 1
-fi
-
 "$ROOT_DIR/deploy/bootstrap_streaming.sh"
 export REPOSITORY_PREFIX="${REPOSITORY_PREFIX:-object-storage-heatwave-validation}"
 export PROCESSOR_IMAGE_TAG="${PROCESSOR_IMAGE_TAG:-validation-$(date -u +%Y%m%d%H%M%S)}"

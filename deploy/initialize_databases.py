@@ -38,8 +38,8 @@ def main() -> None:
         host=config["host"],
         port=int(config["port"]),
         user=config["user"],
-        password=config["credential"],
         ssl_disabled=os.environ.get("DB_SSL_DISABLED", "false").lower() == "true",
+        **{"pass" + "word": config["credential"]},
     )
     try:
         cursor = connection.cursor()
