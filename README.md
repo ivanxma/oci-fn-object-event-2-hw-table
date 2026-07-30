@@ -98,6 +98,10 @@ tab; they are OCIDs, not secret material.
 All `stream_db` and `stream_data` initialization DDL is stored under
 `loader_core/sql/`, `processor/sql/`, or `ui/myapp/sql/`; see the external
 database schema inventory in `docs/technical-details.md`.
+The dedicated staging schema is created from
+`loader_core/sql/init_staging_schema.sql`. The Vault database user must either
+be allowed to create that schema or the DBA must pre-create it and grant the
+user all required DDL/DML privileges on it.
 Unit tests, integration harnesses, and disposable SQL fixtures live under
 `tests/`; production processor images do not copy them.
 

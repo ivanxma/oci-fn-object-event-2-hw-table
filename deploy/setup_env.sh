@@ -9,6 +9,7 @@ FORCE=false
 NON_INTERACTIVE=false
 DB_PASSWORD_FILE="${DB_PASSWORD_FILE:-}"
 PASSWORD_FILE_CONSUMED=false
+PROVIDED_DB_SECRET_OCID="${DB_SECRET_OCID:-}"
 
 usage() {
   cat <<'EOF'
@@ -265,6 +266,25 @@ fi
   echo "The database secret must be a Vault secret OCID." >&2
   exit 1
 }
+if [[ -n "$PROVIDED_DB_SECRET_OCID" ]]; then
+  SECRET_FIELDS=$(
+    oci_json secrets secret-bundle get --secret-id "$DB_SECRET_OCID" |
+      jq -r '.data."secret-bundle-content".content // empty' |
+      base64 --decode |
+      jq -er '
+        [.database,.control_database,.stream_data_database,.staging_database] as $names |
+        if ($names | all(type == "string" and length > 0)) and
+           ($names | unique | length) == 4
+        then $names | @tsv
+        else error("invalid database schema contract")
+        end'
+  ) || {
+    echo "The existing Vault secret must be base64 JSON with separate default, control, stream-data, and staging database names." >&2
+    exit 1
+  }
+  IFS=$'\t' read -r DB_NAME CONTROL_DATABASE STREAM_DATA_DB_NAME STAGING_DATABASE <<< "$SECRET_FIELDS"
+  unset SECRET_FIELDS
+fi
 
 prompt_required REPOSITORY_PREFIX "OCIR repository prefix" "object-storage-heatwave"
 PROCESSOR_IMAGE_NAME=object-storage-stream-processor

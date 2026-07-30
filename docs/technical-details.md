@@ -118,8 +118,9 @@ not exactly-once: durable capture and idempotent loader state handle replay.
   Every unique key must contain `batch_num`.
 
 The processor reads the external SQL files under `processor/sql/` to initialize
-durable objects. The UI reads external SQL under `ui/myapp/sql/` for mapping
-objects and removal of obsolete audit objects.
+durable objects. Deployment initializes the dedicated staging schema from
+`loader_core/sql/init_staging_schema.sql`. The UI reads external SQL under
+`ui/myapp/sql/` for mapping and archive objects.
 
 ## Partition-exchange loading
 
@@ -230,12 +231,13 @@ instead of merging their partitions.
 
 ## Processor deployment contract
 
-Required OCI and image values are defined in the ignored `deploy/env.sh`:
+The ignored `deploy/env.sh` contains only operator inputs and defaults. OCI
+placement is resolved from the deployment VM at runtime:
 
 | Area | Variables |
 |---|---|
-| OCI | `COMPARTMENT_ID`, `REGION`, `REGION_KEY`, `SUBNET_ID`, `CONTAINER_AVAILABILITY_DOMAIN` |
-| Shape | `PROCESSOR_SHAPE`, `PROCESSOR_OCPUS`, `PROCESSOR_MEMORY_GBS` |
+| OCI | Derived `COMPARTMENT_ID`, `REGION`, `REGION_KEY`, `CONTAINER_AVAILABILITY_DOMAIN`, and a private `SUBNET_ID` in the UI VM VCN |
+| Shape | Defaults: `CI.Standard.E4.Flex`, 1 OCPU, 16 GB; optional runtime overrides |
 | Image | `REPOSITORY_PREFIX`, `PROCESSOR_IMAGE_NAME`, `PROCESSOR_IMAGE_TAG`, `PROCESSOR_IMAGE_URL`; the UI Settings page can select `OCI_REGISTRY_REPOSITORY` from repositories in the configured compartment and Event Processor then lists its available tags |
 | Mapping | `PROCESSOR_MAPPING_ID`, `OCI_STREAM_ID`, `PROCESSING_MODE` |
 | Assignment | `EXPECTED_PARTITION_COUNT`, `PROCESSOR_REPLICA_COUNT`, `PROCESSOR_PARTITIONS` |
@@ -251,6 +253,7 @@ where documented, and executes the resulting statements.
 | Database/object | External SQL |
 |---|---|
 | Control database, `object_storage_mappings`, `target_batch_sequences`, `source_object_batches` | `loader_core/sql/init_control_schema.sql` |
+| Dedicated transient staging database | `loader_core/sql/init_staging_schema.sql` |
 | Compatibility columns for an older `object_storage_mappings` table | `loader_core/sql/control_migrations/*.sql` |
 | UI-owned mapping bootstrap | `ui/myapp/sql/init_mapping_control.sql` and `ui/myapp/sql/mapping_migrations/*.sql` |
 | `stream_message_capture`, `stream_partition_checkpoint`, `stream_event_tx_log` | `processor/sql/init_stream_capture.sql` |

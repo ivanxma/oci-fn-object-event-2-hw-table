@@ -16,6 +16,13 @@ def test_stream_data_tables_are_defined_in_external_sql() -> None:
     assert "CREATE TABLE IF NOT EXISTS __ARCHIVE_TABLE__" in partition_sql
 
 
+def test_staging_schema_is_defined_in_external_sql() -> None:
+    source = (
+        ROOT / "loader_core" / "sql" / "init_staging_schema.sql"
+    ).read_text(encoding="utf-8")
+    assert "CREATE DATABASE IF NOT EXISTS __STAGING_DATABASE__" in source
+
+
 def test_control_table_names_are_not_created_inline_by_loader_python() -> None:
     source = (ROOT / "loader_core" / "partition_loader.py").read_text(encoding="utf-8")
     for table in ("object_storage_mappings", "target_batch_sequences", "source_object_batches"):

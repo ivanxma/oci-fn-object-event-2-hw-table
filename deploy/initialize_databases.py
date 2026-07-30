@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -13,10 +14,23 @@ sys.path[:0] = [str(ROOT / "processor"), str(ROOT / "loader_core")]
 from vault_config import load_database_config  # noqa: E402
 
 
+IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+
+
+def quoted_identifier(value: str, label: str) -> str:
+    if not IDENTIFIER.fullmatch(value):
+        raise ValueError(f"Vault {label} must be a valid MySQL identifier.")
+    return f"`{value}`"
+
+
 def main() -> None:
     config = load_database_config()
     control = str(config.get("control_database") or config["database"])
     durable = str(config.get("stream_data_database") or os.environ.get("STREAM_DATA_DB_NAME") or config["database"])
+    staging = str(config.get("staging_database") or os.environ.get("STAGING_DATABASE") or "")
+    quoted_identifier(control, "control database")
+    quoted_identifier(durable, "stream-data database")
+    quoted_staging = quoted_identifier(staging, "staging database")
     os.environ.update(
         {
             "DB_HOST": str(config["host"]),
@@ -43,8 +57,16 @@ def main() -> None:
     )
     try:
         cursor = connection.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{durable.replace('`', '``')}` CHARACTER SET utf8mb4")
-        cursor.execute(f"USE `{durable.replace('`', '``')}`")
+        staging_sql = (
+            ROOT / "loader_core" / "sql" / "init_staging_schema.sql"
+        ).read_text(encoding="utf-8")
+        executable = "\n".join(
+            line for line in staging_sql.splitlines()
+            if not line.lstrip().startswith("--")
+        ).strip().rstrip(";")
+        cursor.execute(executable.replace("__STAGING_DATABASE__", quoted_staging))
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {quoted_identifier(durable, 'stream-data database')} CHARACTER SET utf8mb4")
+        cursor.execute(f"USE {quoted_identifier(durable, 'stream-data database')}")
         from message_store import ensure_schema
         ensure_schema(connection)
         registry = f"`{durable}`.`stream_message_archive_partitions`"
@@ -53,7 +75,7 @@ def main() -> None:
         )
         cursor.execute(archive_sql.replace("__ARCHIVE_REGISTRY__", registry))
         connection.commit()
-        for database in (control, durable):
+        for database in (control, durable, staging):
             cursor.execute(
                 "SELECT table_name FROM information_schema.tables "
                 "WHERE table_schema=%s ORDER BY table_name",
