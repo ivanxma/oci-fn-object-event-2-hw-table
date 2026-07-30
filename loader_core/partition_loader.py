@@ -348,12 +348,12 @@ def drop_stage_table(db: Database, mapping: dict[str, Any], stage: str) -> None:
 
 
 def csv_batches(csv_source: Path | TextIO, columns: list[str], batch_rows: int) -> Iterator[list[tuple[str | None, ...]]]:
-    """Read CSV batches and convert a lone missing-value marker to SQL NULL.
+    """Read CSV batches and convert missing values to SQL NULL.
 
-    Object Storage CSV sources commonly encode absent scalar values as ``-``.
-    Binding that literal to a nullable numeric or date column fails in strict
-    MySQL mode.  Only a complete marker is converted, so hyphenated text is
-    preserved.
+    Object Storage CSV sources commonly encode absent scalar values as an
+    empty field or ``-``. Binding either value to a nullable numeric or date
+    column fails in strict MySQL mode. Only a complete empty/marker value is
+    converted, so hyphenated text is preserved.
     """
     if isinstance(csv_source, Path):
         with csv_source.open(newline="", encoding="utf-8") as source:
@@ -383,7 +383,7 @@ def csv_batches(csv_source: Path | TextIO, columns: list[str], batch_rows: int) 
         values: list[str | None] = []
         for column in columns:
             value = (row.get(header_by_folded_name[column.casefold()]) or "").strip()
-            values.append(None if value == "-" else value)
+            values.append(None if value in {"", "-"} else value)
         batch.append(tuple(values))
         if len(batch) >= batch_rows:
             yield batch

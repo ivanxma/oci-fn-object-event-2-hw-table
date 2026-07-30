@@ -25,6 +25,10 @@ class PartitionLoaderCsvTest(unittest.TestCase):
         source = self.source("EMPLOYEE_ID,MANAGER_ID\n1,-\n")
         self.assertEqual(list(csv_batches(source, ["employee_id", "manager_id"], 100)), [[("1", None)]])
 
+    def test_empty_field_is_bound_as_null(self):
+        source = self.source("EMPLOYEE_ID,MANAGER_ID\n1,\n")
+        self.assertEqual(list(csv_batches(source, ["employee_id", "manager_id"], 100)), [[("1", None)]])
+
     def test_case_insensitive_duplicate_headers_are_rejected(self):
         source = self.source("ID,id\n1,2\n")
         with self.assertRaisesRegex(ValueError, "duplicate column names"):
