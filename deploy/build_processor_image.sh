@@ -18,6 +18,20 @@ NAMESPACE=$(oci --auth instance_principal os ns get --query data --raw-output)
 OCI_REGISTRY_REPOSITORY=${OCI_REGISTRY_REPOSITORY:-"${REPOSITORY_PREFIX,,}/$PROCESSOR_IMAGE_NAME"}
 IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_IMAGE_TAG"
 [[ -n "$NAMESPACE" && "$NAMESPACE" != null ]] || { echo 'Could not resolve the OCIR namespace using the instance principal.' >&2; exit 1; }
+EXISTING_TAG=$(
+  oci --auth instance_principal --region "$REGION" artifacts container image list \
+    --compartment-id "$COMPARTMENT_ID" --all --output json |
+    jq -r --arg repository "$OCI_REGISTRY_REPOSITORY" --arg version "$PROCESSOR_IMAGE_TAG" \
+      '.data.items[] |
+       select(."repository-name" == $repository and .version == $version and ."lifecycle-state" != "DELETED") |
+       .id' |
+    head -1
+)
+[[ -z "$EXISTING_TAG" ]] || {
+  echo "Processor image tag already exists in $OCI_REGISTRY_REPOSITORY: $PROCESSOR_IMAGE_TAG" >&2
+  echo "Increase PROCESSOR_IMAGE_TAG; released image tags are immutable." >&2
+  exit 1
+}
 mkdir -p "$HOME/.docker" "$HOME/.config/containers"
 printf '{\n  "credHelpers": {\n    "%s.ocir.io": "ocir"\n  }\n}\n' "$REGION_KEY" > "$HOME/.docker/config.json"
 cp "$HOME/.docker/config.json" "$HOME/.config/containers/auth.json"

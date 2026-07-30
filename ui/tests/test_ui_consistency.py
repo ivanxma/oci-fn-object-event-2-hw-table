@@ -50,10 +50,16 @@ class UIConsistencySourceTest(unittest.TestCase):
 
     def test_processor_deployment_explains_empty_image_choices(self) -> None:
         source = (TEMPLATES / "orchestration.html").read_text(encoding="utf-8")
-        self.assertIn("No Processor repository is configured.", source)
+        self.assertIn("No deployment-owned Processor repository is configured.", source)
         self.assertIn("No available tagged image was found", source)
         self.assertIn("{% if not container_images %}disabled{% endif %}", source)
         self.assertIn(".primary-button:disabled", STYLESHEET.read_text(encoding="utf-8"))
+
+    def test_processor_repository_is_read_only_in_settings(self) -> None:
+        source = (TEMPLATES / "settings.html").read_text(encoding="utf-8")
+        self.assertIn('value="{{ settings.OCI_REGISTRY_REPOSITORY }}" readonly', source)
+        self.assertNotIn('name="registry_repository"><select', source)
+        self.assertIn("Deployment-owned repository shared by every Processor release.", source)
 
 
 if __name__ == "__main__":

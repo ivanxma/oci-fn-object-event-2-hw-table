@@ -84,7 +84,11 @@ the deployment host's instance-principal OCIR credential helper; it never uses
 a static registry credential. Interactive and silent setup derive
 `OCI_REGISTRY_REPOSITORY` from the repository prefix and Processor image name,
 persist it in the generated `env.sh`, and use that same value for the image
-build and the Event Processor image-tag dropdown. `deploy_processor.sh` creates
+build and the Event Processor image-tag dropdown. The repository is
+deployment-owned and read-only in Settings; releases vary only by immutable
+tag. Increase `PROCESSOR_IMAGE_TAG` for every Processor image release; the
+build refuses to overwrite a tag already present in that repository.
+`deploy_processor.sh` creates
 one Container Instance for one explicit partition assignment. Set
 `PROCESSOR_DB_SECRET_OCID` for a mapping-specific replacement that must use a
 different Vault database bundle without changing the deployment host's default

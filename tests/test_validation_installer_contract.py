@@ -50,6 +50,8 @@ class ValidationInstallerContractTest(unittest.TestCase):
             'IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_IMAGE_TAG"',
             build_source,
         )
+        self.assertIn("Processor image tag already exists", build_source)
+        self.assertIn("Increase PROCESSOR_IMAGE_TAG; released image tags are immutable.", build_source)
 
     def test_all_deployment_package_installs_use_retry_helper(self):
         for relative in (

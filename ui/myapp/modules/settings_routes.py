@@ -10,7 +10,6 @@ from flask import Blueprint, current_app, flash, redirect, request, url_for
 from mysql.connector import Error as MySQLError
 
 from ..services.mapping_service import MappingService
-from ..services.registry_service import RegistryError, RegistryService
 from ..services.release_history_service import ReleaseHistoryService
 from ..release import release_metadata
 from ..services.naming import quote_identifier, validate_identifier
@@ -151,17 +150,9 @@ def manage():
                 flash("UI database configuration saved.", "success")
         except (MySQLError, OSError, ValueError) as error:
             flash(str(error), "error")
-    repositories = []
-    try:
-        repositories = RegistryService(
-            compartment_id=current_app.config.get("OCI_COMPARTMENT_ID", ""),
-            region=current_app.config.get("OCI_REGION", ""),
-        ).list_repositories()
-    except RegistryError as error:
-        flash(f"OCI Container Registry choices are unavailable: {error}", "warning")
     history = []
     try:
         history = ReleaseHistoryService(mysql_for_request(), values["CONTROL_DATABASE"]).recent()
     except Exception:
         pass  # The control schema can be initialized from this page.
-    return render_dashboard("settings.html", active_page="settings", settings=values, registry_repositories=repositories, release=release_metadata(), deployment_history=history)
+    return render_dashboard("settings.html", active_page="settings", settings=values, release=release_metadata(), deployment_history=history)
