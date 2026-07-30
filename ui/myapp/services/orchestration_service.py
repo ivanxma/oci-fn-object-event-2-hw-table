@@ -206,7 +206,7 @@ class ContainerOrchestrationService:
         if not valid_deployment_id(deployment_id):
             raise ValueError("Container Instance identifier is invalid.")
         try:
-            _, client = self._client()
+            oci, client = self._client()
             item = client.get_container_instance(deployment_id).data
             tags = getattr(item, "freeform_tags", {}) or {}
             if tags.get("managed-by") != "oci-object-event-2-table":
@@ -224,8 +224,18 @@ class ContainerOrchestrationService:
                     return value.get(name, default)
                 return getattr(value, name, default)
 
+            container_summaries = list(getattr(item, "containers", []) or [])
+            if not container_summaries and hasattr(client, "list_containers"):
+                try:
+                    container_summaries = oci.pagination.list_call_get_all_results(
+                        client.list_containers,
+                        compartment_id=self.settings.compartment_id,
+                        container_instance_id=deployment_id,
+                    ).data
+                except Exception:
+                    container_summaries = []
             container_records = []
-            for summary in getattr(item, "containers", []) or []:
+            for summary in container_summaries:
                 container = summary
                 container_id = field(summary, "id", "")
                 if container_id:

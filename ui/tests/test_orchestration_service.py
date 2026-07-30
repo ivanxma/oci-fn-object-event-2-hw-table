@@ -119,8 +119,32 @@ class OrchestrationServiceTest(unittest.TestCase):
             detail = service.get_deployment("ocid1.computecontainerinstance.test")
         self.assertTrue(detail["containers"][0]["resource_principal_enabled"])
         self.assertEqual([item["name"] for item in detail["containers"][0]["environment"]], ["DB_SECRET_OCID", "PROCESSOR_PARTITIONS"])
+        self.assertEqual(detail["containers"][0]["environment"][0]["value"], "Configured (secret OCID hidden)")
         self.assertEqual(detail["replacement"]["partition_assignment"], "0")
         self.assertEqual(detail["replacement"]["mapping_id"], "12")
+
+    def test_detail_lists_nested_container_when_instance_summary_omits_it(self):
+        service = self._service()
+        record = SimpleNamespace(
+            id="ocid1.computecontainerinstance.test", display_name="processor-p0", lifecycle_state="ACTIVE",
+            freeform_tags={"managed-by": "oci-object-event-2-table"}, compartment_id="c", availability_domain="ad",
+            shape="CI.Standard.E4.Flex", shape_config=SimpleNamespace(ocpus=1, memory_in_gbs=16), containers=None,
+        )
+        nested = SimpleNamespace(
+            id="ocid1.computecontainer.test", display_name="processor", image_url="registry/repo:tag",
+            is_resource_principal_disabled=False,
+            environment_variables={"DB_SECRET_OCID": "ocid1.vaultsecret.test", "PROCESSOR_PARTITIONS": "0"},
+        )
+        client = SimpleNamespace(
+            get_container_instance=lambda _: SimpleNamespace(data=record),
+            list_containers=lambda **_: SimpleNamespace(data=[SimpleNamespace(id=nested.id)]),
+            get_container=lambda _: SimpleNamespace(data=nested),
+        )
+        oci = SimpleNamespace(pagination=SimpleNamespace(list_call_get_all_results=lambda fn, **kwargs: fn(**kwargs)))
+        with patch.object(service, "_client", return_value=(oci, client)):
+            detail = service.get_deployment("ocid1.computecontainerinstance.test")
+        self.assertEqual(detail["containers"][0]["image_url"], "registry/repo:tag")
+        self.assertTrue(detail["containers"][0]["resource_principal_enabled"])
 
     def test_delete_rejects_already_deleted_instance(self):
         service = self._service()
