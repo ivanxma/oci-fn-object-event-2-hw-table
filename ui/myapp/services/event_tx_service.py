@@ -84,7 +84,15 @@ class EventTransactionService:
             row["resource_name"] = data.get("resourceName") or details.get("resourceName")
             row["message"] = row.get("last_error") or f"Stream partition {row.get('partition_id')} · offset {row.get('stream_offset')}"
             row["batch_num"] = None
-            row["processing_mode"] = str(row.get("processing_mode") or "UNKNOWN")
+            row["processing_mode"] = str(
+                row.get("processing_mode")
+                or ("UNMAPPED" if row.get("mapping_id") is None else "FIFO")
+            )
+            row["target_label"] = (
+                f"{row['target_database']}.{row['target_table']}"
+                if row.get("target_database") and row.get("target_table")
+                else "Unmapped event"
+            )
         return rows
 
     def registered_tables(self) -> tuple[list[dict[str, Any]], bool]:
@@ -261,7 +269,7 @@ class EventTransactionService:
             total = int(cursor.fetchone()["total"])
             rows = self._capture_rows(cursor, limit=max(page_size, 1), offset=(max(page, 1)-1)*max(page_size, 1))
         for row in rows:
-            row.update({"event_time": row["event_received_at"], "event_type": row["event_action"], "stream_partition": row["partition_id"], "stream_offset": row["stream_offset"], "target": f"{row.get('target_database') or '—'}.{row.get('target_table') or '—'}", "received_at": row["event_received_at"], "completed_at": row["event_completed_at"], "duration_ms": row["event_duration_ms"]})
+            row.update({"event_time": row["event_received_at"], "event_type": row["event_action"], "stream_partition": row["partition_id"], "stream_offset": row["stream_offset"], "target": row["target_label"], "received_at": row["event_received_at"], "completed_at": row["event_completed_at"], "duration_ms": row["event_duration_ms"]})
         return columns, rows, total, "received_at", "desc"
 
     def object_event_export(self, database: str, **_kwargs) -> tuple[list[str], list[dict[str, Any]]]:

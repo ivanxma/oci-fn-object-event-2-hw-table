@@ -57,6 +57,38 @@ class EventTransactionServiceTest(unittest.TestCase):
         )
         self.assertEqual(stage_query, ("staging_db", "employees\\_stage\\_%"))
 
+    def test_unmapped_capture_is_labeled_explicitly(self):
+        class CaptureCursor:
+            def execute(self, _sql, _values=None):
+                pass
+
+            def fetchall(self):
+                return [
+                    {
+                        "id": 1,
+                        "mapping_id": None,
+                        "target_database": None,
+                        "target_table": None,
+                        "processing_mode": None,
+                        "payload": {
+                            "eventType": "com.oraclecloud.objectstorage.deleteobject",
+                            "data": {
+                                "resourceName": "retired/file.csv",
+                                "additionalDetails": {"bucketName": "bucket"},
+                            },
+                        },
+                        "status": "FAILED",
+                        "last_error": "No Resource Mappings entry matches.",
+                    }
+                ]
+
+        with patch.dict(os.environ, {"CONTROL_DATABASE": "stream_db"}):
+            rows = EventTransactionService(
+                Mysql(), "stream_data"
+            )._capture_rows(CaptureCursor(), limit=10)
+        self.assertEqual(rows[0]["processing_mode"], "UNMAPPED")
+        self.assertEqual(rows[0]["target_label"], "Unmapped event")
+
 
 if __name__ == "__main__":
     unittest.main()

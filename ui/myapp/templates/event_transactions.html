@@ -3,7 +3,7 @@
 {% for row in rows %}
 <tr class="{{ 'event-error-row' if row.event_status == 'FAILED' else '' }}">
   <td>{{ row.event_action }}</td><td><span class="mode-badge">{{ row.processing_mode }}</span></td>
-  {% if target %}<td><code>{{ row.target_database or '—' }}.{{ row.target_table or '—' }}</code></td>{% endif %}
+  {% if target %}<td><code>{{ row.target_label }}</code></td>{% endif %}
   <td><span class="lifecycle-badge {{ row.event_status|lower }}">{{ row.event_status }}</span></td>
   <td>{{ row.bucket_name or '—' }}<small>{{ row.resource_name or '' }}</small></td>
   <td>{{ row.message }}</td><td>{{ row.event_received_at }}</td>
