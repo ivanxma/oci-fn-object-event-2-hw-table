@@ -43,6 +43,8 @@ jq -n --arg name "$CONTAINER_NAME" --arg image "$IMAGE" --arg stream "$OCI_STREA
   '[{displayName:$name,imageUrl:$image,isResourcePrincipalDisabled:false,environmentVariables:{OCI_STREAM_ID:$stream,PROCESSING_MODE:$mode,EXPECTED_PARTITION_COUNT:$partitions,PROCESSOR_REPLICA_COUNT:$replicas,PROCESSOR_PARTITIONS:$assignment,DB_SECRET_OCID:$secret,WRITER_WORKERS:$workers}}]' > "$CONFIG"
 RELEASE_VERSION="${RELEASE_VERSION:-$PROCESSOR_IMAGE_TAG}"
 GIT_SHA="${GIT_SHA:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}"
+SOURCE_BRANCH="${SOURCE_BRANCH:-$(git -C "$ROOT_DIR" branch --show-current)}"
+BUILD_UTC="${BUILD_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 CONFIG_SCHEMA_VERSION="${CONFIG_SCHEMA_VERSION:-2}"
 TAGS=$(jq -nc \
   --arg mapping "$PROCESSOR_MAPPING_ID" \
@@ -58,3 +60,29 @@ oci --auth instance_principal --region "$REGION" container-instances container-i
   --containers "file://$CONFIG" --vnics "[{\"subnetId\":\"$SUBNET_ID\"}]" \
   --freeform-tags "$TAGS" \
   --wait-for-state SUCCEEDED --wait-for-state FAILED
+
+DEPLOYMENT_ID=$(
+  oci --auth instance_principal --region "$REGION" container-instances container-instance list \
+    --compartment-id "$COMPARTMENT_ID" --all --output json |
+    jq -r --arg name "$CONTAINER_NAME" --arg mapping "$PROCESSOR_MAPPING_ID" '
+      [.data.items[] |
+       select(."display-name" == $name and ."freeform-tags"."mapping-id" == $mapping and
+              ."lifecycle-state" != "DELETED")] |
+      sort_by(."time-created") | last.id // empty'
+)
+DEPLOYMENT_PYTHON="${DEPLOYMENT_PYTHON_BIN:-$ROOT_DIR/.venv-verification-py312/bin/python}"
+if [[ ! -x "$DEPLOYMENT_PYTHON" ]] && command -v python3 >/dev/null && python3 -c 'import mysql.connector, oci' >/dev/null 2>&1; then
+  DEPLOYMENT_PYTHON=$(command -v python3)
+fi
+if [[ -x "$DEPLOYMENT_PYTHON" ]]; then
+  OCI_AUTH_MODE=instance_principal "$DEPLOYMENT_PYTHON" "$ROOT_DIR/deploy/record_deployment.py" \
+    --component PROCESSOR --deployment-name "$CONTAINER_NAME" \
+    --deployment-id "$DEPLOYMENT_ID" --mapping-id "$PROCESSOR_MAPPING_ID" \
+    --release-version "$RELEASE_VERSION" --git-sha "$GIT_SHA" \
+    --source-branch "$SOURCE_BRANCH" --build-utc "$BUILD_UTC" \
+    --image-name "$PROCESSOR_IMAGE_NAME" --image-tag "$PROCESSOR_IMAGE_TAG" \
+    --config-schema-version "$CONFIG_SCHEMA_VERSION" ||
+    echo "WARNING: Processor deployment succeeded but deployment history could not be recorded." >&2
+else
+  echo "WARNING: Processor deployment succeeded but no deployment Python with MySQL Connector and OCI SDK is available to record history." >&2
+fi

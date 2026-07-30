@@ -169,5 +169,21 @@ else
   echo "firewall-cmd is unavailable; allow TCP/443 using the host firewall." >&2
 fi
 
+DEPLOYMENT_PYTHON="${DEPLOYMENT_PYTHON_BIN:-$ROOT_DIR/.venv-verification-py312/bin/python}"
+if [[ ! -x "$DEPLOYMENT_PYTHON" ]] && command -v python3 >/dev/null && python3 -c 'import mysql.connector, oci' >/dev/null 2>&1; then
+  DEPLOYMENT_PYTHON=$(command -v python3)
+fi
+if [[ -x "$DEPLOYMENT_PYTHON" ]]; then
+  OCI_AUTH_MODE=instance_principal "$DEPLOYMENT_PYTHON" "$ROOT_DIR/deploy/record_deployment.py" \
+    --component UI --deployment-name "$UI_SERVICE_NAME" \
+    --release-version "$RELEASE_VERSION" --git-sha "$GIT_SHA" \
+    --source-branch "$SOURCE_BRANCH" --build-utc "$BUILD_UTC" \
+    --image-name "$UI_IMAGE_NAME" --image-tag "$UI_IMAGE_TAG" \
+    --config-schema-version "${CONFIG_SCHEMA_VERSION:-2}" ||
+    echo "WARNING: UI deployment succeeded but deployment history could not be recorded." >&2
+else
+  echo "WARNING: UI deployment succeeded but no deployment Python with MySQL Connector and OCI SDK is available to record history." >&2
+fi
+
 sudo systemctl --no-pager --full status "$UI_SERVICE_NAME"
 echo "UI HTTPS deployment complete. Confirm the OCI NSG/security list allows inbound TCP/443."

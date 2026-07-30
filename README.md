@@ -178,6 +178,10 @@ Both images carry a secret-free release stamp: version/tag, Git revision,
 source branch, build UTC, and configuration schema version. Settings displays
 the UI release and deployment history; durable captures and transaction logs
 retain the processor release stamp that processed each message.
+Successful `deploy_ui.sh`, direct `deploy_processor.sh`, and UI-orchestrated
+Processor deployments append a secret-free row to the control database
+`deployment_history` table. Recording uses the Vault bundle in memory and
+never writes database credentials into the history record or deployment log.
 
 To enable the Event Processor **Database Secret** tab to create a new JSON
 database-connectivity secret, grant the UI/deployment principal the following
