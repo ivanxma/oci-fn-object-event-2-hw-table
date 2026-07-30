@@ -48,9 +48,10 @@ def _split_sql(path: Path, replacement: dict[str, str] | None = None) -> list[st
 
 
 def _initialize(mysql, values: dict[str, str], *, replace: bool = False) -> None:
+    staging_database = validate_identifier(current_app.config.get("STAGING_DATABASE", ""), "staging database")
     with mysql.connection() as connection:
         cursor = connection.cursor()
-        for database in (values["CONTROL_DATABASE"], values["STREAM_DATA_DB_NAME"]):
+        for database in (values["CONTROL_DATABASE"], values["STREAM_DATA_DB_NAME"], staging_database):
             cursor.execute(f"CREATE DATABASE IF NOT EXISTS {quote_identifier(database, 'database')} CHARACTER SET utf8mb4")
         control = quote_identifier(values["CONTROL_DATABASE"], "control database")
         if replace:
@@ -101,7 +102,8 @@ def _create_stream_user(mysql, values: dict[str, str], password: str) -> None:
     targets = _mapped_target_databases(mysql, values["CONTROL_DATABASE"])
     if not targets:
         raise ValueError("Create at least one Resource Mapping before creating the stream user.")
-    databases = {values["CONTROL_DATABASE"], values["STREAM_DATA_DB_NAME"], *targets}
+    staging_database = validate_identifier(current_app.config.get("STAGING_DATABASE", ""), "staging database")
+    databases = {values["CONTROL_DATABASE"], values["STREAM_DATA_DB_NAME"], staging_database, *targets}
     with mysql.connection() as connection:
         cursor = connection.cursor()
         account = "'" + values["STREAM_USER"].replace("\\", "\\\\").replace("'", "\\'") + "'@'%'"
