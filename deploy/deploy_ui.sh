@@ -29,8 +29,11 @@ GIT_SHA="${GIT_SHA:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}"
 SOURCE_BRANCH="${SOURCE_BRANCH:-$(git -C "$ROOT_DIR" branch --show-current)}"
 BUILD_UTC="${BUILD_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 UI_BIND_PORT="${UI_BIND_PORT:-8080}"
-UI_WORKERS="${UI_WORKERS:-2}"
-UI_THREADS="${UI_THREADS:-4}"
+# Connection profiles and authenticated DB sessions are intentionally held in
+# process memory and are not serializable. Keep one Gunicorn process and use
+# threads for concurrency so every request sees the same server-side session.
+UI_WORKERS="${UI_WORKERS:-1}"
+UI_THREADS="${UI_THREADS:-8}"
 UI_SERVER_NAME="${UI_SERVER_NAME:-_}"
 CONTROL_DATABASE="${CONTROL_DATABASE:-stream_db}"
 STREAM_DATA_DB_NAME="${STREAM_DATA_DB_NAME:-stream_data}"
