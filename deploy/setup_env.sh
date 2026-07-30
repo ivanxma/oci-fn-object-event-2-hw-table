@@ -236,6 +236,7 @@ DB_SECRET_NAME=${DB_SECRET_NAME:-stream_hw_secret_key}
 if [[ -z "${DB_SECRET_OCID:-}" ]]; then
   prompt_required DB_HOST "Database host"
   prompt_required DB_PORT "Database port" "3306"
+  [[ "$DB_PORT" =~ ^[0-9]+$ ]] && (( DB_PORT >= 1 && DB_PORT <= 65535 )) || { echo "Database port must be 1..65535." >&2; exit 1; }
   prompt_required DB_USER "Database user"
   prompt_required DB_NAME "Default database" "${CONTROL_DATABASE:-stream_db}"
   prompt_required CONTROL_DATABASE "Control database" "stream_db"
