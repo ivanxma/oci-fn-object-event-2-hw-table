@@ -13,6 +13,11 @@ if [[ -n "${VALIDATION_ENV_FILE:-}" ]]; then
   [[ -r "$VALIDATION_ENV_FILE" ]] || { echo "Missing validation overlay: $VALIDATION_ENV_FILE" >&2; exit 1; }
   set -a; . "$VALIDATION_ENV_FILE"; set +a
 fi
+source "$ROOT_DIR/deploy/oci_context.sh"
+oci_context_resolve
+export PROCESSOR_SHAPE="${PROCESSOR_SHAPE:-CI.Standard.E4.Flex}"
+export PROCESSOR_OCPUS="${PROCESSOR_OCPUS:-1}"
+export PROCESSOR_MEMORY_GBS="${PROCESSOR_MEMORY_GBS:-16}"
 export OCI_AUTH_MODE=instance_principal
 export FLOW_MODE=FIFO
 export FLOW_TARGET_DATABASE="${FLOW_TARGET_DATABASE:-${FIFO_TARGET_DATABASE:-}}"

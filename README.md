@@ -105,6 +105,32 @@ user all required DDL/DML privileges on it.
 Unit tests, integration harnesses, and disposable SQL fixtures live under
 `tests/`; production processor images do not copy them.
 
+### Database deployment prerequisite
+
+Before running setup or deployment, a DBA must create the streaming database
+user and the four schemas it will access. The first three are application
+schemas; `<target_db>` is the user-data schema selected by a Resource Mapping
+and is not a global loader-database setting.
+
+```sql
+CREATE DATABASE IF NOT EXISTS stream_db;
+CREATE DATABASE IF NOT EXISTS stream_data;
+CREATE DATABASE IF NOT EXISTS stream_staging;
+CREATE DATABASE IF NOT EXISTS <target_db>;
+
+CREATE USER IF NOT EXISTS 'stream_user'@'%' IDENTIFIED BY '<secure-password>';
+GRANT ALL ON stream_db.* TO 'stream_user'@'%';
+GRANT ALL ON stream_data.* TO 'stream_user'@'%';
+GRANT ALL ON stream_staging.* TO 'stream_user'@'%';
+GRANT ALL ON <target_db>.* TO 'stream_user'@'%';
+```
+
+Use site-approved host restrictions, TLS requirements, password policy, and
+credential rotation in the actual `CREATE USER` statement. If mappings target
+more than one user-data schema, grant the required privileges on each approved
+target schema. Store this connection in OCI Vault as the processor JSON secret;
+do not put its password in `env.sh`.
+
 For a fresh OL9 validation VM, create a mode-`0600` config containing only the
 existing Vault secret OCID and Object Storage bucket name, then run:
 
