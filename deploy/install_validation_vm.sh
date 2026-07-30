@@ -70,10 +70,10 @@ python3.12 -m venv "$ROOT_DIR/.venv-verification-py312"
 "$VERIFY_PYTHON" -m pip install --upgrade pip >/dev/null
 "$VERIFY_PYTHON" -m pip install "mysql-connector-python==9.7.0" "oci==2.183.0" >/dev/null
 
-"$ROOT_DIR/deploy/build_processor_image.sh"
-"$ROOT_DIR/tests/integration/verify_streaming_deployment.sh"
 OCI_AUTH_MODE=instance_principal "$VERIFY_PYTHON" "$ROOT_DIR/deploy/initialize_databases.py"
 "$ROOT_DIR/tests/integration/verify_durable_capture.sh"
+"$ROOT_DIR/tests/integration/verify_streaming_deployment.sh"
+"$ROOT_DIR/deploy/build_processor_image.sh"
 
 if [[ "$INSTALL_UI" == true ]]; then
   "$ROOT_DIR/deploy/deploy_ui.sh"
