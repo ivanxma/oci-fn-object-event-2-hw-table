@@ -63,6 +63,11 @@ class ObjectStorageRangeStream(io.RawIOBase):
 
     def __init__(self, client: Any, namespace: str, bucket: str, object_name: str, *, range_bytes: int) -> None:
         super().__init__()
+        # RawIOBase.__del__ calls close() even when initialization raises.
+        # Establish cleanup state before validating configuration or making the
+        # HEAD request so the original OCI error is never hidden by close().
+        self._body: Any | None = None
+        self._body_remaining = 0
         if range_bytes < 1024 * 1024:
             raise ValueError("OBJECT_STORAGE_RANGE_BYTES must be at least 1048576.")
         head = client.head_object(namespace, bucket, object_name)
@@ -71,8 +76,6 @@ class ObjectStorageRangeStream(io.RawIOBase):
             raise ValueError("Object Storage did not return Content-Length for the CSV object.")
         self._client, self._namespace, self._bucket, self._object_name = client, namespace, bucket, object_name
         self._length, self._range_bytes, self._position = int(content_length), range_bytes, 0
-        self._body: Any | None = None
-        self._body_remaining = 0
 
     def readable(self) -> bool:
         return True

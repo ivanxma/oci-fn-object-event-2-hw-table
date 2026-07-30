@@ -58,7 +58,7 @@ def assigned_partitions(mode: str, partitions: int, assignment: str) -> list[str
 
 def process_one(connection: Any, processor: Any, *, stream_id: str, partitions: list[str]) -> bool:
     """Run one durable capture through the loader; leave failure retryable."""
-    from message_store import claim_next, complete, decoded_payload, fail
+    from message_store import claim_next, complete, decoded_payload, fail, has_later_delete
     row = claim_next(connection, stream_id=stream_id, partitions=partitions)
     if row is None:
         return False
@@ -70,6 +70,13 @@ def process_one(connection: Any, processor: Any, *, stream_id: str, partitions: 
         complete(connection, int(row["id"]))
         return True
     except Exception as error:
+        # Object Storage returns 404 after a source is deleted. If its later
+        # DELETE is already durably captured in this same ordered partition,
+        # the older load is superseded rather than retryable. Completing it
+        # lets the DELETE drop the owned target partition.
+        if getattr(error, "status", None) == 404 and has_later_delete(connection, row):
+            complete(connection, int(row["id"]))
+            return True
         fail(connection, int(row["id"]), error)
         return False
 

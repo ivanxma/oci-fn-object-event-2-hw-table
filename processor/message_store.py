@@ -110,6 +110,48 @@ def decoded_payload(value: Any) -> dict[str, Any]:
     return value
 
 
+def _object_identity(payload: dict[str, Any]) -> tuple[str, str]:
+    data = payload.get("data") or {}
+    details = data.get("additionalDetails") or {}
+    return (
+        str(details.get("bucketName") or ""),
+        str(data.get("resourceName") or details.get("objectName") or ""),
+    )
+
+
+def has_later_delete(connection: Any, row: dict[str, Any]) -> bool:
+    """Return whether the same stream partition captured a later object delete.
+
+    A create/update can legitimately become unreadable before it is processed
+    when a later delete is already present in the ordered stream. Retrying that
+    stale load forever prevents the delete from converging the mapped table.
+    This check is intentionally partition- and offset-scoped so it cannot infer
+    order between independent partitions.
+    """
+    payload = decoded_payload(row["payload"])
+    event_type = str(payload.get("eventType") or "").lower()
+    if not event_type.endswith(("createobject", "updateobject")):
+        return False
+    identity = _object_identity(payload)
+    if not all(identity):
+        return False
+    cursor = connection.cursor()
+    cursor.execute(
+        """SELECT payload FROM stream_message_capture
+           WHERE stream_id=%s AND partition_id=%s AND stream_offset>%s
+           ORDER BY stream_offset""",
+        (row["stream_id"], row["partition_id"], row["stream_offset"]),
+    )
+    for candidate in cursor.fetchall():
+        later = decoded_payload(candidate[0] if not isinstance(candidate, dict) else candidate["payload"])
+        if (
+            str(later.get("eventType") or "").lower().endswith("deleteobject")
+            and _object_identity(later) == identity
+        ):
+            return True
+    return False
+
+
 def claim_next(connection: Any, *, stream_id: str, partitions: list[str]) -> dict[str, Any] | None:
     """Atomically claim only a message owned by this stream processor."""
     if not partitions:

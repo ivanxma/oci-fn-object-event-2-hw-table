@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT / "processor"))
 
 from stream_processor import assigned_partitions, capture_batch, decode_stream_message, is_expired_cursor_error, process_one, validate_mode
 from vault_config import oci_signer, parse_secret_content, stream_data_database_config
-from message_store import decoded_payload, ensure_schema, migration_statements, processing_lease_seconds, retry_delay_seconds, schema_statements
+from message_store import decoded_payload, ensure_schema, has_later_delete, migration_statements, processing_lease_seconds, retry_delay_seconds, schema_statements
 
 
 class ProcessorModeTest(unittest.TestCase):
@@ -68,6 +68,41 @@ class ProcessorModeTest(unittest.TestCase):
         class Message: partition = "0"; offset = 1; key = ""; value = "not-base64"
         with self.assertRaises(ValueError):
             capture_batch(None, "ocid1.stream.test", [Message()])
+
+    def test_later_delete_is_matched_by_partition_offset_and_object(self):
+        current = {
+            "stream_id": "stream",
+            "partition_id": "0",
+            "stream_offset": 7,
+            "payload": {
+                "eventType": "com.oraclecloud.objectstorage.createobject",
+                "data": {
+                    "resourceName": "prefix/file.csv",
+                    "additionalDetails": {"bucketName": "bucket"},
+                },
+            },
+        }
+        delete = {
+            "eventType": "com.oraclecloud.objectstorage.deleteobject",
+            "data": {
+                "resourceName": "prefix/file.csv",
+                "additionalDetails": {"bucketName": "bucket"},
+            },
+        }
+
+        class Cursor:
+            def execute(self, sql, values):
+                self.sql, self.values = sql, values
+            def fetchall(self):
+                return [(json.dumps(delete),)]
+
+        class Connection:
+            value = Cursor()
+            def cursor(self): return self.value
+
+        connection = Connection()
+        self.assertTrue(has_later_delete(connection, current))
+        self.assertEqual(connection.value.values, ("stream", "0", 7))
 
     def test_explicit_partition_assignment(self):
         self.assertEqual(assigned_partitions("FIFO", 1, "0"), ["0"])
@@ -136,6 +171,9 @@ class ProcessorModeTest(unittest.TestCase):
             def decoded_payload(_value):
                 raise AssertionError("payload normalization must not run without a claim")
             @staticmethod
+            def has_later_delete(*_args):
+                raise AssertionError("supersession must not run without a claim")
+            @staticmethod
             def fail(*_args):
                 raise AssertionError("fail must not be called without a claim")
         with patch.dict(sys.modules, {"message_store": Store}):
@@ -151,12 +189,85 @@ class ProcessorModeTest(unittest.TestCase):
             @staticmethod
             def decoded_payload(value): return json.loads(value) if isinstance(value, str) else value
             @staticmethod
+            def has_later_delete(*_args): return False
+            @staticmethod
             def complete(*_args): pass
             @staticmethod
             def fail(*_args): raise AssertionError("valid payload must not fail")
         with patch.dict(sys.modules, {"message_store": Store}):
             self.assertTrue(process_one(None, received.append, stream_id="ocid1.stream.test", partitions=["0"]))
         self.assertEqual(received, [{"eventType": "test"}])
+
+    def test_object_not_found_is_completed_when_later_delete_supersedes_it(self):
+        import sys
+        from unittest.mock import patch
+        calls = []
+
+        class Missing(Exception):
+            status = 404
+
+        row = {
+            "id": 9,
+            "stream_id": "ocid1.stream.test",
+            "partition_id": "0",
+            "stream_offset": 4,
+            "payload": {"eventType": "com.oraclecloud.objectstorage.createobject"},
+        }
+
+        class Store:
+            @staticmethod
+            def claim_next(*_args, **_kwargs): return row
+            @staticmethod
+            def decoded_payload(value): return value
+            @staticmethod
+            def has_later_delete(*_args): return True
+            @staticmethod
+            def complete(_connection, capture_id): calls.append(("complete", capture_id))
+            @staticmethod
+            def fail(*_args): raise AssertionError("superseded event must not fail")
+
+        with patch.dict(sys.modules, {"message_store": Store}):
+            self.assertTrue(
+                process_one(
+                    None,
+                    lambda _payload: (_ for _ in ()).throw(Missing("gone")),
+                    stream_id="ocid1.stream.test",
+                    partitions=["0"],
+                )
+            )
+        self.assertEqual(calls, [("complete", 9)])
+
+    def test_object_not_found_remains_retryable_without_later_delete(self):
+        import sys
+        from unittest.mock import patch
+        calls = []
+
+        class Missing(Exception):
+            status = 404
+
+        class Store:
+            @staticmethod
+            def claim_next(*_args, **_kwargs):
+                return {"id": 10, "payload": {"eventType": "com.oraclecloud.objectstorage.createobject"}}
+            @staticmethod
+            def decoded_payload(value): return value
+            @staticmethod
+            def has_later_delete(*_args): return False
+            @staticmethod
+            def complete(*_args): raise AssertionError("unsuperseded event must not complete")
+            @staticmethod
+            def fail(_connection, capture_id, _error): calls.append(("fail", capture_id))
+
+        with patch.dict(sys.modules, {"message_store": Store}):
+            self.assertFalse(
+                process_one(
+                    None,
+                    lambda _payload: (_ for _ in ()).throw(Missing("gone")),
+                    stream_id="ocid1.stream.test",
+                    partitions=["0"],
+                )
+            )
+        self.assertEqual(calls, [("fail", 10)])
 
     def test_loader_uses_shared_processing_path_without_fdk_response(self):
         import sys
