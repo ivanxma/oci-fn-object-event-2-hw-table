@@ -148,6 +148,27 @@ secrets` lists metadata for the UI selector; `read secret-bundles` retrieves
 the selected value at runtime. Repositories permit the approved OCIR image
 workflow through the instance principal.
 
+## Straight-through setup and release stamps
+
+`deploy/env.sh` is a mode-`0600`, minimal input file. It stores the default
+Object Storage bucket, database schema names, the processor Vault secret OCID,
+and immutable UI/processor image tags. The deployment VM derives compartment,
+region, availability domain, subnet, and Object Storage namespace through its
+instance principal; these values are not required in `env.sh`.
+
+Run `./deploy/setup_env.sh` interactively to select an existing Vault and AES
+key, provide database connectivity, and create or update the default processor
+secret named `stream_hw_secret_key`. For unattended setup use either an
+existing `DB_SECRET_OCID` or `--db-password-file PATH`. The password file must
+be mode `0600`; after Vault creation/update, setup atomically writes the
+resulting OCID to `env.sh` and removes that input file. Passwords are never
+written to `env.sh`.
+
+Both images carry a secret-free release stamp: version/tag, Git revision,
+source branch, build UTC, and configuration schema version. Settings displays
+the UI release and deployment history; durable captures and transaction logs
+retain the processor release stamp that processed each message.
+
 To enable the Event Processor **Database Secret** tab to create a new JSON
 database-connectivity secret, grant the UI/deployment principal the following
 additional least-privilege permissions in the compartment containing the

@@ -8,6 +8,7 @@ OUTPUT="$ROOT_DIR/deploy/env.sh"
 FORCE=false
 NON_INTERACTIVE=false
 DB_PASSWORD_FILE="${DB_PASSWORD_FILE:-}"
+PASSWORD_FILE_CONSUMED=false
 
 usage() {
   cat <<'EOF'
@@ -245,6 +246,7 @@ if [[ -z "${DB_SECRET_OCID:-}" ]]; then
     mode=$(stat -c '%a' "$DB_PASSWORD_FILE" 2>/dev/null || stat -f '%Lp' "$DB_PASSWORD_FILE")
     [[ "$mode" == 600 ]] || { echo "Password file must have mode 0600." >&2; exit 1; }
     DB_PASSWORD=$(<"$DB_PASSWORD_FILE")
+    PASSWORD_FILE_CONSUMED=true
   elif [[ "$NON_INTERACTIVE" == true ]]; then
     echo "DB_SECRET_OCID or --db-password-file is required for non-interactive setup." >&2; exit 1
   else
@@ -315,7 +317,7 @@ chmod 600 "$TMP_FILE"
 mv "$TMP_FILE" "$OUTPUT"
 trap - EXIT
 
-if [[ -n "$DB_PASSWORD_FILE" ]]; then
+if [[ "$PASSWORD_FILE_CONSUMED" == true ]]; then
   rm -f -- "$DB_PASSWORD_FILE"
 fi
 
