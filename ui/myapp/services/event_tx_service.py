@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 from .mapping_service import control_database
@@ -106,14 +107,103 @@ class EventTransactionService:
         if cursor.fetchone() is None:
             raise ValueError("Select a registered target table.")
 
-    def stage_tables(self, _database: str, _table: str) -> tuple[list[dict[str, Any]], bool]:
-        return [], False
+    def _stage_snapshot(self, cursor, database: str, table: str) -> tuple[list[dict[str, Any]], bool]:
+        """Return persistent loader staging tables and whether a load is active.
 
-    def cleanup_stage_table(self, _database: str, _table: str, _stage_table: str) -> None:
-        raise ValueError("No residual staging-table cleanup is required.")
+        Staging tables are intentionally persistent (rather than TEMPORARY) so a
+        failed process can be diagnosed and cleaned up.  The loader names them
+        ``<target prefix>_stage_<12 hex chars>``.  We discover names through
+        information_schema and then apply the naming rule in Python; this keeps
+        the SQL identifier handling safe even when a target table contains an
+        underscore or a LIKE wildcard.
+        """
+        database = validate_identifier(database, "target database")
+        table = validate_identifier(table, "target table")
+        self._require_target(cursor, database, table)
+        cursor.execute(
+            """SELECT table_name, table_rows, data_length, index_length,
+                      create_time, update_time
+                 FROM information_schema.tables
+                WHERE table_schema=%s AND table_name LIKE %s
+                ORDER BY table_name""",
+            (database, f"{table[:45]}\\_stage\\_%"),
+        )
+        pattern = re.compile(rf"^{re.escape(table[:45])}_stage_[0-9a-f]{{12}}$")
+        discovered = [row for row in cursor.fetchall() if pattern.fullmatch(str(row.get("table_name", "")))]
 
-    def cleanup_stage_tables(self, _database: str, _table: str) -> list[str]:
-        return []
+        control = quote_identifier(control_database(), "control database")
+        cursor.execute(
+            f"SELECT COUNT(*) AS total FROM {control}.`source_object_batches` "
+            "WHERE target_database=%s AND target_table=%s AND lifecycle_state='LOADING'",
+            (database, table),
+        )
+        active_batches = int(cursor.fetchone()["total"] or 0)
+        active_captures = 0
+        cursor.execute(
+            f"SELECT stream_id FROM {control}.`object_storage_mappings` "
+            "WHERE target_database=%s AND target_table=%s",
+            (database, table),
+        )
+        stream_ids = [row.get("stream_id") for row in cursor.fetchall() if row.get("stream_id")]
+        if stream_ids and self._capture_exists(cursor):
+            capture = quote_identifier(self.stream_data_database, "stream data database")
+            placeholders = ",".join(["%s"] * len(stream_ids))
+            cursor.execute(
+                f"SELECT COUNT(*) AS total FROM {capture}.`stream_message_capture` "
+                f"WHERE stream_id IN ({placeholders}) AND status IN ('PROCESSING','CAPTURED')",
+                tuple(stream_ids),
+            )
+            active_captures = int(cursor.fetchone()["total"] or 0)
+        active = active_batches > 0 or active_captures > 0
+        rows = []
+        for row in discovered:
+            rows.append({
+                "table_name": row["table_name"],
+                "table_rows": int(row.get("table_rows") or 0),
+                "data_length": int(row.get("data_length") or 0),
+                "index_length": int(row.get("index_length") or 0),
+                "create_time": row.get("create_time"),
+                "update_time": row.get("update_time"),
+                "status": "ACTIVE LOAD" if active else "ORPHAN",
+                "cleanup_allowed": not active,
+                "active_batches": active_batches,
+                "active_captures": active_captures,
+            })
+        return rows, active
+
+    def stage_tables(self, database: str, table: str) -> tuple[list[dict[str, Any]], bool]:
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor(dictionary=True, buffered=True)
+            return self._stage_snapshot(cursor, database, table)
+
+    def cleanup_stage_table(self, database: str, table: str, stage_table: str) -> None:
+        database = validate_identifier(database, "target database")
+        table = validate_identifier(table, "target table")
+        stage_table = validate_identifier(stage_table, "staging table")
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor(dictionary=True, buffered=True)
+            rows, blocked = self._stage_snapshot(cursor, database, table)
+            match = next((row for row in rows if row["table_name"] == stage_table), None)
+            if match is None:
+                raise ValueError("The selected staging table no longer exists for this target.")
+            if blocked or not match["cleanup_allowed"]:
+                raise ValueError("Staging-table cleanup is blocked while this target has active messages or loads.")
+            target = f"{quote_identifier(database, 'target database')}.{quote_identifier(stage_table, 'staging table')}"
+            cursor.execute(f"DROP TABLE IF EXISTS {target}")
+
+    def cleanup_stage_tables(self, database: str, table: str) -> list[str]:
+        database = validate_identifier(database, "target database")
+        table = validate_identifier(table, "target table")
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor(dictionary=True, buffered=True)
+            rows, blocked = self._stage_snapshot(cursor, database, table)
+            if blocked:
+                raise ValueError("Staging-table cleanup is blocked while this target has active messages or loads.")
+            names = [row["table_name"] for row in rows if row["cleanup_allowed"]]
+            for name in names:
+                target = f"{quote_identifier(database, 'target database')}.{quote_identifier(name, 'staging table')}"
+                cursor.execute(f"DROP TABLE IF EXISTS {target}")
+            return names
 
     def recent_events(self, database: str, table: str, limit: int = 100) -> list[dict[str, Any]]:
         with self.mysql.connection() as conn:

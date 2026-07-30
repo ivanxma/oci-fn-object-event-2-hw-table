@@ -21,6 +21,15 @@ class UIConsistencySourceTest(unittest.TestCase):
         self.assertIn('data-server-tab="object-events"', source)
         self.assertIn("window.location.assign(url)", source)
 
+    def test_registered_table_has_staging_cleanup_and_data_dialog(self) -> None:
+        source = (TEMPLATES / "event_transactions.html").read_text(encoding="utf-8")
+        self.assertIn('id="registered-stage-tables"', source)
+        self.assertIn("cleanup_stage_tables", source)
+        self.assertIn("stage_cleanup_blocked", source)
+        self.assertIn('id="view-registered-table"', source)
+        self.assertIn("registered_table_content", source)
+        self.assertIn("dialog.showModal()", source)
+
     def test_mapping_rule_tab_has_one_stable_label(self) -> None:
         source = (TEMPLATES / "mappings.html").read_text(encoding="utf-8")
         self.assertIn(">OCI Rules{% if active_tab == 'rules' %}", source)
