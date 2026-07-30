@@ -46,12 +46,15 @@ def _split_sql(path: Path, replacement: dict[str, str] | None = None) -> list[st
     return [item.strip() for item in "\n".join(lines).split(";") if item.strip()]
 
 
-def _initialize(mysql, values: dict[str, str]) -> None:
+def _initialize(mysql, values: dict[str, str], *, replace: bool = False) -> None:
     with mysql.connection() as connection:
         cursor = connection.cursor()
         for database in (values["CONTROL_DATABASE"], values["STREAM_DATA_DB_NAME"]):
             cursor.execute(f"CREATE DATABASE IF NOT EXISTS {quote_identifier(database, 'database')} CHARACTER SET utf8mb4")
         control = quote_identifier(values["CONTROL_DATABASE"], "control database")
+        if replace:
+            for table in ("source_object_batches", "target_batch_sequences", "object_storage_mappings"):
+                cursor.execute(f"DROP TABLE IF EXISTS {control}.{quote_identifier(table, 'control table')}")
         for statement in _split_sql(ROOT / "loader_core/sql/init_control_schema.sql", {"__CONTROL_DATABASE__": control}):
             cursor.execute(statement)
         # MappingService owns its external mapping migrations and retired-object cleanup.
@@ -59,6 +62,17 @@ def _initialize(mysql, values: dict[str, str]) -> None:
         MappingService(mysql)._ensure_schema(cursor)
         durable = quote_identifier(values["STREAM_DATA_DB_NAME"], "stream data database")
         cursor.execute(f"USE {durable}")
+        if replace:
+            cursor.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=%s AND table_name='stream_message_archive_partitions'", (values["STREAM_DATA_DB_NAME"],))
+            if cursor.fetchone()[0]:
+                cursor.execute("SELECT table_name FROM stream_message_archive_partitions")
+                for row in cursor.fetchall():
+                    archive_name = str(row[0])
+                    if re.fullmatch(r"stream_message_archive_[A-Za-z0-9_]+", archive_name):
+                        cursor.execute(f"DROP TABLE IF EXISTS {durable}.{quote_identifier(archive_name, 'archive table')}")
+            cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema=%s AND table_name IN (%s,%s,%s,%s)", (values["STREAM_DATA_DB_NAME"], "stream_event_tx_log", "stream_partition_checkpoint", "stream_message_capture", "stream_message_archive_partitions"))
+            for row in cursor.fetchall():
+                cursor.execute(f"DROP TABLE IF EXISTS {durable}.{quote_identifier(row[0], 'durable table')}")
         for statement in _split_sql(ROOT / "processor/sql/init_stream_capture.sql"):
             cursor.execute(statement)
         for path in (ROOT / "processor/sql/migrate_stream_capture_retry.sql", ROOT / "processor/sql/migrate_stream_capture_processing.sql"):
@@ -101,9 +115,11 @@ def manage():
             action = request.form.get("action", "save")
             values = _databases(request.form)
             _apply(values)
-            if action == "initialize":
-                _initialize(mysql_for_request(), values)
-                flash("Database structures initialized from the repository SQL files.", "success")
+            if action in {"initialize", "reinitialize"}:
+                if action == "reinitialize" and request.form.get("confirm_reinitialize") != "REINITIALIZE":
+                    raise ValueError("Type REINITIALIZE to replace incompatible control and durable schemas.")
+                _initialize(mysql_for_request(), values, replace=action == "reinitialize")
+                flash("Database structures rebuilt from the repository SQL files." if action == "reinitialize" else "Database structures initialized from the repository SQL files.", "success")
             elif action == "create_stream_user":
                 targets = [validate_identifier(item.strip(), "target database") for item in (request.form.get("target_databases", "")).split(",") if item.strip()]
                 _create_stream_user(mysql_for_request(), values, request.form.get("stream_password", ""), targets)
