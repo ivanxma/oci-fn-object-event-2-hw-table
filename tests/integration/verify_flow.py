@@ -460,7 +460,11 @@ class FlowVerification:
     def delete_subset_and_verify(self) -> dict[str, Any]:
         started = time.monotonic()
         for name in self.object_names[:5]:
-            self.object_storage.delete_object(self.namespace, self.bucket, name)
+            try:
+                self.object_storage.delete_object(self.namespace, self.bucket, name)
+            except Exception as error:
+                if getattr(error, "status", None) != 404:
+                    raise
 
         def complete():
             value = self.database_observation()
@@ -482,7 +486,11 @@ class FlowVerification:
     def delete_remaining_and_verify(self) -> None:
         started = time.monotonic()
         for name in self.object_names[5:]:
-            self.object_storage.delete_object(self.namespace, self.bucket, name)
+            try:
+                self.object_storage.delete_object(self.namespace, self.bucket, name)
+            except Exception as error:
+                if getattr(error, "status", None) != 404:
+                    raise
 
         def complete():
             value = self.database_observation()
