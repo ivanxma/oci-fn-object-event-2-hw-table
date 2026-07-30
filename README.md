@@ -136,6 +136,10 @@ only the database password and a separate mode-`0600` installer config with
 the bucket, database host/user, and absolute password-file path:
 
 ```sh
+# A brand-new OL9 image does not include Git; this is the only prerequisite
+# needed before cloning the repository and invoking its installer.
+sudo dnf install -y git
+
 export OBJECT_STORAGE_BUCKET_NAME='existing-bucket'
 export DB_HOST='mysql-private-host'
 export DB_PORT='3306'

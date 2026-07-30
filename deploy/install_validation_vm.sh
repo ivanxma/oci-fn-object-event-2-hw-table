@@ -89,6 +89,17 @@ if [[ -n "${DB_PASSWORD_FILE:-}" && -e "$DB_PASSWORD_FILE" ]]; then
   echo "Password file was not removed after Vault secret creation." >&2
   exit 1
 fi
+unset DB_PASSWORD_FILE
+set -a
+# setup_env.sh is a child process, so load its generated, secret-free runtime
+# references into this installer before database initialization and deployment.
+# shellcheck disable=SC1091
+. "$ROOT_DIR/deploy/env.sh"
+set +a
+[[ "${DB_SECRET_OCID:-}" == ocid1.vaultsecret.* ]] || {
+  echo "Generated env.sh does not contain a valid DB_SECRET_OCID." >&2
+  exit 1
+}
 
 sudo dnf install -y python3.12 python3.12-pip
 VERIFY_PYTHON="$ROOT_DIR/.venv-verification-py312/bin/python"
