@@ -217,15 +217,51 @@ class ContainerOrchestrationService:
                 "OCI_STREAM_ID", "PROCESSING_MODE", "EXPECTED_PARTITION_COUNT", "PROCESSOR_REPLICA_COUNT",
                 "PROCESSOR_PARTITIONS", "DB_SECRET_OCID", "WRITER_WORKERS",
             }
-            for container in getattr(item, "containers", []) or []:
-                environment = getattr(container, "environment_variables", {}) or {}
+            # Container Instance summaries do not include the image or environment
+            # contract.  Fetch each nested Container resource explicitly.
+            def field(value: Any, name: str, default: Any = None) -> Any:
+                if isinstance(value, dict):
+                    return value.get(name, default)
+                return getattr(value, name, default)
+
+            container_records = []
+            for summary in getattr(item, "containers", []) or []:
+                container = summary
+                container_id = field(summary, "id", "")
+                if container_id:
+                    try:
+                        container = client.get_container(container_id).data
+                    except Exception:
+                        # Keep the instance page usable if a nested resource is
+                        # eventually-consistent; the refresh action can retry it.
+                        container = summary
+                container_records.append(container)
+            for container in container_records:
+                environment = field(container, "environment_variables", {}) or {}
+                if not isinstance(environment, dict):
+                    environment = {
+                        str(field(value, "name", "")): field(value, "value", "")
+                        for value in environment
+                        if field(value, "name", "")
+                    }
+                visible_environment = []
+                for key in sorted(environment):
+                    if key not in allowed_environment:
+                        continue
+                    # The setting is intentionally visible, but the Vault OCID
+                    # itself is treated as secret configuration on this page.
+                    display_value = "Configured (secret OCID hidden)" if key == "DB_SECRET_OCID" else str(environment[key])
+                    visible_environment.append({"name": key, "value": display_value})
                 containers.append({
-                    "display_name": str(getattr(container, "display_name", "")),
-                    "image_url": str(getattr(container, "image_url", "")),
-                    "resource_principal_enabled": not bool(getattr(container, "is_resource_principal_disabled", True)),
-                    "environment": [{"name": key, "value": str(environment[key])} for key in sorted(environment) if key in allowed_environment],
+                    "display_name": str(field(container, "display_name", "")),
+                    "image_url": str(field(container, "image_url", "")),
+                    "resource_principal_enabled": not bool(field(container, "is_resource_principal_disabled", True)),
+                    "environment": visible_environment,
                 })
-            primary_environment = getattr((getattr(item, "containers", []) or [None])[0], "environment_variables", {}) or {}
+            primary_container = container_records[0] if container_records else None
+            primary_environment = field(primary_container, "environment_variables", {}) or {}
+            if not isinstance(primary_environment, dict):
+                primary_environment = {str(field(value, "name", "")): field(value, "value", "") for value in primary_environment}
             return {
                 "id": str(item.id), "display_name": str(item.display_name), "lifecycle_state": str(item.lifecycle_state),
                 "mapping_id": str(tags.get("mapping-id", "")), "compartment_id": str(getattr(item, "compartment_id", "")),
@@ -235,7 +271,7 @@ class ContainerOrchestrationService:
                 "replacement": {
                     "mapping_id": str(tags.get("mapping-id", "")),
                     "partition_assignment": str(primary_environment.get("PROCESSOR_PARTITIONS", "")),
-                    "image_url": str(getattr((getattr(item, "containers", []) or [None])[0], "image_url", "")),
+                    "image_url": str(field(primary_container, "image_url", "")),
                     "writer_workers": str(primary_environment.get("WRITER_WORKERS", "")),
                 },
             }
