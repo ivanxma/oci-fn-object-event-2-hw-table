@@ -7,10 +7,11 @@ oci_context_resolve() {
   command -v jq >/dev/null || { echo 'Missing jq for OCI context discovery.' >&2; return 1; }
   local meta instance_id vnic_id
   meta=$(curl -fsS --connect-timeout 1 --max-time 2 -H 'Authorization: Bearer Oracle' http://169.254.169.254/opc/v2/instance/ 2>/dev/null || true)
-  COMPARTMENT_ID=${COMPARTMENT_ID:-$(jq -r '.compartmentId // empty' <<< "${meta:-{}}")}
-  REGION=${REGION:-$(jq -r '.region // empty' <<< "${meta:-{}}")}
-  CONTAINER_AVAILABILITY_DOMAIN=${CONTAINER_AVAILABILITY_DOMAIN:-$(jq -r '.availabilityDomain // empty' <<< "${meta:-{}}")}
-  instance_id=$(jq -r '.id // empty' <<< "${meta:-{}}")
+  local metadata_json="${meta:-}"; metadata_json=${metadata_json:-"{}"}
+  COMPARTMENT_ID=${COMPARTMENT_ID:-$(jq -r '.compartmentId // empty' <<< "$metadata_json")}
+  REGION=${REGION:-$(jq -r '.region // empty' <<< "$metadata_json")}
+  CONTAINER_AVAILABILITY_DOMAIN=${CONTAINER_AVAILABILITY_DOMAIN:-$(jq -r '.availabilityDomain // empty' <<< "$metadata_json")}
+  instance_id=$(jq -r '.id // empty' <<< "$metadata_json")
   [[ -n "$COMPARTMENT_ID" && -n "$REGION" ]] || { echo 'Could not derive compartment and region from VM metadata.' >&2; return 1; }
   REGION_KEY=${REGION_KEY:-$(oci --auth instance_principal --region "$REGION" iam region list --all --output json | jq -r --arg r "$REGION" '.data[] | select(.name == $r) | .key' | head -1 | tr '[:upper:]' '[:lower:]')}
   if [[ -z "${SUBNET_ID:-}" && -n "$instance_id" ]]; then

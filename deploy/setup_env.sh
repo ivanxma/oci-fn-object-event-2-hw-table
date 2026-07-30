@@ -144,10 +144,11 @@ METADATA=$(
     -H "Authorization: Bearer Oracle" \
     http://169.254.169.254/opc/v2/instance/ 2>/dev/null || true
 )
-DEFAULT_COMPARTMENT=$(jq -r '.compartmentId // empty' <<< "${METADATA:-{}}" 2>/dev/null || true)
-DEFAULT_REGION=$(jq -r '.region // empty' <<< "${METADATA:-{}}" 2>/dev/null || true)
-DEFAULT_SERVER_NAME=$(jq -r '.hostname // .displayName // .privateIp // empty' <<< "${METADATA:-{}}" 2>/dev/null || true)
-DEFAULT_AD=$(jq -r '.availabilityDomain // empty' <<< "${METADATA:-{}}" 2>/dev/null || true)
+METADATA_JSON=${METADATA:-}; METADATA_JSON=${METADATA_JSON:-"{}"}
+DEFAULT_COMPARTMENT=$(jq -r '.compartmentId // empty' <<< "$METADATA_JSON" 2>/dev/null || true)
+DEFAULT_REGION=$(jq -r '.region // empty' <<< "$METADATA_JSON" 2>/dev/null || true)
+DEFAULT_SERVER_NAME=$(jq -r '.hostname // .displayName // .privateIp // empty' <<< "$METADATA_JSON" 2>/dev/null || true)
+DEFAULT_AD=$(jq -r '.availabilityDomain // empty' <<< "$METADATA_JSON" 2>/dev/null || true)
 
 echo "OCI Object Event to MySQL environment setup"
 echo "Authentication: instance principal"
