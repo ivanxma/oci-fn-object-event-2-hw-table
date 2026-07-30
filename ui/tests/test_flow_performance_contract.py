@@ -37,6 +37,14 @@ class FlowPerformanceContractTest(unittest.TestCase):
         self.assertIn("url_for('flow.topology')", template)
         self.assertIn('fetch("', template)
 
+    def test_empty_mapping_state_is_explicit_and_skips_oci(self):
+        route = ROUTE.read_text(encoding="utf-8")
+        template = TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("if not mappings:", route)
+        self.assertIn("return [], []", route)
+        self.assertGreaterEqual(template.count("No mapping configured."), 5)
+        self.assertIn("mappings.create_mapping", template)
+
 
 if __name__ == "__main__":
     unittest.main()

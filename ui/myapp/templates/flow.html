@@ -6,6 +6,7 @@
     <h1>Flow</h1>
     <p>The screen loads immediately, then collects live OCI rule, Stream, Processor, and Vault metadata in the background.</p>
   </div>
+  {% if not flows %}<a class="primary-button compact" href="{{ url_for('mappings.create_mapping') }}">Add Resource Mapping <span>+</span></a>{% endif %}
 </section>
 <div id="flow-warnings" class="message warning" hidden></div>
 <section class="content-card flow-dashboard">
@@ -38,7 +39,7 @@
       <div class="flow-card status-pending" data-flow="{{ flow.id }}" data-flow-field="rule">
         <strong>Collecting info…</strong><small>OCI Events rule</small>
       </div>
-      {% endfor %}
+      {% else %}<p class="empty-state">No mapping configured.</p>{% endfor %}
     </section>
     <section>
       <h2>Streaming Server</h2>
@@ -46,7 +47,7 @@
       <div class="flow-card status-pending" data-flow="{{ flow.id }}" data-flow-field="stream">
         <strong>Collecting info…</strong><small>Stream state and mode</small><small>Stream identifier</small>
       </div>
-      {% endfor %}
+      {% else %}<p class="empty-state">No mapping configured.</p>{% endfor %}
     </section>
     <section>
       <h2>Processor<br><small>Container Instance</small></h2>
@@ -54,7 +55,7 @@
       <div class="flow-card status-pending" data-flow="{{ flow.id }}" data-flow-field="processor">
         <strong>Collecting info…</strong><small>Container Instance state</small>
       </div>
-      {% endfor %}
+      {% else %}<p class="empty-state">No mapping configured.</p>{% endfor %}
     </section>
     <section>
       <h2>DB Connection Secret</h2>
@@ -62,7 +63,7 @@
       <div class="flow-card status-pending" data-flow="{{ flow.id }}" data-flow-field="secret">
         <strong>Collecting info…</strong><small>Vault secret state</small><small>Secret identifier</small>
       </div>
-      {% endfor %}
+      {% else %}<p class="empty-state">No mapping configured.</p>{% endfor %}
     </section>
     <section>
       <h2>Database Connection</h2>
@@ -70,7 +71,7 @@
       <div class="flow-card status-pending" data-flow="{{ flow.id }}" data-flow-field="database">
         <strong>{{ flow.target }}</strong><small>Collecting info…</small><small>Loader target table</small>
       </div>
-      {% endfor %}
+      {% else %}<p class="empty-state">No mapping configured.</p>{% endfor %}
     </section>
   </div>
 </section>

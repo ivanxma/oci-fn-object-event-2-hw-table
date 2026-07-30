@@ -37,6 +37,8 @@ def _status_class(value: str) -> str:
 
 def _load_topology(mappings: list[dict], config: dict) -> tuple[list[dict], list[str]]:
     """Resolve slow OCI topology independently of the initial page response."""
+    if not mappings:
+        return [], []
     rules, streams, deployments, secrets = [], [], [], []
     warnings: list[str] = []
     rule_service = EventRuleService(
