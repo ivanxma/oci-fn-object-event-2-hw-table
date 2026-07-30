@@ -38,7 +38,16 @@ CONTAINER_NAME="${PROCESSOR_CONTAINER_NAME_PREFIX}-${PROCESSING_MODE,,}-p${PARTI
 CONFIG=$(mktemp); trap 'rm -f "$CONFIG"' EXIT
 jq -n --arg name "$CONTAINER_NAME" --arg image "$IMAGE" --arg stream "$OCI_STREAM_ID" --arg mode "$PROCESSING_MODE" --arg partitions "$EXPECTED_PARTITION_COUNT" --arg replicas "$PROCESSOR_REPLICA_COUNT" --arg assignment "$PROCESSOR_PARTITIONS" --arg secret "$DB_SECRET_OCID" --arg workers "$WRITER_WORKERS" \
   '[{displayName:$name,imageUrl:$image,isResourcePrincipalDisabled:false,environmentVariables:{OCI_STREAM_ID:$stream,PROCESSING_MODE:$mode,EXPECTED_PARTITION_COUNT:$partitions,PROCESSOR_REPLICA_COUNT:$replicas,PROCESSOR_PARTITIONS:$assignment,DB_SECRET_OCID:$secret,WRITER_WORKERS:$workers}}]' > "$CONFIG"
-TAGS=$(jq -nc --arg mapping "$PROCESSOR_MAPPING_ID" '{"managed-by":"oci-object-event-2-table","mapping-id":$mapping}')
+RELEASE_VERSION="${RELEASE_VERSION:-$PROCESSOR_IMAGE_TAG}"
+GIT_SHA="${GIT_SHA:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}"
+CONFIG_SCHEMA_VERSION="${CONFIG_SCHEMA_VERSION:-2}"
+TAGS=$(jq -nc \
+  --arg mapping "$PROCESSOR_MAPPING_ID" \
+  --arg release "$RELEASE_VERSION" \
+  --arg git_sha "$GIT_SHA" \
+  --arg schema "$CONFIG_SCHEMA_VERSION" \
+  '{"managed-by":"oci-object-event-2-table","mapping-id":$mapping,
+    "release-version":$release,"git-sha":$git_sha,"config-schema-version":$schema}')
 oci --auth instance_principal --region "$REGION" container-instances container-instance create \
   --compartment-id "$COMPARTMENT_ID" --availability-domain "$CONTAINER_AVAILABILITY_DOMAIN" \
   --display-name "$CONTAINER_NAME" --shape "$PROCESSOR_SHAPE" \
