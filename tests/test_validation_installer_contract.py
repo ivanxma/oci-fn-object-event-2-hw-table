@@ -41,6 +41,11 @@ class ValidationInstallerContractTest(unittest.TestCase):
             self.assertIn('source "$ROOT_DIR/deploy/ol9_packages.sh"', source)
             self.assertNotIn("sudo dnf install -y", source)
 
+    def test_ui_release_can_be_overridden_without_editing_generated_env(self):
+        source = (ROOT / "deploy" / "deploy_ui.sh").read_text(encoding="utf-8")
+        self.assertIn('UI_IMAGE_TAG_OVERRIDE="${UI_IMAGE_TAG_OVERRIDE:-}"', source)
+        self.assertIn("UI_IMAGE_TAG_OVERRIDE:-${UI_IMAGE_TAG:-", source)
+
 
 if __name__ == "__main__":
     unittest.main()

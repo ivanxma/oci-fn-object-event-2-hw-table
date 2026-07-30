@@ -7,6 +7,7 @@ umask 077
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$ROOT_DIR/deploy/ol9_packages.sh"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
+UI_IMAGE_TAG_OVERRIDE="${UI_IMAGE_TAG_OVERRIDE:-}"
 [[ -r "$ENV_FILE" ]] || { echo "Copy deploy/env.sh.example to deploy/env.sh and set deployment values." >&2; exit 1; }
 set -a
 # shellcheck disable=SC1090
@@ -23,7 +24,7 @@ done
 UI_SERVICE_NAME="${UI_SERVICE_NAME:-object-storage-heatwave-ui}"
 UI_CONTAINER_NAME="${UI_CONTAINER_NAME:-$UI_SERVICE_NAME}"
 UI_IMAGE_NAME="${UI_IMAGE_NAME:-object-storage-heatwave-ui}"
-UI_IMAGE_TAG="${UI_IMAGE_TAG:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}"
+UI_IMAGE_TAG="${UI_IMAGE_TAG_OVERRIDE:-${UI_IMAGE_TAG:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}}"
 UI_IMAGE="$UI_IMAGE_NAME:$UI_IMAGE_TAG"
 RELEASE_VERSION="${RELEASE_VERSION:-$UI_IMAGE_TAG}"
 GIT_SHA="${GIT_SHA:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}"
