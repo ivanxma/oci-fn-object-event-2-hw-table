@@ -40,13 +40,34 @@ class ProfileStore:
         return bool(settings.get("profile_creation_enabled", True))
 
     def set_profile_creation_enabled(self, enabled: bool) -> None:
+        settings = self._settings()
+        settings["profile_creation_enabled"] = bool(enabled)
+        self._save_settings(settings)
+
+    def _settings(self) -> dict:
+        try:
+            value = json.loads(self.settings_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def _save_settings(self, settings: dict) -> None:
         temporary = self.settings_path.with_suffix(".tmp")
         temporary.write_text(
-            json.dumps({"profile_creation_enabled": bool(enabled)}, indent=2) + "\n",
+            json.dumps(settings, indent=2) + "\n",
             encoding="utf-8",
         )
         os.chmod(temporary, 0o600)
         temporary.replace(self.settings_path)
+
+    def ui_configuration(self) -> dict:
+        value = self._settings().get("ui_configuration", {})
+        return value if isinstance(value, dict) else {}
+
+    def set_ui_configuration(self, configuration: dict) -> None:
+        settings = self._settings()
+        settings["ui_configuration"] = configuration
+        self._save_settings(settings)
 
     def get(self, name: str) -> dict | None:
         return next((profile for profile in self.list() if profile["name"] == name), None)

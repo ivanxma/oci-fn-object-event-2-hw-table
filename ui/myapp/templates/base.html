@@ -26,6 +26,7 @@
         <span class="profile-status">Profile: {{ selected_profile.name }}</span>
         <span class="profile-status">{{ selected_profile.mode|upper }} connection</span>
         <hr>
+        <a class="menu-action" href="{{ url_for('settings.manage') }}">Settings</a>
         <form action="{{ url_for('auth.logout') }}" method="post"><button class="menu-action">Sign out</button></form>
       </div>
     </details>
