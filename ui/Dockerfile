@@ -15,4 +15,4 @@ COPY myapp ./myapp
 RUN useradd --create-home --uid 10001 appuser && mkdir -p /app/instance && chown -R appuser:appuser /app
 USER appuser
 EXPOSE 8080
-CMD ["python", "-m", "flask", "--app", "myapp.app", "run", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "--timeout", "120", "myapp.app:create_app()"]
