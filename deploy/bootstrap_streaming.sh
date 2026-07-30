@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Fresh Oracle Linux VM prerequisites for UI + OCI Streaming processor validation.
 set -euo pipefail
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$ROOT_DIR/deploy/ol9_packages.sh"
 command -v dnf >/dev/null || { echo 'Oracle Linux with dnf is required.' >&2; exit 1; }
-sudo dnf install -y ca-certificates curl git golang jq podman podman-docker python3 python3-pip
+ol9_dnf_install ca-certificates curl git golang jq podman podman-docker python3 python3-pip
 if ! command -v oci >/dev/null; then
   curl -fsSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh -o /tmp/oci-cli-install.sh
   bash /tmp/oci-cli-install.sh --accept-all-defaults

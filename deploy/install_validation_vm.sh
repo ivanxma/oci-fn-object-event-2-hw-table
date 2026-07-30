@@ -4,6 +4,7 @@ set -euo pipefail
 umask 077
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$ROOT_DIR/deploy/ol9_packages.sh"
 CONFIG_FILE=""
 INSTALL_UI="${INSTALL_UI:-true}"
 
@@ -101,7 +102,7 @@ set +a
   exit 1
 }
 
-sudo dnf install -y python3.12 python3.12-pip
+ol9_dnf_install python3.12 python3.12-pip
 VERIFY_PYTHON="$ROOT_DIR/.venv-verification-py312/bin/python"
 python3.12 -m venv "$ROOT_DIR/.venv-verification-py312"
 "$VERIFY_PYTHON" -m pip install --upgrade pip >/dev/null

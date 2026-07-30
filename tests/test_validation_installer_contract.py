@@ -31,6 +31,16 @@ class ValidationInstallerContractTest(unittest.TestCase):
         self.assertIn('[[ -z "$selected" && ${#ids[@]} -eq 1 ]]', source)
         self.assertIn("zero or multiple choices are available", source)
 
+    def test_all_deployment_package_installs_use_retry_helper(self):
+        for relative in (
+            "deploy/bootstrap_streaming.sh",
+            "deploy/install_validation_vm.sh",
+            "deploy/deploy_ui.sh",
+        ):
+            source = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn('source "$ROOT_DIR/deploy/ol9_packages.sh"', source)
+            self.assertNotIn("sudo dnf install -y", source)
+
 
 if __name__ == "__main__":
     unittest.main()

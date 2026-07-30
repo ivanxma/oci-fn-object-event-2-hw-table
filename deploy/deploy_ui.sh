@@ -5,6 +5,7 @@ set -euo pipefail
 umask 077
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$ROOT_DIR/deploy/ol9_packages.sh"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
 [[ -r "$ENV_FILE" ]] || { echo "Copy deploy/env.sh.example to deploy/env.sh and set deployment values." >&2; exit 1; }
 set -a
@@ -72,7 +73,7 @@ case "$UI_BIND_PORT" in
 esac
 
 if ! command -v nginx >/dev/null || ! command -v openssl >/dev/null; then
-  sudo dnf install -y nginx openssl policycoreutils-python-utils
+  ol9_dnf_install nginx openssl policycoreutils-python-utils
 fi
 
 mkdir -p "$INSTANCE_DIR"
