@@ -75,6 +75,9 @@ def create_app(test_config: dict | None = None) -> Flask:
         if persisted_ui.get(key):
             app.config[key] = str(persisted_ui[key])
             os.environ[key] = str(persisted_ui[key])
+    if persisted_ui.get("LOADER_DATABASE"):
+        app.config["DB_NAME"] = str(persisted_ui["LOADER_DATABASE"])
+        os.environ["DB_NAME"] = str(persisted_ui["LOADER_DATABASE"])
     app.extensions["session_store"] = SessionStore()
 
     app.register_blueprint(auth_bp)
