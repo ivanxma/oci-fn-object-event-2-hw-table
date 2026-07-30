@@ -82,7 +82,10 @@ run production deployment scripts from `deploy/` and validation harnesses from
 `build_processor_image.sh` builds and pushes the non-root processor image using
 the deployment host's instance-principal OCIR credential helper; it never uses
 a static registry credential. `deploy_processor.sh` creates
-one Container Instance for one explicit partition assignment. `deploy_ui.sh`
+one Container Instance for one explicit partition assignment. Set
+`PROCESSOR_DB_SECRET_OCID` for a mapping-specific replacement that must use a
+different Vault database bundle without changing the deployment host's default
+`DB_SECRET_OCID`. `deploy_ui.sh`
 deploys the Flask container behind nginx HTTPS. Keep `deploy/env.sh`, database
 credentials, Vault values, TLS private keys, and Flask secrets out of Git.
 The selected Vault secret must be a JSON object containing `host`, `port`,

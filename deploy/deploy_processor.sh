@@ -8,6 +8,9 @@ ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
 set -a; . "$ENV_FILE"; set +a
 source "$ROOT_DIR/deploy/oci_context.sh"
 oci_context_resolve
+# A mapping-specific replacement may deliberately select a different Vault
+# database bundle without rewriting the UI/deployment host's default env.sh.
+DB_SECRET_OCID="${PROCESSOR_DB_SECRET_OCID:-${DB_SECRET_OCID:-}}"
 PROCESSOR_SHAPE="${PROCESSOR_SHAPE:-CI.Standard.E4.Flex}"
 PROCESSOR_OCPUS="${PROCESSOR_OCPUS:-1}"
 PROCESSOR_MEMORY_GBS="${PROCESSOR_MEMORY_GBS:-16}"
