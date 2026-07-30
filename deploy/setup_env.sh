@@ -277,7 +277,7 @@ NAMESPACE=$(oci_json os ns get | jq -r '.data // empty')
 [[ -n "$NAMESPACE" ]] || { echo "Could not resolve the Object Storage/OCIR namespace." >&2; exit 1; }
 REPOSITORY_PREFIX_LOWER=$(printf '%s' "$REPOSITORY_PREFIX" | tr '[:upper:]' '[:lower:]')
 PROCESSOR_IMAGE_URL="$REGION_KEY.ocir.io/$NAMESPACE/$REPOSITORY_PREFIX_LOWER/$PROCESSOR_IMAGE_NAME:$PROCESSOR_IMAGE_TAG"
-FLASK_SECRET_KEY=$(openssl rand -hex 32)
+FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-$(openssl rand -hex 32)}
 
 CONTROL_DATABASE=${CONTROL_DATABASE:-stream_db}
 STREAM_DATA_DB_NAME=${STREAM_DATA_DB_NAME:-stream_data}
