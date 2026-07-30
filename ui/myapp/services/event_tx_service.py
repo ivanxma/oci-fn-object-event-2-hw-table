@@ -26,7 +26,6 @@ class EventTransactionService:
         self.staging_database = validate_identifier(configured_staging, "staging database") if configured_staging else ""
 
     def _capture_exists(self, cursor) -> bool:
-        staging_database = self.staging_database or database
         cursor.execute(
             "SELECT 1 FROM information_schema.tables WHERE table_schema=%s AND table_name=%s",
             (self.stream_data_database, STREAM_CAPTURE_TABLE),
@@ -129,7 +128,7 @@ class EventTransactionService:
                  FROM information_schema.tables
                 WHERE table_schema=%s AND table_name LIKE %s
                 ORDER BY table_name""",
-            (staging_database, f"{table[:45]}\\_stage\\_%"),
+            (self.staging_database or database, f"{table[:45]}\\_stage\\_%"),
         )
         pattern = re.compile(rf"^{re.escape(table[:45])}_stage_[0-9a-f]{{12}}$")
         discovered = [row for row in cursor.fetchall() if pattern.fullmatch(str(row.get("table_name", "")))]
