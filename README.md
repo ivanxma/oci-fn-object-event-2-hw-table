@@ -81,9 +81,9 @@ run production deployment scripts from `deploy/` and validation harnesses from
 
 `build_processor_image.sh` builds and pushes the non-root processor image using
 the deployment host's instance-principal OCIR credential helper; it never uses
-a static registry credential. Interactive and silent setup derive
-`OCI_REGISTRY_REPOSITORY` from the repository prefix and Processor image name,
-persist it in the generated `env.sh`, and use that same value for the image
+a static registry credential. Interactive and silent setup validate the
+mandatory `OCI_REGISTRY_REPOSITORY_ID`, resolve `OCI_REGISTRY_REPOSITORY` from
+OCI, persist both in the generated `env.sh`, and use that same repository for image
 build and the Event Processor image-tag dropdown. The repository is
 deployment-owned and read-only in Settings; releases vary only by immutable
 tag. Increase `PROCESSOR_IMAGE_TAG` for every Processor image release; the
@@ -247,17 +247,12 @@ never writes database credentials into the history record or deployment log.
 ### OCI Container Registry prerequisite
 
 The deployment requires one deployment-owned OCIR repository in the UI VM's
-compartment. The instance principal must have `manage repos` permission in
-that compartment and `docker-credential-ocir` must be installed. Setup derives
-the repository as:
-
-```text
-<repository-prefix>/object-storage-stream-processor
-```
-
-and persists it as `OCI_REGISTRY_REPOSITORY`. The first Processor image push
-creates the repository when it does not already exist. All later Processor and
-UI releases use this same repository:
+compartment. Create this repository before setup and provide its OCID as the
+mandatory `OCI_REGISTRY_REPOSITORY_ID`. The instance principal must have
+`manage repos` permission in that compartment and `docker-credential-ocir`
+must be installed. Setup validates the repository OCID, lifecycle, and
+compartment, resolves its name, and persists both values. All Processor and UI
+releases use this same repository:
 
 ```text
 <region-key>.ocir.io/<namespace>/<repository>:<processor-version>

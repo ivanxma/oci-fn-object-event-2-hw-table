@@ -13,12 +13,11 @@ class UiDeploymentContractTest(unittest.TestCase):
         self.assertIn('"--workers", "1"', dockerfile)
         self.assertIn("gunicorn", script)
 
-    def test_processor_repository_is_derived_for_older_generated_environments(self):
+    def test_processor_repository_is_resolved_from_authoritative_ocid(self):
         script = (ROOT / "deploy" / "deploy_ui.sh").read_text(encoding="utf-8")
-        self.assertIn(
-            'OCI_REGISTRY_REPOSITORY="${REPOSITORY_PREFIX,,}/$PROCESSOR_IMAGE_NAME"',
-            script,
-        )
+        self.assertIn("OCI_REGISTRY_REPOSITORY_ID is required", script)
+        self.assertIn("artifacts container repository get --repository-id", script)
+        self.assertIn("OCI_REGISTRY_REPOSITORY does not match OCI_REGISTRY_REPOSITORY_ID", script)
 
     def test_ui_image_is_published_to_the_processor_repository(self):
         script = (ROOT / "deploy" / "deploy_ui.sh").read_text(encoding="utf-8")

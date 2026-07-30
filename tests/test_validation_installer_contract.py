@@ -22,7 +22,7 @@ class ValidationInstallerContractTest(unittest.TestCase):
         source = (ROOT / "deploy" / "install_validation_vm.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn("for value in OBJECT_STORAGE_BUCKET_NAME", source)
+        self.assertIn("for value in OBJECT_STORAGE_BUCKET_NAME OCI_REGISTRY_REPOSITORY_ID", source)
         self.assertIn("for value in DB_HOST DB_USER DB_PASSWORD_FILE", source)
         self.assertIn('[[ -n "${DB_SECRET_OCID:-}" ]]', source)
 
@@ -31,21 +31,20 @@ class ValidationInstallerContractTest(unittest.TestCase):
         self.assertIn('[[ -z "$selected" && ${#ids[@]} -eq 1 ]]', source)
         self.assertIn("zero or multiple choices are available", source)
 
-    def test_generated_environment_persists_processor_registry_discovery(self):
+    def test_generated_environment_persists_authoritative_processor_repository(self):
         source = (ROOT / "deploy" / "setup_env.sh").read_text(encoding="utf-8")
         build_source = (ROOT / "deploy" / "build_processor_image.sh").read_text(
             encoding="utf-8"
         )
         self.assertIn(
-            'OCI_REGISTRY_REPOSITORY=${OCI_REGISTRY_REPOSITORY:-"$REPOSITORY_PREFIX_LOWER/$PROCESSOR_IMAGE_NAME"}',
+            'select_from_tsv OCI_REGISTRY_REPOSITORY_ID "OCI Container Registry repository"',
             source,
         )
+        self.assertIn('write_export OCI_REGISTRY_REPOSITORY_ID "$OCI_REGISTRY_REPOSITORY_ID"', source)
         self.assertIn('write_export OCI_REGISTRY_REPOSITORY "$OCI_REGISTRY_REPOSITORY"', source)
         self.assertIn('write_export PROCESSOR_IMAGE_URL "$PROCESSOR_IMAGE_URL"', source)
-        self.assertIn(
-            'OCI_REGISTRY_REPOSITORY=${OCI_REGISTRY_REPOSITORY:-"${REPOSITORY_PREFIX,,}/$PROCESSOR_IMAGE_NAME"}',
-            build_source,
-        )
+        self.assertIn("artifacts container repository get --repository-id", build_source)
+        self.assertIn("OCI_REGISTRY_REPOSITORY does not match OCI_REGISTRY_REPOSITORY_ID", build_source)
         self.assertIn(
             'IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_IMAGE_TAG"',
             build_source,

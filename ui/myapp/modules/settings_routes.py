@@ -25,6 +25,7 @@ def _databases(form) -> dict[str, str]:
         "CONTROL_DATABASE": validate_identifier(form.get("control_database", ""), "control database"),
         "STREAM_DATA_DB_NAME": validate_identifier(form.get("stream_data_database", ""), "stream data database"),
         "STREAM_USER": (form.get("stream_user", "") or "").strip(),
+        "OCI_REGISTRY_REPOSITORY_ID": current_app.config.get("OCI_REGISTRY_REPOSITORY_ID", ""),
         "OCI_REGISTRY_REPOSITORY": (form.get("registry_repository") or current_app.config.get("OCI_REGISTRY_REPOSITORY", "")).strip(),
         "OBJECT_STORAGE_BUCKET_NAME": (form.get("object_storage_bucket_name") or current_app.config.get("OBJECT_STORAGE_BUCKET_NAME", "")).strip(),
     }
@@ -130,6 +131,7 @@ def manage():
         "CONTROL_DATABASE": current_app.config.get("CONTROL_DATABASE") or os.environ.get("CONTROL_DATABASE", "stream_db"),
         "STREAM_DATA_DB_NAME": current_app.config.get("STREAM_DATA_DB_NAME") or os.environ.get("STREAM_DATA_DB_NAME", "stream_data"),
         "STREAM_USER": current_app.config.get("STREAM_USER") or os.environ.get("STREAM_USER", "streamuser"),
+        "OCI_REGISTRY_REPOSITORY_ID": current_app.config.get("OCI_REGISTRY_REPOSITORY_ID") or os.environ.get("OCI_REGISTRY_REPOSITORY_ID", ""),
         "OCI_REGISTRY_REPOSITORY": current_app.config.get("OCI_REGISTRY_REPOSITORY") or os.environ.get("OCI_REGISTRY_REPOSITORY", ""),
         "OBJECT_STORAGE_BUCKET_NAME": current_app.config.get("OBJECT_STORAGE_BUCKET_NAME") or os.environ.get("OBJECT_STORAGE_BUCKET_NAME", ""),
     }

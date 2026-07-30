@@ -44,6 +44,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         OCI_REGION=os.environ.get("OCI_REGION", ""),
         OCI_REGION_KEY=os.environ.get("REGION_KEY", os.environ.get("OCI_REGION_KEY", "")),
         OCI_OBJECT_STORAGE_NAMESPACE=os.environ.get("OCI_OBJECT_STORAGE_NAMESPACE", ""),
+        OCI_REGISTRY_REPOSITORY_ID=os.environ.get("OCI_REGISTRY_REPOSITORY_ID", ""),
         OCI_REGISTRY_REPOSITORY=os.environ.get("OCI_REGISTRY_REPOSITORY", ""),
         OBJECT_STORAGE_BUCKET_NAME=os.environ.get("OBJECT_STORAGE_BUCKET_NAME", ""),
         VAULT_ID=os.environ.get("VAULT_ID", ""),
@@ -74,7 +75,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         Path(app.config["PROFILE_SETTINGS"]),
     )
     persisted_ui = app.extensions["profile_store"].ui_configuration()
-    for key in ("CONTROL_DATABASE", "STREAM_DATA_DB_NAME", "STREAM_USER", "OCI_REGISTRY_REPOSITORY", "OBJECT_STORAGE_BUCKET_NAME"):
+    for key in ("CONTROL_DATABASE", "STREAM_DATA_DB_NAME", "STREAM_USER", "OCI_REGISTRY_REPOSITORY_ID", "OCI_REGISTRY_REPOSITORY", "OBJECT_STORAGE_BUCKET_NAME"):
         if persisted_ui.get(key):
             app.config[key] = str(persisted_ui[key])
             os.environ[key] = str(persisted_ui[key])

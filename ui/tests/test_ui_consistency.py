@@ -59,7 +59,8 @@ class UIConsistencySourceTest(unittest.TestCase):
         source = (TEMPLATES / "settings.html").read_text(encoding="utf-8")
         self.assertIn('value="{{ settings.OCI_REGISTRY_REPOSITORY }}" readonly', source)
         self.assertNotIn('name="registry_repository"><select', source)
-        self.assertIn("Deployment-owned repository shared by every Processor release.", source)
+        self.assertIn("settings.OCI_REGISTRY_REPOSITORY_ID", source)
+        self.assertIn("Deployment-owned repository shared by every Processor and UI release.", source)
 
 
 if __name__ == "__main__":

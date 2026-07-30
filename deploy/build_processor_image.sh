@@ -10,12 +10,23 @@ ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
 set -a; . "$ENV_FILE"; set +a
 source "$ROOT_DIR/deploy/oci_context.sh"
 oci_context_resolve
-for value in REGION_KEY REPOSITORY_PREFIX PROCESSOR_IMAGE_NAME PROCESSOR_IMAGE_TAG; do
+for value in REGION_KEY OCI_REGISTRY_REPOSITORY_ID PROCESSOR_IMAGE_TAG; do
   [[ -n "${!value:-}" ]] || { echo "$value is required" >&2; exit 1; }
 done
 for command in oci docker docker-credential-ocir; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
 NAMESPACE=$(oci --auth instance_principal os ns get --query data --raw-output)
-OCI_REGISTRY_REPOSITORY=${OCI_REGISTRY_REPOSITORY:-"${REPOSITORY_PREFIX,,}/$PROCESSOR_IMAGE_NAME"}
+REPOSITORY_JSON=$(oci --auth instance_principal --region "$REGION" artifacts container repository get --repository-id "$OCI_REGISTRY_REPOSITORY_ID" --output json)
+RESOLVED_REPOSITORY=$(jq -r '.data."display-name" // empty' <<< "$REPOSITORY_JSON")
+[[ "$(jq -r '.data."compartment-id" // empty' <<< "$REPOSITORY_JSON")" == "$COMPARTMENT_ID" &&
+   "$(jq -r '.data."lifecycle-state" // empty' <<< "$REPOSITORY_JSON")" == "AVAILABLE" ]] || {
+  echo "The configured OCI Container Registry repository is unavailable or outside the deployment compartment." >&2
+  exit 1
+}
+[[ -z "${OCI_REGISTRY_REPOSITORY:-}" || "$OCI_REGISTRY_REPOSITORY" == "$RESOLVED_REPOSITORY" ]] || {
+  echo "OCI_REGISTRY_REPOSITORY does not match OCI_REGISTRY_REPOSITORY_ID." >&2
+  exit 1
+}
+OCI_REGISTRY_REPOSITORY=$RESOLVED_REPOSITORY
 IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_IMAGE_TAG"
 [[ -n "$NAMESPACE" && "$NAMESPACE" != null ]] || { echo 'Could not resolve the OCIR namespace using the instance principal.' >&2; exit 1; }
 EXISTING_TAG=$(
@@ -44,7 +55,7 @@ BUILD_UTC="${BUILD_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 docker build --file "$ROOT_DIR/processor/Dockerfile" --tag "$IMAGE" \
   --build-arg "RELEASE_VERSION=$RELEASE_VERSION" --build-arg "GIT_SHA=$GIT_SHA" \
   --build-arg "SOURCE_BRANCH=$SOURCE_BRANCH" --build-arg "BUILD_UTC=$BUILD_UTC" \
-  --build-arg "PROCESSOR_IMAGE_NAME=$PROCESSOR_IMAGE_NAME" --build-arg "PROCESSOR_IMAGE_TAG=$PROCESSOR_IMAGE_TAG" \
+  --build-arg "PROCESSOR_IMAGE_NAME=$OCI_REGISTRY_REPOSITORY" --build-arg "PROCESSOR_IMAGE_TAG=$PROCESSOR_IMAGE_TAG" \
   --build-arg "CONFIG_SCHEMA_VERSION=${CONFIG_SCHEMA_VERSION:-2}" "$ROOT_DIR"
 docker push "$IMAGE"
 IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || true)

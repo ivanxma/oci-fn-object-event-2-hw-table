@@ -20,7 +20,7 @@ Discovers the current OCI VM's compartment and region, then prompts for:
   - availability domain
   - private Processor subnet in the setup VM's VCN
   - Vault, symmetric encryption key, and database JSON secret
-  - OCIR repository prefix
+  - existing deployment-owned OCIR repository
 
 OCI calls use only --auth instance_principal. The generated file contains
 resource OCIDs and non-secret configuration; database access uses a Vault OCID.
@@ -184,6 +184,23 @@ if [[ -z "$REGION_KEY" || "$REGION_KEY" == null ]]; then
 fi
 REGION_KEY=$(printf '%s' "$REGION_KEY" | tr '[:upper:]' '[:lower:]')
 
+REPOSITORY_TSV=$(
+  oci_json artifacts container repository list --compartment-id "$COMPARTMENT_ID" --all |
+    jq -r '.data.items[] | select(."lifecycle-state" == "AVAILABLE") |
+      [.id, ((."display-name" // "(unnamed repository)") + " | " + .id)] | @tsv'
+)
+select_from_tsv OCI_REGISTRY_REPOSITORY_ID "OCI Container Registry repository" "$REPOSITORY_TSV"
+REPOSITORY_JSON=$(oci_json artifacts container repository get --repository-id "$OCI_REGISTRY_REPOSITORY_ID")
+OCI_REGISTRY_REPOSITORY=$(jq -r '.data."display-name" // empty' <<< "$REPOSITORY_JSON")
+[[ "$(jq -r '.data."compartment-id" // empty' <<< "$REPOSITORY_JSON")" == "$COMPARTMENT_ID" ]] || {
+  echo "The selected OCI Container Registry repository is not in the UI VM compartment." >&2
+  exit 1
+}
+[[ "$(jq -r '.data."lifecycle-state" // empty' <<< "$REPOSITORY_JSON")" == "AVAILABLE" && -n "$OCI_REGISTRY_REPOSITORY" ]] || {
+  echo "The selected OCI Container Registry repository is not available." >&2
+  exit 1
+}
+
 if [[ "$NON_INTERACTIVE" == true ]]; then
   CONTAINER_AVAILABILITY_DOMAIN=${CONTAINER_AVAILABILITY_DOMAIN:-$DEFAULT_AD}
   if [[ -n "${DB_SECRET_OCID:-}" && ( -z "${VAULT_ID:-}" || -z "${VAULT_KEY_ID:-}" ) ]]; then
@@ -294,13 +311,9 @@ if [[ -n "$PROVIDED_DB_SECRET_OCID" ]]; then
   unset SECRET_FIELDS
 fi
 
-prompt_required REPOSITORY_PREFIX "OCIR repository prefix" "object-storage-heatwave"
-PROCESSOR_IMAGE_NAME=object-storage-stream-processor
 prompt_required PROCESSOR_IMAGE_TAG "Immutable processor image tag" "$(date -u +%Y%m%d%H%M%S)"
 NAMESPACE=$(oci_json os ns get | jq -r '.data // empty')
 [[ -n "$NAMESPACE" ]] || { echo "Could not resolve the Object Storage/OCIR namespace." >&2; exit 1; }
-REPOSITORY_PREFIX_LOWER=$(printf '%s' "$REPOSITORY_PREFIX" | tr '[:upper:]' '[:lower:]')
-OCI_REGISTRY_REPOSITORY=${OCI_REGISTRY_REPOSITORY:-"$REPOSITORY_PREFIX_LOWER/$PROCESSOR_IMAGE_NAME"}
 PROCESSOR_IMAGE_URL="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_IMAGE_TAG"
 FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-$(openssl rand -hex 32)}
 
@@ -323,9 +336,8 @@ write_export() {
 
 write_export DB_SECRET_OCID "$DB_SECRET_OCID"
 write_export DB_SECRET_NAME "$DB_SECRET_NAME"
-write_export REPOSITORY_PREFIX "$REPOSITORY_PREFIX"
-write_export PROCESSOR_IMAGE_NAME "$PROCESSOR_IMAGE_NAME"
 write_export PROCESSOR_IMAGE_TAG "$PROCESSOR_IMAGE_TAG"
+write_export OCI_REGISTRY_REPOSITORY_ID "$OCI_REGISTRY_REPOSITORY_ID"
 write_export OCI_REGISTRY_REPOSITORY "$OCI_REGISTRY_REPOSITORY"
 write_export PROCESSOR_IMAGE_URL "$PROCESSOR_IMAGE_URL"
 write_export FLASK_SECRET_KEY "$FLASK_SECRET_KEY"
