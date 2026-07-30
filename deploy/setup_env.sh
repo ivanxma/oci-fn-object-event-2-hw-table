@@ -271,6 +271,9 @@ write_export FLASK_SECRET_KEY "$FLASK_SECRET_KEY"
 write_export CONTROL_DATABASE "$CONTROL_DATABASE"
 write_export STREAM_DATA_DB_NAME "$STREAM_DATA_DB_NAME"
 write_export UI_SERVER_NAME "$UI_SERVER_NAME"
+write_export GENERATE_SELF_SIGNED_CERT "${GENERATE_SELF_SIGNED_CERT:-false}"
+write_export TLS_CERT_FILE "${TLS_CERT_FILE:-}"
+write_export TLS_KEY_FILE "${TLS_KEY_FILE:-}"
 
 cat >> "$TMP_FILE" <<'EOF'
 export PROCESSOR_CONTAINER_NAME_PREFIX='object-storage-stream-processor'
@@ -290,9 +293,6 @@ export OCI_EVENT_RULE_PREFIX='object-event-2-table'
 export UI_SERVICE_NAME='object-storage-heatwave-ui'
 export UI_CONTAINER_NAME='object-storage-heatwave-ui'
 export UI_BIND_PORT='8080'
-export GENERATE_SELF_SIGNED_CERT='false'
-export TLS_CERT_FILE=''
-export TLS_KEY_FILE=''
 export OBJECT_STORAGE_NAMESPACE=''
 export OBJECT_STORAGE_BUCKET_NAME=''
 export OBJECT_STORAGE_OBJECT_NAME_PATTERN=''
