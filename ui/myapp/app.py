@@ -42,11 +42,13 @@ def create_app(test_config: dict | None = None) -> Flask:
         STREAM_USER=os.environ.get("STREAM_USER", "streamuser"),
         OCI_COMPARTMENT_ID=os.environ.get("OCI_COMPARTMENT_ID", ""),
         OCI_REGION=os.environ.get("OCI_REGION", ""),
+        OCI_REGION_KEY=os.environ.get("REGION_KEY", os.environ.get("OCI_REGION_KEY", "")),
+        OCI_OBJECT_STORAGE_NAMESPACE=os.environ.get("OCI_OBJECT_STORAGE_NAMESPACE", ""),
+        OCI_REGISTRY_REPOSITORY=os.environ.get("OCI_REGISTRY_REPOSITORY", ""),
         VAULT_ID=os.environ.get("VAULT_ID", ""),
         VAULT_KEY_ID=os.environ.get("VAULT_KEY_ID", ""),
         OCI_EVENT_RULE_MANAGEMENT_ENABLED=os.environ.get("OCI_EVENT_RULE_MANAGEMENT_ENABLED", "false").lower() in {"1", "true", "yes"},
         OCI_EVENT_RULE_PREFIX=os.environ.get("OCI_EVENT_RULE_PREFIX", "object-storage-heatwave"),
-        OCI_OBJECT_STORAGE_NAMESPACE=os.environ.get("OCI_OBJECT_STORAGE_NAMESPACE", ""),
         OCI_STREAMING_MANAGEMENT_ENABLED=os.environ.get("OCI_STREAMING_MANAGEMENT_ENABLED", "false").lower() in {"1", "true", "yes"},
         OCI_CONTAINER_ORCHESTRATION_ENABLED=os.environ.get("OCI_CONTAINER_ORCHESTRATION_ENABLED", "false").lower() in {"1", "true", "yes"},
         CONTAINER_AVAILABILITY_DOMAIN=os.environ.get("CONTAINER_AVAILABILITY_DOMAIN", ""), PROCESSOR_SHAPE=os.environ.get("PROCESSOR_SHAPE", ""),
@@ -70,7 +72,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         Path(app.config["PROFILE_SETTINGS"]),
     )
     persisted_ui = app.extensions["profile_store"].ui_configuration()
-    for key in ("CONTROL_DATABASE", "STREAM_DATA_DB_NAME", "STREAM_USER"):
+    for key in ("CONTROL_DATABASE", "STREAM_DATA_DB_NAME", "STREAM_USER", "OCI_REGISTRY_REPOSITORY"):
         if persisted_ui.get(key):
             app.config[key] = str(persisted_ui[key])
             os.environ[key] = str(persisted_ui[key])

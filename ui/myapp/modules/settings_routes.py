@@ -10,6 +10,7 @@ from flask import Blueprint, current_app, flash, redirect, request, url_for
 from mysql.connector import Error as MySQLError
 
 from ..services.mapping_service import MappingService
+from ..services.registry_service import RegistryError, RegistryService
 from ..services.naming import quote_identifier, validate_identifier
 from .common import connection_state, login_required, mysql_for_request, render_dashboard
 
@@ -23,11 +24,14 @@ def _databases(form) -> dict[str, str]:
         "CONTROL_DATABASE": validate_identifier(form.get("control_database", ""), "control database"),
         "STREAM_DATA_DB_NAME": validate_identifier(form.get("stream_data_database", ""), "stream data database"),
         "STREAM_USER": (form.get("stream_user", "") or "").strip(),
+        "OCI_REGISTRY_REPOSITORY": (form.get("registry_repository") or current_app.config.get("OCI_REGISTRY_REPOSITORY", "")).strip(),
     }
     if not ACCOUNT.fullmatch(values["STREAM_USER"]):
         raise ValueError("Stream user must start with a letter and contain only letters, numbers, or underscores (32 characters maximum).")
     if values["CONTROL_DATABASE"] == values["STREAM_DATA_DB_NAME"]:
         raise ValueError("Control and stream data databases must be separate.")
+    if values["OCI_REGISTRY_REPOSITORY"] and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,254}", values["OCI_REGISTRY_REPOSITORY"]):
+        raise ValueError("Registry repository must contain only letters, numbers, dots, underscores, slashes, and hyphens.")
     return values
 
 
@@ -122,6 +126,7 @@ def manage():
         "CONTROL_DATABASE": current_app.config.get("CONTROL_DATABASE") or os.environ.get("CONTROL_DATABASE", "stream_db"),
         "STREAM_DATA_DB_NAME": current_app.config.get("STREAM_DATA_DB_NAME") or os.environ.get("STREAM_DATA_DB_NAME", "stream_data"),
         "STREAM_USER": current_app.config.get("STREAM_USER") or os.environ.get("STREAM_USER", "streamuser"),
+        "OCI_REGISTRY_REPOSITORY": current_app.config.get("OCI_REGISTRY_REPOSITORY") or os.environ.get("OCI_REGISTRY_REPOSITORY", ""),
     }
     if request.method == "POST":
         try:
@@ -140,4 +145,12 @@ def manage():
                 flash("UI database configuration saved.", "success")
         except (MySQLError, OSError, ValueError) as error:
             flash(str(error), "error")
-    return render_dashboard("settings.html", active_page="settings", settings=values)
+    repositories = []
+    try:
+        repositories = RegistryService(
+            compartment_id=current_app.config.get("OCI_COMPARTMENT_ID", ""),
+            region=current_app.config.get("OCI_REGION", ""),
+        ).list_repositories()
+    except RegistryError as error:
+        flash(f"OCI Container Registry choices are unavailable: {error}", "warning")
+    return render_dashboard("settings.html", active_page="settings", settings=values, registry_repositories=repositories)

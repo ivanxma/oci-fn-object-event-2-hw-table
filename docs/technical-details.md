@@ -236,7 +236,7 @@ Required OCI and image values are defined in the ignored `deploy/env.sh`:
 |---|---|
 | OCI | `COMPARTMENT_ID`, `REGION`, `REGION_KEY`, `SUBNET_ID`, `CONTAINER_AVAILABILITY_DOMAIN` |
 | Shape | `PROCESSOR_SHAPE`, `PROCESSOR_OCPUS`, `PROCESSOR_MEMORY_GBS` |
-| Image | `REPOSITORY_PREFIX`, `PROCESSOR_IMAGE_NAME`, `PROCESSOR_IMAGE_TAG`, `PROCESSOR_IMAGE_URL` |
+| Image | `REPOSITORY_PREFIX`, `PROCESSOR_IMAGE_NAME`, `PROCESSOR_IMAGE_TAG`, `PROCESSOR_IMAGE_URL`; the UI Settings page can select `OCI_REGISTRY_REPOSITORY` from repositories in the configured compartment and Event Processor then lists its available tags |
 | Mapping | `PROCESSOR_MAPPING_ID`, `OCI_STREAM_ID`, `PROCESSING_MODE` |
 | Assignment | `EXPECTED_PARTITION_COUNT`, `PROCESSOR_REPLICA_COUNT`, `PROCESSOR_PARTITIONS` |
 | Database | `DB_SECRET_OCID` |

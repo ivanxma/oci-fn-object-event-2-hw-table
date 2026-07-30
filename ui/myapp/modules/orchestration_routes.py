@@ -4,6 +4,7 @@ from ..services.mapping_service import MappingService
 from ..services.orchestration_service import ProcessorRuntime, ContainerOrchestrationService, DeploymentSettings, OrchestrationError
 from ..services.streaming_service import StreamingService
 from ..services.vault_secret_service import VaultSecretError, VaultSecretService
+from ..services.registry_service import RegistryError, RegistryService
 
 orchestration_bp = Blueprint("orchestration", __name__, url_prefix="/orchestration")
 
@@ -18,13 +19,21 @@ def _orchestration_service() -> ContainerOrchestrationService:
         name_prefix=config["PROCESSOR_CONTAINER_NAME_PREFIX"],
     ))
 
+
+def _registry_service() -> RegistryService:
+    config = current_app.config
+    return RegistryService(
+        compartment_id=config["OCI_COMPARTMENT_ID"], region=config["OCI_REGION"],
+        namespace=config.get("OCI_OBJECT_STORAGE_NAMESPACE", ""), region_key=config.get("OCI_REGION_KEY", ""),
+    )
+
 @orchestration_bp.get("/")
 @login_required
 def index():
     vault_secrets, vaults, vault_keys = [], [], []
     selected_vault_id = request.args.get("vault_id", "").strip() or current_app.config["VAULT_ID"]
     selected_key_id = current_app.config["VAULT_KEY_ID"] if selected_vault_id == current_app.config["VAULT_ID"] else ""
-    mappings, streams, deployments = [], [], []
+    mappings, streams, deployments, container_images = [], [], [], []
     managed_state = request.args.get("managed_state", "ALL").upper()
     active_tab = request.args.get("tab", "deployment").lower()
     replacement = {
@@ -47,6 +56,11 @@ def index():
             deployments = _orchestration_service().list_deployments(state_filter=managed_state)
         except (ValueError, OrchestrationError) as error:
             flash(str(error), "warning")
+    if current_app.config.get("OCI_REGISTRY_REPOSITORY"):
+        try:
+            container_images = _registry_service().list_images(current_app.config["OCI_REGISTRY_REPOSITORY"])
+        except RegistryError as error:
+            flash(f"OCI Container Registry image choices are unavailable: {error}", "warning")
     vault_service = VaultSecretService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"])
     try:
         vault_secrets = vault_service.list_active_secrets()
@@ -65,7 +79,7 @@ def index():
         "orchestration.html", active_page="orchestration", active_tab=active_tab, managed_state=managed_state, mappings=mappings,
         streams=streams, deployments=deployments, vault_secrets=vault_secrets, vaults=vaults, vault_keys=vault_keys,
         selected_vault_id=selected_vault_id, selected_key_id=selected_key_id,
-        settings=_orchestration_service().settings, replacement=replacement,
+        settings=_orchestration_service().settings, replacement=replacement, container_images=container_images,
         orchestration_enabled=current_app.config["OCI_CONTAINER_ORCHESTRATION_ENABLED"],
     )
 
@@ -83,6 +97,11 @@ def deploy():
             raise ValueError("The mapping stream is not available in the UI compartment.")
         service = _orchestration_service()
         runtime = ProcessorRuntime.from_form(request.form, service.settings)
+        configured_repository = current_app.config.get("OCI_REGISTRY_REPOSITORY", "")
+        if configured_repository:
+            image_urls = {item["image_url"] for item in _registry_service().list_images(configured_repository) if item.get("image_url")}
+            if runtime.image_url not in image_urls:
+                raise ValueError("Choose a processor image tag from the configured OCI registry repository.")
         allowed_secrets = {item.id for item in VaultSecretService(
             compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"]
         ).list_active_secrets()}
