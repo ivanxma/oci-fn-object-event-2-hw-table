@@ -33,6 +33,35 @@ class VaultSecretServiceTest(unittest.TestCase):
                 service.list_active_secrets()
         self.assertNotIn("opc-request-id", str(raised.exception))
 
+    def test_database_connection_metadata_returns_only_host_and_port(self):
+        service = VaultSecretService(compartment_id="ocid1.compartment.test", region="uk-london-1")
+        payload = base64.b64encode(json.dumps({
+            "host": "10.0.0.8",
+            "port": 3306,
+            "user": "streamuser",
+            "credential": "must-not-be-returned",
+            "database": "target_db",
+        }).encode()).decode()
+        client = SimpleNamespace(
+            get_secret_bundle=lambda *_args, **_kwargs: SimpleNamespace(
+                data=SimpleNamespace(
+                    secret_bundle_content=SimpleNamespace(content=payload)
+                )
+            )
+        )
+        oci = SimpleNamespace(
+            auth=SimpleNamespace(
+                signers=SimpleNamespace(
+                    InstancePrincipalsSecurityTokenSigner=lambda: object()
+                )
+            ),
+            secrets=SimpleNamespace(SecretsClient=lambda *_args, **_kwargs: client),
+        )
+        with patch.dict("sys.modules", {"oci": oci}):
+            metadata = service.database_connection_metadata("ocid1.vaultsecret.test")
+        self.assertEqual(metadata, {"host": "10.0.0.8", "port": "3306"})
+        self.assertNotIn("credential", metadata)
+
     def test_key_choices_include_only_enabled_symmetric_keys(self):
         service = VaultSecretService(compartment_id="ocid1.compartment.test", region="uk-london-1")
         records = [

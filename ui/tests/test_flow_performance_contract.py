@@ -27,6 +27,13 @@ class FlowPerformanceContractTest(unittest.TestCase):
         self.assertIn("mapping_ids =", source)
         self.assertIn("relevant =", source)
         self.assertIn("min(8, len(relevant))", source)
+        self.assertIn("include_secret_reference=True", source)
+
+    def test_flow_resolves_non_sensitive_database_endpoint_from_processor_secret(self):
+        route = ROUTE.read_text(encoding="utf-8")
+        self.assertIn("database_connection_metadata", route)
+        self.assertIn("connection_by_secret", route)
+        self.assertIn('"Configured (secret OCID hidden)" if secret_id else ""', route)
 
     def test_initial_screen_uses_background_topology_endpoint(self):
         route = ROUTE.read_text(encoding="utf-8")

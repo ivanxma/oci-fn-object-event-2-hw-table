@@ -122,6 +122,13 @@ class OrchestrationServiceTest(unittest.TestCase):
         self.assertEqual(detail["containers"][0]["environment"][0]["value"], "Configured (secret OCID hidden)")
         self.assertEqual(detail["replacement"]["partition_assignment"], "0")
         self.assertEqual(detail["replacement"]["mapping_id"], "12")
+        self.assertNotIn("_db_secret_ocid", detail)
+        with patch.object(service, "_client", return_value=(None, SimpleNamespace(get_container_instance=lambda _: SimpleNamespace(data=record)))):
+            internal_detail = service.get_deployment(
+                "ocid1.computecontainerinstance.test",
+                include_secret_reference=True,
+            )
+        self.assertEqual(internal_detail["_db_secret_ocid"], "ocid1.vaultsecret.test")
 
     def test_detail_lists_nested_container_when_instance_summary_omits_it(self):
         service = self._service()

@@ -207,7 +207,7 @@ class ContainerOrchestrationService:
         except Exception as error:
             raise OrchestrationError(f"Could not create Container Instance: {type(error).__name__}: {error}") from error
 
-    def get_deployment(self, deployment_id: str) -> dict[str, Any]:
+    def get_deployment(self, deployment_id: str, *, include_secret_reference: bool = False) -> dict[str, Any]:
         """Return a managed Container Instance's non-secret deployment contract."""
         if not valid_deployment_id(deployment_id):
             raise ValueError("Container Instance identifier is invalid.")
@@ -282,7 +282,7 @@ class ContainerOrchestrationService:
             primary_environment = field(primary_container, "environment_variables", {}) or {}
             if not isinstance(primary_environment, dict):
                 primary_environment = {str(field(value, "name", "")): field(value, "value", "") for value in primary_environment}
-            return {
+            result = {
                 "id": str(item.id), "display_name": str(item.display_name), "lifecycle_state": str(item.lifecycle_state),
                 "mapping_id": str(tags.get("mapping-id", "")), "compartment_id": str(getattr(item, "compartment_id", "")),
                 "availability_domain": str(getattr(item, "availability_domain", "")), "shape": str(getattr(item, "shape", "")),
@@ -295,6 +295,11 @@ class ContainerOrchestrationService:
                     "writer_workers": str(primary_environment.get("WRITER_WORKERS", "")),
                 },
             }
+            if include_secret_reference:
+                # Internal topology correlation only. Browser-facing deployment
+                # details continue to receive the masked environment value.
+                result["_db_secret_ocid"] = str(primary_environment.get("DB_SECRET_OCID", ""))
+            return result
         except (ValueError, OrchestrationError):
             raise
         except Exception as error:

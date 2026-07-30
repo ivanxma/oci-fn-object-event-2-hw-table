@@ -17,6 +17,9 @@ flow_bp = Blueprint("flow", __name__, url_prefix="/flow")
 
 
 def _processor_secret_id(deployment: dict) -> str:
+    internal_reference = str(deployment.get("_db_secret_ocid") or "")
+    if internal_reference.startswith("ocid1.vaultsecret."):
+        return internal_reference
     for container in deployment.get("containers", []):
         for item in container.get("environment", []):
             if item.get("name") == "DB_SECRET_OCID":
@@ -86,7 +89,11 @@ def _load_topology(mappings: list[dict], config: dict) -> tuple[list[dict], list
     if relevant:
         with ThreadPoolExecutor(max_workers=min(8, len(relevant))) as executor:
             detail_futures = {
-                item["id"]: executor.submit(orchestration.get_deployment, item["id"])
+                item["id"]: executor.submit(
+                    orchestration.get_deployment,
+                    item["id"],
+                    include_secret_reference=True,
+                )
                 for item in relevant
             }
             for deployment in relevant:
@@ -99,6 +106,28 @@ def _load_topology(mappings: list[dict], config: dict) -> tuple[list[dict], list
     stream_by_id = {item.id: item for item in streams}
     rule_by_id = {item.id: item for item in rules}
     secret_by_id = {item.id: item for item in secrets}
+    secret_ids = {
+        secret_id
+        for deployment in relevant
+        if (secret_id := _processor_secret_id(deployment)).startswith("ocid1.vaultsecret.")
+    }
+    configured_secret_id = str(config.get("DB_SECRET_OCID") or "")
+    if configured_secret_id.startswith("ocid1.vaultsecret."):
+        secret_ids.add(configured_secret_id)
+    connection_by_secret: dict[str, dict[str, str]] = {}
+    if secret_ids:
+        with ThreadPoolExecutor(max_workers=min(8, len(secret_ids))) as executor:
+            endpoint_futures = {
+                secret_id: executor.submit(secret_service.database_connection_metadata, secret_id)
+                for secret_id in secret_ids
+            }
+            for secret_id, future in endpoint_futures.items():
+                try:
+                    connection_by_secret[secret_id] = future.result()
+                except Exception as error:
+                    warnings.append(
+                        f"Could not load Flow database endpoint: {type(error).__name__}: {error}"
+                    )
     flows = []
     for mapping in mappings:
         mapping_id = str(mapping["id"])
@@ -115,6 +144,15 @@ def _load_topology(mappings: list[dict], config: dict) -> tuple[list[dict], list
         )
         processor = flow_processors[0] if flow_processors else None
         secret_id = _processor_secret_id(processor or {}) or str(config.get("DB_SECRET_OCID") or "")
+        connection = connection_by_secret.get(secret_id, {})
+        database_endpoint = ":".join(
+            part
+            for part in (
+                str(connection.get("host") or config.get("DB_HOST") or ""),
+                str(connection.get("port") or config.get("DB_PORT") or ""),
+            )
+            if part
+        )
         stream = stream_by_id.get(str(mapping.get("stream_id") or ""))
         rule = rule_by_id.get(str(mapping.get("event_rule_id") or ""))
         flows.append({
@@ -132,10 +170,10 @@ def _load_topology(mappings: list[dict], config: dict) -> tuple[list[dict], list
             "processor_state": processor.get("lifecycle_state") if processor else "NOT DEPLOYED",
             "processor_status_class": _status_class(str(processor.get("lifecycle_state")) if processor else "NOT DEPLOYED"),
             "secret": secret_by_id.get(secret_id).name if secret_id in secret_by_id else ("No selected secret" if not secret_id else "Vault secret"),
-            "secret_id": secret_id,
+            "secret_id": "Configured (secret OCID hidden)" if secret_id else "",
             "secret_state": secret_by_id.get(secret_id).lifecycle_state if secret_id in secret_by_id else ("UNRESOLVED" if secret_id else "NOT CONFIGURED"),
             "secret_status_class": _status_class(secret_by_id.get(secret_id).lifecycle_state if secret_id in secret_by_id else "UNRESOLVED"),
-            "database_endpoint": ":".join(part for part in (str(config.get("DB_HOST") or ""), str(config.get("DB_PORT") or "")) if part) or "Endpoint supplied by Vault configuration",
+            "database_endpoint": database_endpoint or "Endpoint unavailable",
             "target": f"{mapping.get('target_database')}.{mapping.get('target_table')}",
         })
     return flows, warnings

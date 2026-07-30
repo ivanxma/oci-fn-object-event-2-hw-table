@@ -1,6 +1,8 @@
 """Read OCI Vault secret metadata for deployment configuration.
 
-The UI deliberately never reads secret contents.  A Container Instance receives
+Secret list operations never read bundle content. Flow may read one selected
+database bundle and returns only its non-sensitive host/port metadata; the
+credential is never returned, rendered, or logged. A Container Instance receives
 only the selected secret OCID and resolves its value with its resource principal.
 """
 from __future__ import annotations
@@ -88,6 +90,30 @@ class VaultSecretService:
             raise VaultSecretError(
                 "Could not list OCI Vault secret metadata. Confirm the UI instance principal has "
                 "'read secrets' permission in the selected compartment."
+            ) from error
+
+    def database_connection_metadata(self, secret_id: str) -> dict[str, str]:
+        """Return only non-sensitive endpoint fields from a database JSON secret."""
+        if not secret_id.startswith("ocid1.vaultsecret."):
+            raise ValueError("Database secret identifier is invalid.")
+        try:
+            import oci
+            signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+            client = oci.secrets.SecretsClient({"region": self.region}, signer=signer)
+            bundle = client.get_secret_bundle(secret_id, stage="CURRENT").data
+            encoded = str(bundle.secret_bundle_content.content or "")
+            payload = json.loads(base64.b64decode(encoded, validate=True))
+            host = str(payload.get("host") or "").strip()
+            port = str(payload.get("port") or "").strip()
+            if not host or not port.isdigit() or not 1 <= int(port) <= 65535:
+                raise ValueError("Database secret does not contain a valid host and port.")
+            return {"host": host, "port": port}
+        except ValueError:
+            raise
+        except Exception as error:
+            raise VaultSecretError(
+                "Could not read database endpoint metadata. Confirm the UI instance principal has "
+                "'read secret-bundles' permission in the selected compartment."
             ) from error
 
     def list_active_vaults(self) -> list[VaultRecord]:
