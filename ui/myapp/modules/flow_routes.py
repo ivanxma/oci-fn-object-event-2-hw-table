@@ -1,7 +1,9 @@
 """Read-only topology dashboard for Object Storage streaming flows."""
 from __future__ import annotations
 
-from flask import Blueprint, current_app, flash
+from concurrent.futures import ThreadPoolExecutor
+
+from flask import Blueprint, current_app, flash, jsonify
 
 from .common import login_required, mysql_for_request, render_dashboard
 from .orchestration_routes import _orchestration_service
@@ -33,44 +35,64 @@ def _status_class(value: str) -> str:
     return "status-unknown"
 
 
-@flow_bp.get("/")
-@login_required
-def index():
-    config = current_app.config
-    mappings, rules, streams, deployments, secrets = [], [], [], [], []
-    try:
-        mappings = MappingService(mysql_for_request()).list_mappings()
-    except Exception as error:
-        flash(f"Could not load Flow mappings: {type(error).__name__}: {error}", "warning")
-    try:
-        rules = EventRuleService(
-            compartment_id=config["OCI_COMPARTMENT_ID"], region=config["OCI_REGION"],
-            enabled=bool(config["OCI_EVENT_RULE_MANAGEMENT_ENABLED"]), rule_prefix=config["OCI_EVENT_RULE_PREFIX"],
-        ).list_stream_rules()
-    except Exception as error:
-        flash(f"Could not load Flow rules: {type(error).__name__}: {error}", "warning")
-    try:
-        streams = StreamingService(
-            compartment_id=config["OCI_COMPARTMENT_ID"], region=config["OCI_REGION"],
-            enabled=bool(config["OCI_STREAMING_MANAGEMENT_ENABLED"]),
-        ).list_streams()
-    except Exception as error:
-        flash(f"Could not load Flow streams: {type(error).__name__}: {error}", "warning")
-    try:
-        orchestration = _orchestration_service()
-        deployments = orchestration.list_deployments()
-        for deployment in deployments:
+def _load_topology(mappings: list[dict], config: dict) -> tuple[list[dict], list[str]]:
+    """Resolve slow OCI topology independently of the initial page response."""
+    rules, streams, deployments, secrets = [], [], [], []
+    warnings: list[str] = []
+    rule_service = EventRuleService(
+        compartment_id=config["OCI_COMPARTMENT_ID"], region=config["OCI_REGION"],
+        enabled=bool(config["OCI_EVENT_RULE_MANAGEMENT_ENABLED"]), rule_prefix=config["OCI_EVENT_RULE_PREFIX"],
+    )
+    streaming_service = StreamingService(
+        compartment_id=config["OCI_COMPARTMENT_ID"], region=config["OCI_REGION"],
+        enabled=bool(config["OCI_STREAMING_MANAGEMENT_ENABLED"]),
+    )
+    orchestration = _orchestration_service()
+    secret_service = VaultSecretService(
+        compartment_id=config["OCI_COMPARTMENT_ID"], region=config["OCI_REGION"]
+    )
+    loaders = {
+        "rules": rule_service.list_stream_rules,
+        "streams": streaming_service.list_streams,
+        # Deleted instances can be numerous and cannot process a mapping. Avoid
+        # one nested Container API traversal for every historical deployment.
+        "deployments": lambda: orchestration.list_deployments(state_filter="ACTIVE"),
+        "secrets": secret_service.list_active_secrets,
+    }
+    loaded = {name: [] for name in loaders}
+    with ThreadPoolExecutor(max_workers=len(loaders)) as executor:
+        pending = {name: executor.submit(loader) for name, loader in loaders.items()}
+        for name, future in pending.items():
             try:
-                deployment.update(orchestration.get_deployment(deployment["id"]))
-            except Exception:
-                # The list record still makes a useful, non-secret topology node.
-                deployment["containers"] = []
-    except Exception as error:
-        flash(f"Could not load Flow processors: {type(error).__name__}: {error}", "warning")
-    try:
-        secrets = VaultSecretService(compartment_id=config["OCI_COMPARTMENT_ID"], region=config["OCI_REGION"]).list_active_secrets()
-    except Exception as error:
-        flash(f"Could not load Flow database secrets: {type(error).__name__}: {error}", "warning")
+                loaded[name] = future.result()
+            except Exception as error:
+                label = {
+                    "rules": "rules",
+                    "streams": "streams",
+                    "deployments": "processors",
+                    "secrets": "database secrets",
+                }[name]
+                warnings.append(f"Could not load Flow {label}: {type(error).__name__}: {error}")
+    rules, streams = loaded["rules"], loaded["streams"]
+    deployments, secrets = loaded["deployments"], loaded["secrets"]
+
+    # Only active processors assigned to visible mappings need nested Container
+    # details. Fetch them concurrently so one slow OCI call does not serialize
+    # the entire topology page.
+    mapping_ids = {str(item["id"]) for item in mappings}
+    relevant = [item for item in deployments if str(item.get("mapping_id", "")) in mapping_ids]
+    if relevant:
+        with ThreadPoolExecutor(max_workers=min(8, len(relevant))) as executor:
+            detail_futures = {
+                item["id"]: executor.submit(orchestration.get_deployment, item["id"])
+                for item in relevant
+            }
+            for deployment in relevant:
+                try:
+                    deployment.update(detail_futures[deployment["id"]].result())
+                except Exception:
+                    # The list record still makes a useful, non-secret topology node.
+                    deployment["containers"] = []
 
     stream_by_id = {item.id: item for item in streams}
     rule_by_id = {item.id: item for item in rules}
@@ -114,4 +136,37 @@ def index():
             "database_endpoint": ":".join(part for part in (str(config.get("DB_HOST") or ""), str(config.get("DB_PORT") or "")) if part) or "Endpoint supplied by Vault configuration",
             "target": f"{mapping.get('target_database')}.{mapping.get('target_table')}",
         })
-    return render_dashboard("flow.html", active_page="flow", flows=flows)
+    return flows, warnings
+
+
+@flow_bp.get("/")
+@login_required
+def index():
+    mappings = []
+    try:
+        mappings = MappingService(mysql_for_request()).list_mappings()
+    except Exception as error:
+        flash(f"Could not load Flow mappings: {type(error).__name__}: {error}", "warning")
+    initial_flows = [
+        {
+            "id": str(mapping["id"]),
+            "event": f"{mapping.get('bucket_name', 'Bucket')}/{mapping.get('resource_name_pattern', '')}",
+            "target": f"{mapping.get('target_database')}.{mapping.get('target_table')}",
+        }
+        for mapping in mappings
+    ]
+    return render_dashboard("flow.html", active_page="flow", flows=initial_flows)
+
+
+@flow_bp.get("/topology")
+@login_required
+def topology():
+    try:
+        mappings = MappingService(mysql_for_request()).list_mappings()
+    except Exception as error:
+        return jsonify(
+            flows=[],
+            warnings=[f"Could not load Flow mappings: {type(error).__name__}: {error}"],
+        ), 503
+    flows, warnings = _load_topology(mappings, dict(current_app.config))
+    return jsonify(flows=flows, warnings=warnings)

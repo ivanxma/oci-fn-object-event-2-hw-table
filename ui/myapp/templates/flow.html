@@ -1,6 +1,133 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="page-heading"><div><p class="eyebrow">STREAMING TOPOLOGY</p><h1>Flow</h1><p>Select an Object Storage event route to trace its rule, Stream, Container Instance processor, Vault database secret, and target table.</p></div></section>
-<section class="content-card flow-dashboard"><div class="flow-picker"><label>Object Storage event route <select id="flow-picker"><option value="">Show all routes</option>{% for flow in flows %}<option value="{{ flow.id }}">#{{ flow.id }} · {{ flow.event }}</option>{% endfor %}</select></label></div><div class="flow-legend"><span class="status-active">Active / configured</span><span class="status-pending">Transitional</span><span class="status-error">Error / not deployed</span><span class="status-unknown">Unresolved</span></div><div class="flow-columns" aria-live="polite"><section><h2>Object Storage Event</h2>{% for flow in flows %}<button class="flow-card {{ flow.rule_status_class }}" data-flow="{{ flow.id }}" data-select-flow="{{ flow.id }}"><strong>{{ flow.event }}</strong><small>Mapping #{{ flow.id }}</small></button>{% else %}<p class="empty-state">No mappings.</p>{% endfor %}</section><section><h2>Rules</h2>{% for flow in flows %}<div class="flow-card {{ flow.rule_status_class }}" data-flow="{{ flow.id }}"><strong>{{ flow.rule }}</strong><small>{{ flow.rule_state }}</small></div>{% endfor %}</section><section><h2>Streaming Server</h2>{% for flow in flows %}<div class="flow-card {{ flow.stream_status_class }}" data-flow="{{ flow.id }}"><strong>{{ flow.stream }}</strong><small>{{ flow.stream_state }} · {{ flow.processing_mode }}</small><small>{{ flow.stream_id or 'No Stream ID' }}</small></div>{% endfor %}</section><section><h2>Processor<br><small>Container Instance</small></h2>{% for flow in flows %}<div class="flow-card {{ flow.processor_status_class }}" data-flow="{{ flow.id }}"><strong>{{ flow.processor }}</strong><small>{{ flow.processor_state }}</small></div>{% endfor %}</section><section><h2>DB Connection Secret</h2>{% for flow in flows %}<div class="flow-card {{ flow.secret_status_class }}" data-flow="{{ flow.id }}"><strong>{{ flow.secret }}</strong><small>{{ flow.secret_state }}</small><small>{{ flow.secret_id or 'Not configured' }}</small></div>{% endfor %}</section><section><h2>Database Connection</h2>{% for flow in flows %}<div class="flow-card status-active" data-flow="{{ flow.id }}"><strong>{{ flow.target }}</strong><small>{{ flow.database_endpoint }}</small><small>Loader target table</small></div>{% endfor %}</section></div></section>
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">STREAMING TOPOLOGY</p>
+    <h1>Flow</h1>
+    <p>The screen loads immediately, then collects live OCI rule, Stream, Processor, and Vault metadata in the background.</p>
+  </div>
+</section>
+<div id="flow-warnings" class="message warning" hidden></div>
+<section class="content-card flow-dashboard">
+  <div class="flow-picker">
+    <label>Object Storage event route
+      <select id="flow-picker">
+        <option value="">Show all routes</option>
+        {% for flow in flows %}<option value="{{ flow.id }}">#{{ flow.id }} · {{ flow.event }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+  <div class="flow-legend">
+    <span class="status-active">Active / configured</span>
+    <span class="status-pending">Transitional / collecting</span>
+    <span class="status-error">Error / not deployed</span>
+    <span class="status-unknown">Unresolved</span>
+  </div>
+  <div class="flow-columns" aria-live="polite">
+    <section>
+      <h2>Object Storage Event</h2>
+      {% for flow in flows %}
+      <button class="flow-card status-pending" data-flow="{{ flow.id }}" data-select-flow="{{ flow.id }}" data-flow-field="event">
+        <strong>{{ flow.event }}</strong><small>Mapping #{{ flow.id }} · collecting info…</small>
+      </button>
+      {% else %}<p class="empty-state">No mappings.</p>{% endfor %}
+    </section>
+    <section>
+      <h2>Rules</h2>
+      {% for flow in flows %}
+      <div class="flow-card status-pending" data-flow="{{ flow.id }}" data-flow-field="rule">
+        <strong>Collecting info…</strong><small>OCI Events rule</small>
+      </div>
+      {% endfor %}
+    </section>
+    <section>
+      <h2>Streaming Server</h2>
+      {% for flow in flows %}
+      <div class="flow-card status-pending" data-flow="{{ flow.id }}" data-flow-field="stream">
+        <strong>Collecting info…</strong><small>Stream state and mode</small><small>Stream identifier</small>
+      </div>
+      {% endfor %}
+    </section>
+    <section>
+      <h2>Processor<br><small>Container Instance</small></h2>
+      {% for flow in flows %}
+      <div class="flow-card status-pending" data-flow="{{ flow.id }}" data-flow-field="processor">
+        <strong>Collecting info…</strong><small>Container Instance state</small>
+      </div>
+      {% endfor %}
+    </section>
+    <section>
+      <h2>DB Connection Secret</h2>
+      {% for flow in flows %}
+      <div class="flow-card status-pending" data-flow="{{ flow.id }}" data-flow-field="secret">
+        <strong>Collecting info…</strong><small>Vault secret state</small><small>Secret identifier</small>
+      </div>
+      {% endfor %}
+    </section>
+    <section>
+      <h2>Database Connection</h2>
+      {% for flow in flows %}
+      <div class="flow-card status-pending" data-flow="{{ flow.id }}" data-flow-field="database">
+        <strong>{{ flow.target }}</strong><small>Collecting info…</small><small>Loader target table</small>
+      </div>
+      {% endfor %}
+    </section>
+  </div>
+</section>
 {% endblock %}
-{% block scripts %}<script>const picker=document.getElementById('flow-picker'),setFlow=value=>{document.querySelectorAll('[data-flow]').forEach(card=>card.classList.toggle('flow-muted',Boolean(value)&&card.dataset.flow!==value));document.querySelectorAll('[data-flow]').forEach(card=>card.classList.toggle('flow-highlight',Boolean(value)&&card.dataset.flow===value))};picker?.addEventListener('change',()=>setFlow(picker.value));document.querySelectorAll('[data-select-flow]').forEach(card=>card.addEventListener('click',()=>{picker.value=card.dataset.selectFlow;setFlow(picker.value)}));</script>{% endblock %}
+{% block scripts %}
+<script>
+const picker=document.getElementById("flow-picker");
+const statusClasses=["status-active","status-pending","status-error","status-unknown"];
+const setFlow=value=>{
+  document.querySelectorAll("[data-flow]").forEach(card=>{
+    card.classList.toggle("flow-muted",Boolean(value)&&card.dataset.flow!==value);
+    card.classList.toggle("flow-highlight",Boolean(value)&&card.dataset.flow===value);
+  });
+};
+const card=(id,field)=>document.querySelector(`[data-flow="${CSS.escape(String(id))}"][data-flow-field="${field}"]`);
+const update=(element,status,primary,details=[])=>{
+  if(!element)return;
+  element.classList.remove(...statusClasses);
+  element.classList.add(status||"status-unknown");
+  element.querySelector("strong").textContent=primary;
+  element.querySelectorAll("small").forEach((node,index)=>{node.textContent=details[index]||""});
+};
+picker?.addEventListener("change",()=>setFlow(picker.value));
+document.querySelectorAll("[data-select-flow]").forEach(element=>element.addEventListener("click",()=>{
+  picker.value=element.dataset.selectFlow;
+  setFlow(picker.value);
+}));
+fetch("{{ url_for('flow.topology') }}",{headers:{"Accept":"application/json"}})
+  .then(response=>{
+    if(!response.ok)throw new Error(`Topology request failed (${response.status})`);
+    return response.json();
+  })
+  .then(result=>{
+    (result.flows||[]).forEach(flow=>{
+      update(card(flow.id,"event"),flow.rule_status_class,flow.event,[`Mapping #${flow.id}`]);
+      update(card(flow.id,"rule"),flow.rule_status_class,flow.rule,[flow.rule_state]);
+      update(card(flow.id,"stream"),flow.stream_status_class,flow.stream,[`${flow.stream_state} · ${flow.processing_mode}`,flow.stream_id||"No Stream ID"]);
+      update(card(flow.id,"processor"),flow.processor_status_class,flow.processor,[flow.processor_state]);
+      update(card(flow.id,"secret"),flow.secret_status_class,flow.secret,[flow.secret_state,flow.secret_id||"Not configured"]);
+      update(card(flow.id,"database"),"status-active",flow.target,[flow.database_endpoint,"Loader target table"]);
+    });
+    if((result.warnings||[]).length){
+      const warnings=document.getElementById("flow-warnings");
+      warnings.textContent=result.warnings.join(" ");
+      warnings.hidden=false;
+    }
+  })
+  .catch(error=>{
+    document.querySelectorAll(".flow-card.status-pending").forEach(element=>{
+      element.classList.remove("status-pending");
+      element.classList.add("status-error");
+      const note=element.querySelector("small");
+      if(note)note.textContent="Could not collect live information.";
+    });
+    const warnings=document.getElementById("flow-warnings");
+    warnings.textContent=error.message;
+    warnings.hidden=false;
+  });
+</script>
+{% endblock %}
