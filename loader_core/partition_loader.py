@@ -41,10 +41,15 @@ class TargetTableError(ValueError):
     """The mapped target table cannot safely receive a partition exchange."""
 
 
-def quote_identifier(value: str, label: str) -> str:
+def validate_identifier(value: str, label: str) -> str:
+    """Validate and return a MySQL identifier without quoting it."""
     if not IDENTIFIER.fullmatch(value or ""):
         raise ValueError(f"Invalid {label}: use a MySQL identifier beginning with a letter.")
-    return f"`{value}`"
+    return value
+
+
+def quote_identifier(value: str, label: str) -> str:
+    return f"`{validate_identifier(value, label)}`"
 
 
 class Database:

@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "loader_core"))
 
-from partition_loader import csv_batches
+from partition_loader import csv_batches, staging_database
 
 
 class PartitionLoaderCsvTest(unittest.TestCase):
@@ -33,6 +33,16 @@ class PartitionLoaderCsvTest(unittest.TestCase):
         source = self.source("ID,id\n1,2\n")
         with self.assertRaisesRegex(ValueError, "duplicate column names"):
             list(csv_batches(source, ["id"], 100))
+
+    def test_staging_database_uses_validated_dedicated_schema(self):
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {"STAGING_DATABASE": "staging_db"}):
+            self.assertEqual(staging_database({"target_database": "testdb"}), "staging_db")
+        with patch.dict(os.environ, {"STAGING_DATABASE": "invalid-name"}):
+            with self.assertRaisesRegex(ValueError, "Invalid staging database"):
+                staging_database({"target_database": "testdb"})
 
 if __name__ == "__main__":
     unittest.main()
