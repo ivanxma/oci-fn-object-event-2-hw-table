@@ -46,9 +46,10 @@ class ValidationInstallerContractTest(unittest.TestCase):
         self.assertIn("artifacts container repository get --repository-id", build_source)
         self.assertIn("OCI_REGISTRY_REPOSITORY does not match OCI_REGISTRY_REPOSITORY_ID", build_source)
         self.assertIn(
-            'IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_IMAGE_TAG"',
+            'IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_REGISTRY_IMAGE_TAG"',
             build_source,
         )
+        self.assertIn('PROCESSOR_REGISTRY_IMAGE_TAG="processor-$PROCESSOR_IMAGE_TAG"', build_source)
         self.assertIn("Processor image tag already exists", build_source)
         self.assertIn("Increase PROCESSOR_IMAGE_TAG; released image tags are immutable.", build_source)
 

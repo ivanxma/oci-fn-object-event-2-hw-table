@@ -27,19 +27,23 @@ RESOLVED_REPOSITORY=$(jq -r '.data."display-name" // empty' <<< "$REPOSITORY_JSO
   exit 1
 }
 OCI_REGISTRY_REPOSITORY=$RESOLVED_REPOSITORY
-IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_IMAGE_TAG"
+case "$PROCESSOR_IMAGE_TAG" in
+  processor-*) PROCESSOR_REGISTRY_IMAGE_TAG="$PROCESSOR_IMAGE_TAG" ;;
+  *) PROCESSOR_REGISTRY_IMAGE_TAG="processor-$PROCESSOR_IMAGE_TAG" ;;
+esac
+IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_REGISTRY_IMAGE_TAG"
 [[ -n "$NAMESPACE" && "$NAMESPACE" != null ]] || { echo 'Could not resolve the OCIR namespace using the instance principal.' >&2; exit 1; }
 EXISTING_TAG=$(
   oci --auth instance_principal --region "$REGION" artifacts container image list \
     --compartment-id "$COMPARTMENT_ID" --all --output json |
-    jq -r --arg repository "$OCI_REGISTRY_REPOSITORY" --arg version "$PROCESSOR_IMAGE_TAG" \
+    jq -r --arg repository "$OCI_REGISTRY_REPOSITORY" --arg version "$PROCESSOR_REGISTRY_IMAGE_TAG" \
       '.data.items[] |
        select(."repository-name" == $repository and .version == $version and ."lifecycle-state" != "DELETED") |
        .id' |
     head -1
 )
 [[ -z "$EXISTING_TAG" ]] || {
-  echo "Processor image tag already exists in $OCI_REGISTRY_REPOSITORY: $PROCESSOR_IMAGE_TAG" >&2
+  echo "Processor image tag already exists in $OCI_REGISTRY_REPOSITORY: $PROCESSOR_REGISTRY_IMAGE_TAG" >&2
   echo "Increase PROCESSOR_IMAGE_TAG; released image tags are immutable." >&2
   exit 1
 }
@@ -55,7 +59,7 @@ BUILD_UTC="${BUILD_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 docker build --file "$ROOT_DIR/processor/Dockerfile" --tag "$IMAGE" \
   --build-arg "RELEASE_VERSION=$RELEASE_VERSION" --build-arg "GIT_SHA=$GIT_SHA" \
   --build-arg "SOURCE_BRANCH=$SOURCE_BRANCH" --build-arg "BUILD_UTC=$BUILD_UTC" \
-  --build-arg "PROCESSOR_IMAGE_NAME=$OCI_REGISTRY_REPOSITORY" --build-arg "PROCESSOR_IMAGE_TAG=$PROCESSOR_IMAGE_TAG" \
+  --build-arg "PROCESSOR_IMAGE_NAME=$OCI_REGISTRY_REPOSITORY" --build-arg "PROCESSOR_IMAGE_TAG=$PROCESSOR_REGISTRY_IMAGE_TAG" \
   --build-arg "CONFIG_SCHEMA_VERSION=${CONFIG_SCHEMA_VERSION:-2}" "$ROOT_DIR"
 docker push "$IMAGE"
 IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || true)

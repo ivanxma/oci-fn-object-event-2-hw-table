@@ -238,7 +238,7 @@ placement is resolved from the deployment VM at runtime:
 |---|---|
 | OCI | Derived `COMPARTMENT_ID`, `REGION`, `REGION_KEY`, `CONTAINER_AVAILABILITY_DOMAIN`, and a private `SUBNET_ID` in the UI VM VCN |
 | Shape | Defaults: `CI.Standard.E4.Flex`, 1 OCPU, 16 GB; optional runtime overrides |
-| Image | Mandatory existing `OCI_REGISTRY_REPOSITORY_ID`; setup validates it and resolves the read-only `OCI_REGISTRY_REPOSITORY`. Processor releases use increasing immutable `PROCESSOR_IMAGE_TAG` values; UI releases use `ui-<version>` in the same repository. Event Processor excludes UI tags. |
+| Image | Mandatory existing `OCI_REGISTRY_REPOSITORY_ID`; setup validates it and resolves the read-only `OCI_REGISTRY_REPOSITORY`. Processor releases use increasing immutable `processor-<version>` tags; UI releases use `ui-<version>` in the same repository. Event Processor includes only Processor tags. |
 | Mapping | `PROCESSOR_MAPPING_ID`, `OCI_STREAM_ID`, `PROCESSING_MODE` |
 | Assignment | `EXPECTED_PARTITION_COUNT`, `PROCESSOR_REPLICA_COUNT`, `PROCESSOR_PARTITIONS` |
 | Database | `DB_SECRET_OCID` |

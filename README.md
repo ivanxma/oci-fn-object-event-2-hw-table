@@ -255,13 +255,13 @@ compartment, resolves its name, and persists both values. All Processor and UI
 releases use this same repository:
 
 ```text
-<region-key>.ocir.io/<namespace>/<repository>:<processor-version>
+<region-key>.ocir.io/<namespace>/<repository>:processor-<processor-version>
 <region-key>.ocir.io/<namespace>/<repository>:ui-<ui-version>
 ```
 
-Both tag types are immutable. Event Processor excludes `ui-*` tags from its
-Container image selector, so only Processor releases can be deployed to OCI
-Container Instances.
+Both tag types are immutable. Event Processor includes only `processor-*` tags
+in its Container image selector, so UI and unqualified legacy images cannot be
+deployed to OCI Container Instances.
 
 To enable the Event Processor **Database Secret** tab to create a new JSON
 database-connectivity secret, grant the UI/deployment principal the following

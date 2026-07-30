@@ -312,9 +312,13 @@ if [[ -n "$PROVIDED_DB_SECRET_OCID" ]]; then
 fi
 
 prompt_required PROCESSOR_IMAGE_TAG "Immutable processor image tag" "$(date -u +%Y%m%d%H%M%S)"
+case "$PROCESSOR_IMAGE_TAG" in
+  processor-*) PROCESSOR_REGISTRY_IMAGE_TAG="$PROCESSOR_IMAGE_TAG" ;;
+  *) PROCESSOR_REGISTRY_IMAGE_TAG="processor-$PROCESSOR_IMAGE_TAG" ;;
+esac
 NAMESPACE=$(oci_json os ns get | jq -r '.data // empty')
 [[ -n "$NAMESPACE" ]] || { echo "Could not resolve the Object Storage/OCIR namespace." >&2; exit 1; }
-PROCESSOR_IMAGE_URL="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_IMAGE_TAG"
+PROCESSOR_IMAGE_URL="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_REGISTRY_IMAGE_TAG"
 FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-$(openssl rand -hex 32)}
 
 CONTROL_DATABASE=${CONTROL_DATABASE:-stream_db}
