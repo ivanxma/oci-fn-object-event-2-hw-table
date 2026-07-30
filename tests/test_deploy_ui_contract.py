@@ -20,6 +20,16 @@ class UiDeploymentContractTest(unittest.TestCase):
             script,
         )
 
+    def test_ui_image_is_published_to_the_processor_repository(self):
+        script = (ROOT / "deploy" / "deploy_ui.sh").read_text(encoding="utf-8")
+        self.assertIn('UI_REGISTRY_IMAGE_TAG="ui-$UI_IMAGE_TAG"', script)
+        self.assertIn(
+            'UI_REGISTRY_IMAGE_NAME="$REGION_KEY.ocir.io/$OBJECT_STORAGE_NAMESPACE/$OCI_REGISTRY_REPOSITORY"',
+            script,
+        )
+        self.assertIn('sudo podman push --authfile "$REGISTRY_AUTH_FILE" "$UI_IMAGE"', script)
+        self.assertIn('--image-name "$UI_REGISTRY_IMAGE_NAME"', script)
+
 
 if __name__ == "__main__":
     unittest.main()

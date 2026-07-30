@@ -74,7 +74,9 @@ class RegistryService:
                     "image_url": f"{prefix}{self._field(row, 'version')}" if prefix and self._field(row, "version") else "",
                 }
                 for row in rows
-                if str(self._field(row, "lifecycle_state")).upper() == "AVAILABLE" and self._field(row, "version")
+                if str(self._field(row, "lifecycle_state")).upper() == "AVAILABLE"
+                and self._field(row, "version")
+                and not str(self._field(row, "version")).startswith("ui-")
             ]
         except Exception as error:
             raise RegistryError(f"Could not list images in OCI repository {repository_name}: {type(error).__name__}: {error}") from error

@@ -16,7 +16,7 @@ set +a
 source "$ROOT_DIR/deploy/oci_context.sh"
 oci_context_resolve
 
-for command in oci podman sudo systemctl; do
+for command in oci podman docker-credential-ocir sudo systemctl; do
   command -v "$command" >/dev/null || { echo "Missing $command." >&2; exit 1; }
 done
 [[ -n "${FLASK_SECRET_KEY:-}" ]] || { echo "FLASK_SECRET_KEY must be set in $ENV_FILE." >&2; exit 1; }
@@ -25,7 +25,6 @@ UI_SERVICE_NAME="${UI_SERVICE_NAME:-object-storage-heatwave-ui}"
 UI_CONTAINER_NAME="${UI_CONTAINER_NAME:-$UI_SERVICE_NAME}"
 UI_IMAGE_NAME="${UI_IMAGE_NAME:-object-storage-heatwave-ui}"
 UI_IMAGE_TAG="${UI_IMAGE_TAG_OVERRIDE:-${UI_IMAGE_TAG:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}}"
-UI_IMAGE="$UI_IMAGE_NAME:$UI_IMAGE_TAG"
 RELEASE_VERSION="${RELEASE_VERSION:-$UI_IMAGE_TAG}"
 GIT_SHA="${GIT_SHA:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}"
 SOURCE_BRANCH="${SOURCE_BRANCH:-$(git -C "$ROOT_DIR" branch --show-current)}"
@@ -47,6 +46,22 @@ WRITER_WORKERS="${WRITER_WORKERS:-4}"
 if [[ -z "${OCI_REGISTRY_REPOSITORY:-}" && -n "${REPOSITORY_PREFIX:-}" && -n "${PROCESSOR_IMAGE_NAME:-}" ]]; then
   OCI_REGISTRY_REPOSITORY="${REPOSITORY_PREFIX,,}/$PROCESSOR_IMAGE_NAME"
 fi
+[[ -n "${OCI_REGISTRY_REPOSITORY:-}" ]] || {
+  echo "OCI_REGISTRY_REPOSITORY is required to publish and deploy the UI image." >&2
+  exit 1
+}
+OBJECT_STORAGE_NAMESPACE=${OBJECT_STORAGE_NAMESPACE:-$(oci --auth instance_principal --region "$REGION" os ns get --query data --raw-output)}
+[[ -n "$OBJECT_STORAGE_NAMESPACE" && "$OBJECT_STORAGE_NAMESPACE" != null ]] || {
+  echo "Could not resolve the Object Storage/OCIR namespace." >&2
+  exit 1
+}
+case "$UI_IMAGE_TAG" in
+  ui-*) UI_REGISTRY_IMAGE_TAG="$UI_IMAGE_TAG" ;;
+  *) UI_REGISTRY_IMAGE_TAG="ui-$UI_IMAGE_TAG" ;;
+esac
+UI_REGISTRY_IMAGE_NAME="$REGION_KEY.ocir.io/$OBJECT_STORAGE_NAMESPACE/$OCI_REGISTRY_REPOSITORY"
+UI_IMAGE="$UI_REGISTRY_IMAGE_NAME:$UI_REGISTRY_IMAGE_TAG"
+REGISTRY_AUTH_FILE="$HOME/.config/containers/auth.json"
 OCI_EVENT_RULE_MANAGEMENT_ENABLED="${OCI_EVENT_RULE_MANAGEMENT_ENABLED:-true}"
 OCI_STREAMING_MANAGEMENT_ENABLED="${OCI_STREAMING_MANAGEMENT_ENABLED:-true}"
 OCI_CONTAINER_ORCHESTRATION_ENABLED="${OCI_CONTAINER_ORCHESTRATION_ENABLED:-true}"
@@ -103,17 +118,35 @@ sudo chmod 644 "$TLS_CERT_FILE"
 # deployment environment contributes the Flask signing key, control DB, and
 # non-secret OCI Streaming/Events scope. No alternate execution-service ID is required.
 printf 'FLASK_SECRET_KEY=%s\nCONTROL_DATABASE=%s\nSESSION_COOKIE_SECURE=1\nOCI_EVENT_RULE_MANAGEMENT_ENABLED=%s\nOCI_STREAMING_MANAGEMENT_ENABLED=%s\nOCI_CONTAINER_ORCHESTRATION_ENABLED=%s\nOCI_EVENT_RULE_PREFIX=%s\nOCI_COMPARTMENT_ID=%s\nOCI_REGION=%s\nOCI_REGION_KEY=%s\nOCI_OBJECT_STORAGE_NAMESPACE=%s\nOCI_REGISTRY_REPOSITORY=%s\nOBJECT_STORAGE_BUCKET_NAME=%s\nVAULT_ID=%s\nVAULT_KEY_ID=%s\nSUBNET_ID=%s\nCONTAINER_AVAILABILITY_DOMAIN=%s\nPROCESSOR_SHAPE=%s\nPROCESSOR_OCPUS=%s\nPROCESSOR_MEMORY_GBS=%s\nPROCESSOR_IMAGE_URL=%s\nPROCESSOR_CONTAINER_NAME_PREFIX=%s\nWRITER_WORKERS=%s\nDB_SECRET_OCID=%s\nDB_HOST=%s\nDB_PORT=%s\nDB_USER=%s\nDB_NAME=%s\nSTREAM_DATA_DB_NAME=%s\nUI_IMAGE_NAME=%s\nUI_IMAGE_TAG=%s\nRELEASE_VERSION=%s\nGIT_SHA=%s\nSOURCE_BRANCH=%s\nBUILD_UTC=%s\nCONFIG_SCHEMA_VERSION=%s\n' \
-  "$FLASK_SECRET_KEY" "$CONTROL_DATABASE" "$OCI_EVENT_RULE_MANAGEMENT_ENABLED" "$OCI_STREAMING_MANAGEMENT_ENABLED" "$OCI_CONTAINER_ORCHESTRATION_ENABLED" "$OCI_EVENT_RULE_PREFIX" "${COMPARTMENT_ID:-}" "${REGION:-}" "${REGION_KEY:-}" "${OBJECT_STORAGE_NAMESPACE:-}" "${OCI_REGISTRY_REPOSITORY:-}" "${OBJECT_STORAGE_BUCKET_NAME:-}" "${VAULT_ID:-}" "${VAULT_KEY_ID:-}" "${SUBNET_ID:-}" "${CONTAINER_AVAILABILITY_DOMAIN:-}" "${PROCESSOR_SHAPE:-}" "${PROCESSOR_OCPUS:-}" "${PROCESSOR_MEMORY_GBS:-}" "${PROCESSOR_IMAGE_URL:-}" "${PROCESSOR_CONTAINER_NAME_PREFIX:-object-storage-stream-processor}" "${WRITER_WORKERS:-4}" "${DB_SECRET_OCID:-}" "${DB_HOST:-}" "${DB_PORT:-3306}" "${DB_USER:-}" "${DB_NAME:-}" "${STREAM_DATA_DB_NAME:-}" "$UI_IMAGE_NAME" "$UI_IMAGE_TAG" "$RELEASE_VERSION" "$GIT_SHA" "$SOURCE_BRANCH" "$BUILD_UTC" "${CONFIG_SCHEMA_VERSION:-2}" > "$RUNTIME_ENV"
+  "$FLASK_SECRET_KEY" "$CONTROL_DATABASE" "$OCI_EVENT_RULE_MANAGEMENT_ENABLED" "$OCI_STREAMING_MANAGEMENT_ENABLED" "$OCI_CONTAINER_ORCHESTRATION_ENABLED" "$OCI_EVENT_RULE_PREFIX" "${COMPARTMENT_ID:-}" "${REGION:-}" "${REGION_KEY:-}" "$OBJECT_STORAGE_NAMESPACE" "$OCI_REGISTRY_REPOSITORY" "${OBJECT_STORAGE_BUCKET_NAME:-}" "${VAULT_ID:-}" "${VAULT_KEY_ID:-}" "${SUBNET_ID:-}" "${CONTAINER_AVAILABILITY_DOMAIN:-}" "${PROCESSOR_SHAPE:-}" "${PROCESSOR_OCPUS:-}" "${PROCESSOR_MEMORY_GBS:-}" "${PROCESSOR_IMAGE_URL:-}" "${PROCESSOR_CONTAINER_NAME_PREFIX:-object-storage-stream-processor}" "${WRITER_WORKERS:-4}" "${DB_SECRET_OCID:-}" "${DB_HOST:-}" "${DB_PORT:-3306}" "${DB_USER:-}" "${DB_NAME:-}" "${STREAM_DATA_DB_NAME:-}" "$UI_REGISTRY_IMAGE_NAME" "$UI_REGISTRY_IMAGE_TAG" "$RELEASE_VERSION" "$GIT_SHA" "$SOURCE_BRANCH" "$BUILD_UTC" "${CONFIG_SCHEMA_VERSION:-2}" > "$RUNTIME_ENV"
 chmod 600 "$RUNTIME_ENV"
 printf 'STAGING_DATABASE=%s\n' "$STAGING_DATABASE" >> "$RUNTIME_ENV"
 
 # A system service uses the system Podman store/runtime rather than a user's
 # login-session runtime, so it remains available after reboot and logout.
-sudo podman build --tag "$UI_IMAGE" --file "$ROOT_DIR/ui/Dockerfile" \
-  --build-arg "RELEASE_VERSION=$RELEASE_VERSION" --build-arg "GIT_SHA=$GIT_SHA" \
-  --build-arg "SOURCE_BRANCH=$SOURCE_BRANCH" --build-arg "BUILD_UTC=$BUILD_UTC" \
-  --build-arg "UI_IMAGE_NAME=$UI_IMAGE_NAME" --build-arg "UI_IMAGE_TAG=$UI_IMAGE_TAG" \
-  --build-arg "CONFIG_SCHEMA_VERSION=${CONFIG_SCHEMA_VERSION:-2}" "$ROOT_DIR/ui"
+mkdir -p "$HOME/.config/containers"
+printf '{\n  "credHelpers": {\n    "%s.ocir.io": "ocir"\n  }\n}\n' "$REGION_KEY" > "$REGISTRY_AUTH_FILE"
+chmod 700 "$HOME/.config/containers"
+chmod 600 "$REGISTRY_AUTH_FILE"
+EXISTING_UI_IMAGE=$(
+  oci --auth instance_principal --region "$REGION" artifacts container image list \
+    --compartment-id "$COMPARTMENT_ID" --all --output json |
+    jq -r --arg repository "$OCI_REGISTRY_REPOSITORY" --arg version "$UI_REGISTRY_IMAGE_TAG" \
+      '.data.items[] |
+       select(."repository-name" == $repository and .version == $version and ."lifecycle-state" != "DELETED") |
+       .id' |
+    head -1
+)
+if [[ -n "$EXISTING_UI_IMAGE" ]]; then
+  sudo podman pull --authfile "$REGISTRY_AUTH_FILE" "$UI_IMAGE"
+else
+  sudo podman build --tag "$UI_IMAGE" --file "$ROOT_DIR/ui/Dockerfile" \
+    --build-arg "RELEASE_VERSION=$RELEASE_VERSION" --build-arg "GIT_SHA=$GIT_SHA" \
+    --build-arg "SOURCE_BRANCH=$SOURCE_BRANCH" --build-arg "BUILD_UTC=$BUILD_UTC" \
+    --build-arg "UI_IMAGE_NAME=$UI_REGISTRY_IMAGE_NAME" --build-arg "UI_IMAGE_TAG=$UI_REGISTRY_IMAGE_TAG" \
+    --build-arg "CONFIG_SCHEMA_VERSION=${CONFIG_SCHEMA_VERSION:-2}" "$ROOT_DIR/ui"
+  sudo podman push --authfile "$REGISTRY_AUTH_FILE" "$UI_IMAGE"
+fi
 
 SERVICE_FILE="/etc/systemd/system/${UI_SERVICE_NAME}.service"
 NGINX_FILE="/etc/nginx/conf.d/${UI_SERVICE_NAME}.conf"
@@ -186,7 +219,7 @@ if [[ -x "$DEPLOYMENT_PYTHON" ]]; then
     --component UI --deployment-name "$UI_SERVICE_NAME" \
     --release-version "$RELEASE_VERSION" --git-sha "$GIT_SHA" \
     --source-branch "$SOURCE_BRANCH" --build-utc "$BUILD_UTC" \
-    --image-name "$UI_IMAGE_NAME" --image-tag "$UI_IMAGE_TAG" \
+    --image-name "$UI_REGISTRY_IMAGE_NAME" --image-tag "$UI_REGISTRY_IMAGE_TAG" \
     --config-schema-version "${CONFIG_SCHEMA_VERSION:-2}" ||
     echo "WARNING: UI deployment succeeded but deployment history could not be recorded." >&2
 else

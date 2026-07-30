@@ -244,6 +244,30 @@ Processor deployments append a secret-free row to the control database
 `deployment_history` table. Recording uses the Vault bundle in memory and
 never writes database credentials into the history record or deployment log.
 
+### OCI Container Registry prerequisite
+
+The deployment requires one deployment-owned OCIR repository in the UI VM's
+compartment. The instance principal must have `manage repos` permission in
+that compartment and `docker-credential-ocir` must be installed. Setup derives
+the repository as:
+
+```text
+<repository-prefix>/object-storage-stream-processor
+```
+
+and persists it as `OCI_REGISTRY_REPOSITORY`. The first Processor image push
+creates the repository when it does not already exist. All later Processor and
+UI releases use this same repository:
+
+```text
+<region-key>.ocir.io/<namespace>/<repository>:<processor-version>
+<region-key>.ocir.io/<namespace>/<repository>:ui-<ui-version>
+```
+
+Both tag types are immutable. Event Processor excludes `ui-*` tags from its
+Container image selector, so only Processor releases can be deployed to OCI
+Container Instances.
+
 To enable the Event Processor **Database Secret** tab to create a new JSON
 database-connectivity secret, grant the UI/deployment principal the following
 additional least-privilege permissions in the compartment containing the

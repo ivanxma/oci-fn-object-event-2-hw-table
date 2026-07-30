@@ -22,6 +22,20 @@ class RegistryServiceTest(unittest.TestCase):
         with patch.object(service, "_client", return_value=client), patch("oci.pagination.list_call_get_all_results", return_value=SimpleNamespace(data=[SimpleNamespace(id="i", version="v1", digest="d", lifecycle_state="DELETED")])):
             self.assertEqual(service.list_images("repo"), [])
 
+    def test_ui_release_tags_are_excluded_from_processor_choices(self):
+        service = RegistryService(compartment_id="c", region="r", namespace="ns", region_key="lhr")
+        rows = [
+            SimpleNamespace(id="processor", version="v2", digest="processor-digest", lifecycle_state="AVAILABLE"),
+            SimpleNamespace(id="ui", version="ui-v2", digest="ui-digest", lifecycle_state="AVAILABLE"),
+        ]
+        client = SimpleNamespace(list_container_images=lambda **_: SimpleNamespace(data=rows, next_page=None, has_next_page=False))
+        with patch.object(service, "_client", return_value=client), patch(
+            "oci.pagination.list_call_get_all_results",
+            return_value=SimpleNamespace(data=rows),
+        ):
+            images = service.list_images("repo")
+        self.assertEqual([image["version"] for image in images], ["v2"])
+
 
 if __name__ == "__main__":
     unittest.main()
