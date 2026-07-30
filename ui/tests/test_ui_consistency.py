@@ -48,6 +48,13 @@ class UIConsistencySourceTest(unittest.TestCase):
             stylesheet,
         )
 
+    def test_processor_deployment_explains_empty_image_choices(self) -> None:
+        source = (TEMPLATES / "orchestration.html").read_text(encoding="utf-8")
+        self.assertIn("No Processor repository is configured.", source)
+        self.assertIn("No available tagged image was found", source)
+        self.assertIn("{% if not container_images %}disabled{% endif %}", source)
+        self.assertIn(".primary-button:disabled", STYLESHEET.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

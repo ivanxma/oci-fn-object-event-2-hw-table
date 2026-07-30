@@ -13,6 +13,13 @@ class UiDeploymentContractTest(unittest.TestCase):
         self.assertIn('"--workers", "1"', dockerfile)
         self.assertIn("gunicorn", script)
 
+    def test_processor_repository_is_derived_for_older_generated_environments(self):
+        script = (ROOT / "deploy" / "deploy_ui.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'OCI_REGISTRY_REPOSITORY="${REPOSITORY_PREFIX,,}/$PROCESSOR_IMAGE_NAME"',
+            script,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

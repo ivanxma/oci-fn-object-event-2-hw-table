@@ -31,6 +31,26 @@ class ValidationInstallerContractTest(unittest.TestCase):
         self.assertIn('[[ -z "$selected" && ${#ids[@]} -eq 1 ]]', source)
         self.assertIn("zero or multiple choices are available", source)
 
+    def test_generated_environment_persists_processor_registry_discovery(self):
+        source = (ROOT / "deploy" / "setup_env.sh").read_text(encoding="utf-8")
+        build_source = (ROOT / "deploy" / "build_processor_image.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'OCI_REGISTRY_REPOSITORY=${OCI_REGISTRY_REPOSITORY:-"$REPOSITORY_PREFIX_LOWER/$PROCESSOR_IMAGE_NAME"}',
+            source,
+        )
+        self.assertIn('write_export OCI_REGISTRY_REPOSITORY "$OCI_REGISTRY_REPOSITORY"', source)
+        self.assertIn('write_export PROCESSOR_IMAGE_URL "$PROCESSOR_IMAGE_URL"', source)
+        self.assertIn(
+            'OCI_REGISTRY_REPOSITORY=${OCI_REGISTRY_REPOSITORY:-"${REPOSITORY_PREFIX,,}/$PROCESSOR_IMAGE_NAME"}',
+            build_source,
+        )
+        self.assertIn(
+            'IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_IMAGE_TAG"',
+            build_source,
+        )
+
     def test_all_deployment_package_installs_use_retry_helper(self):
         for relative in (
             "deploy/bootstrap_streaming.sh",

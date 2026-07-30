@@ -29,3 +29,4 @@
 #registered-panel .stacked-selector:has(#registered-stage-tables){display:block}#registered-panel .stacked-selector:has(#registered-stage-tables)>.registered-table-picker{margin-bottom:18px}#registered-panel #registered-stage-tables{border:0;margin:0;min-width:0;padding:18px 0 0}#registered-panel #registered-stage-tables .stage-tables-table{min-width:760px}
 .execution-mode-filter{align-items:center;background:#f5f8fa;border:1px solid var(--line);border-radius:7px;display:flex;gap:14px;margin:0 28px 18px;padding:10px 14px}.execution-mode-filter label{align-items:center;display:flex;gap:5px;font-weight:600}.execution-mode-filter input{margin:0;width:auto}
 .field-aligned-actions{align-items:flex-start;padding-top:21px}@media(max-width:760px){.field-aligned-actions{padding-top:0}}
+.primary-button:disabled{background:#d9e0e4;box-shadow:none;color:#7c8991;cursor:not-allowed}

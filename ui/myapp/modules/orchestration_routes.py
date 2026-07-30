@@ -82,6 +82,7 @@ def index():
         streams=streams, deployments=deployments, vault_secrets=vault_secrets, vaults=vaults, vault_keys=vault_keys,
         selected_vault_id=selected_vault_id, selected_key_id=selected_key_id,
         settings=_orchestration_service().settings, replacement=replacement, container_images=container_images,
+        registry_repository=current_app.config.get("OCI_REGISTRY_REPOSITORY", ""),
         orchestration_enabled=current_app.config["OCI_CONTAINER_ORCHESTRATION_ENABLED"],
     )
 

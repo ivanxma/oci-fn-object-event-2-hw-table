@@ -15,7 +15,8 @@ for value in REGION_KEY REPOSITORY_PREFIX PROCESSOR_IMAGE_NAME PROCESSOR_IMAGE_T
 done
 for command in oci docker docker-credential-ocir; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
 NAMESPACE=$(oci --auth instance_principal os ns get --query data --raw-output)
-IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/${REPOSITORY_PREFIX,,}/$PROCESSOR_IMAGE_NAME:$PROCESSOR_IMAGE_TAG"
+OCI_REGISTRY_REPOSITORY=${OCI_REGISTRY_REPOSITORY:-"${REPOSITORY_PREFIX,,}/$PROCESSOR_IMAGE_NAME"}
+IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_IMAGE_TAG"
 [[ -n "$NAMESPACE" && "$NAMESPACE" != null ]] || { echo 'Could not resolve the OCIR namespace using the instance principal.' >&2; exit 1; }
 mkdir -p "$HOME/.docker" "$HOME/.config/containers"
 printf '{\n  "credHelpers": {\n    "%s.ocir.io": "ocir"\n  }\n}\n' "$REGION_KEY" > "$HOME/.docker/config.json"
