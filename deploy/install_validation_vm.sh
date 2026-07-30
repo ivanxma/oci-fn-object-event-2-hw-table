@@ -14,10 +14,10 @@ Usage: ./deploy/install_validation_vm.sh --config PATH
 The config is a mode-0600 shell file containing at least:
   export DB_SECRET_OCID='ocid1.vaultsecret...'
   export OBJECT_STORAGE_BUCKET_NAME='existing-bucket'
-  export CONTROL_DATABASE='stream_db_validation'
-  export STREAM_DATA_DB_NAME='stream_data_validation'
 
-Optional values include REPOSITORY_PREFIX, PROCESSOR_IMAGE_TAG,
+Optional values include CONTROL_DATABASE (default: stream_db),
+STREAM_DATA_DB_NAME (default: stream_data), STAGING_DATABASE (default:
+staging_db), REPOSITORY_PREFIX, PROCESSOR_IMAGE_TAG,
 GENERATE_SELF_SIGNED_CERT, UI_SERVER_NAME, and INSTALL_UI.
 Database access uses only the Vault secret OCID, and OCIR uses the instance principal.
 EOF
@@ -51,10 +51,13 @@ set -a
 . "$CONFIG_FILE"
 set +a
 
-for value in DB_SECRET_OCID OBJECT_STORAGE_BUCKET_NAME CONTROL_DATABASE STREAM_DATA_DB_NAME; do
+for value in DB_SECRET_OCID OBJECT_STORAGE_BUCKET_NAME; do
   [[ -n "${!value:-}" ]] || { echo "$value is required in $CONFIG_FILE." >&2; exit 1; }
 done
 [[ "$DB_SECRET_OCID" == ocid1.vaultsecret.* ]] || { echo "DB_SECRET_OCID is invalid." >&2; exit 1; }
+export CONTROL_DATABASE="${CONTROL_DATABASE:-stream_db}"
+export STREAM_DATA_DB_NAME="${STREAM_DATA_DB_NAME:-stream_data}"
+export STAGING_DATABASE="${STAGING_DATABASE:-staging_db}"
 "$ROOT_DIR/deploy/bootstrap_streaming.sh"
 export REPOSITORY_PREFIX="${REPOSITORY_PREFIX:-object-storage-heatwave-validation}"
 export PROCESSOR_IMAGE_TAG="${PROCESSOR_IMAGE_TAG:-validation-$(date -u +%Y%m%d%H%M%S)}"

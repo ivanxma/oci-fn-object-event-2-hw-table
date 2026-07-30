@@ -5,6 +5,8 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
 [[ -r "$ENV_FILE" ]] || { echo "Missing $ENV_FILE" >&2; exit 1; }
 set -a; . "$ENV_FILE"; set +a
+source "$ROOT_DIR/deploy/oci_context.sh"
+oci_context_resolve
 for value in COMPARTMENT_ID REGION SUBNET_ID DB_SECRET_OCID PROCESSOR_IMAGE_TAG PROCESSOR_SHAPE PROCESSOR_OCPUS PROCESSOR_MEMORY_GBS; do
   [[ -n "${!value:-}" ]] || { echo "FAIL: $value is required" >&2; exit 1; }
 done

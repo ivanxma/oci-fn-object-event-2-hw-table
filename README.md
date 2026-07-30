@@ -99,15 +99,18 @@ Unit tests, integration harnesses, and disposable SQL fixtures live under
 `tests/`; production processor images do not copy them.
 
 For a fresh OL9 validation VM, create a mode-`0600` config containing only the
-existing Vault secret OCID, processor subnet OCID, and isolated control/durable
-database names, then run:
+existing Vault secret OCID and Object Storage bucket name, then run:
 
 ```sh
 ./deploy/install_validation_vm.sh --config /path/to/validation-install.env
 ```
 
-This non-interactive path bootstraps packages, derives instance/region/AD/VCN
-and Vault/key metadata, generates ignored `env.sh`, builds and pushes the
+Control, durable, and staging database names default to `stream_db`,
+`stream_data`, and `staging_db`; override them in the config only when the
+selected Vault secret uses isolated validation schemas. This non-interactive
+path bootstraps packages, derives instance/region/AD/VCN
+and Vault/key metadata, selects a private Processor subnet in the UI VM's VCN,
+generates ignored `env.sh`, builds and pushes the
 processor with instance-principal authentication, initializes the external SQL
 schemas, runs preflight/durable verification, and deploys the HTTPS UI.
 
@@ -122,6 +125,9 @@ Before use, confirm:
   Container Instance, repository, and test-object permissions.
 - The processor subnet can reach MySQL and the database account can use the
   control schema plus approved target/staging objects.
+- The UI VM may use a public subnet for HTTPS access. Processor Container
+  Instances use a subnet in the same VCN with public IP assignment prohibited;
+  a public UI subnet is never reused as the Processor subnet.
 
 ### IAM policy baseline
 
@@ -153,8 +159,9 @@ workflow through the instance principal.
 `deploy/env.sh` is a mode-`0600`, minimal input file. It stores the default
 Object Storage bucket, database schema names, the processor Vault secret OCID,
 and immutable UI/processor image tags. The deployment VM derives compartment,
-region, availability domain, subnet, and Object Storage namespace through its
-instance principal; these values are not required in `env.sh`.
+region, availability domain, VCN, private Processor subnet, and Object Storage
+namespace through its instance principal; these values are not required in
+`env.sh`.
 
 Run `./deploy/setup_env.sh` interactively to select an existing Vault and AES
 key, provide database connectivity, and create or update the default processor

@@ -17,7 +17,7 @@ Usage: ./deploy/setup_env.sh [--output PATH] [--force] [--non-interactive] [--db
 Discovers the current OCI VM's compartment and region, then prompts for:
   - compartment and region
   - availability domain
-  - VCN and subnet
+  - private Processor subnet in the setup VM's VCN
   - Vault, symmetric encryption key, and database JSON secret
   - OCIR repository prefix
 
@@ -27,8 +27,9 @@ resource OCIDs and non-secret configuration; database access uses a Vault OCID.
 With --non-interactive, supply DB_SECRET_OCID or DB_HOST, DB_USER, and
 --db-password-file. The password file must be mode 0600 and is removed only
 after the Vault secret OCID is atomically written to the generated env.sh.
-Compartment, region, AD, VCN, Vault, and key are derived from instance metadata
-and those resources where possible. Explicit environment values take priority.
+Compartment, region, AD, the VM VCN, Vault, and key are derived from instance
+metadata and those resources where possible. The Processor uses a private
+subnet in that same VCN. Explicit environment values take priority.
 EOF
 }
 
@@ -176,12 +177,6 @@ REGION_KEY=$(printf '%s' "$REGION_KEY" | tr '[:upper:]' '[:lower:]')
 
 if [[ "$NON_INTERACTIVE" == true ]]; then
   CONTAINER_AVAILABILITY_DOMAIN=${CONTAINER_AVAILABILITY_DOMAIN:-$DEFAULT_AD}
-  if [[ -n "${SUBNET_ID:-}" && -z "${VCN_ID:-}" ]]; then
-    VCN_ID=$(
-      oci_json network subnet get --subnet-id "$SUBNET_ID" |
-        jq -r '.data."vcn-id" // empty'
-    )
-  fi
   if [[ -n "${DB_SECRET_OCID:-}" && ( -z "${VAULT_ID:-}" || -z "${VAULT_KEY_ID:-}" ) ]]; then
     SECRET_METADATA=$(oci_json vault secret get --secret-id "$DB_SECRET_OCID")
     VAULT_ID=${VAULT_ID:-$(jq -r '.data."vault-id" // empty' <<< "$SECRET_METADATA")}
@@ -195,20 +190,21 @@ AD_TSV=$(
 )
 select_from_tsv CONTAINER_AVAILABILITY_DOMAIN "Availability domain" "$AD_TSV"
 
-VCN_TSV=$(
-  oci_json network vcn list --compartment-id "$COMPARTMENT_ID" --all |
-    jq -r '.data[] | select(."lifecycle-state" == "AVAILABLE") |
-      [.id, ((."display-name" // "(unnamed VCN)") + " | " + (."cidr-block" // "no CIDR"))] | @tsv'
-)
-select_from_tsv VCN_ID "VCN" "$VCN_TSV"
+[[ -n "${VCN_ID:-}" ]] || {
+  echo "Could not derive the setup VM VCN." >&2
+  exit 1
+}
 
 SUBNET_TSV=$(
   oci_json network subnet list --compartment-id "$COMPARTMENT_ID" --vcn-id "$VCN_ID" --all |
-    jq -r '.data[] | select(."lifecycle-state" == "AVAILABLE") |
+    jq -r --arg ad "$CONTAINER_AVAILABILITY_DOMAIN" '.data[] |
+      select(."lifecycle-state" == "AVAILABLE") |
+      select(."prohibit-public-ip-on-vnic" == true) |
+      select((."availability-domain" // "") == "" or ."availability-domain" == $ad) |
       [.id, ((."display-name" // "(unnamed subnet)") + " | " + (."cidr-block" // "no CIDR") +
-      " | " + (."availability-domain" // "regional"))] | @tsv'
+      " | private | " + (."availability-domain" // "regional"))] | @tsv'
 )
-select_from_tsv SUBNET_ID "Processor subnet" "$SUBNET_TSV"
+select_from_tsv SUBNET_ID "Private Processor subnet in the setup VM VCN" "$SUBNET_TSV"
 
 VAULT_TSV=$(
   oci_json kms management vault list --compartment-id "$COMPARTMENT_ID" --all |
