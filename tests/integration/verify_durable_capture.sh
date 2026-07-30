@@ -2,7 +2,7 @@
 # Runs the bounded durable-capture integration check using the deployment env.
 set -euo pipefail
 
-ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
 PYTHON_BIN="${PYTHON_BIN:-$ROOT_DIR/.venv-verification-py312/bin/python}"
 
@@ -18,5 +18,4 @@ set -a; . "$ENV_FILE"; set +a
   echo "FAIL: verification Python must provide mysql.connector and oci" >&2
   exit 1
 }
-cd "$ROOT_DIR/processor"
-OCI_AUTH_MODE="${OCI_AUTH_MODE:-instance_principal}" exec "$PYTHON_BIN" verify_capture_store.py
+OCI_AUTH_MODE="${OCI_AUTH_MODE:-instance_principal}" exec "$PYTHON_BIN" "$ROOT_DIR/tests/integration/verify_capture_store.py"

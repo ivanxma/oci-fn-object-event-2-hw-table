@@ -54,25 +54,27 @@ flowchart LR
 The supported runtime is Python 3.13 or later. The UI uses Flask and Oracle
 MySQL Connector/Python `>=9.7,<10`.
 
-On an Oracle Linux deployment host configured with an OCI instance principal:
+On an Oracle Linux deployment host configured with an OCI instance principal,
+run production deployment scripts from `deploy/` and validation harnesses from
+`tests/integration/`:
 
 ```sh
-cd deploy
-./bootstrap_streaming.sh
-cp env.sh.example env.sh
-chmod 600 env.sh
-# Set OCI, database, Vault, Stream, image, rule, HTTPS, and UI values in env.sh.
-./build_processor_image.sh
-./verify_streaming_deployment.sh
+./deploy/bootstrap_streaming.sh
+# Recommended on the UI/deployment VM: discover compartment/region and choose
+# AD, VCN, subnet, Vault, enabled AES key, and database secret interactively.
+./deploy/setup_env.sh
+# Or copy env.sh.example and fill only its mandatory settings.
+./deploy/build_processor_image.sh
+./tests/integration/verify_streaming_deployment.sh
 # Optional bounded integration check against the configured durable database.
 # On OL9 it uses the project-local Python 3.12 verifier environment.
-./verify_durable_capture.sh
+./tests/integration/verify_durable_capture.sh
 # Disposable two-partition create/delete verification. It creates uniquely
 # named OCI/DB resources and removes only those exact resources afterward.
-./verify_parallel_flow.sh
-./deploy_ui.sh
+./tests/integration/verify_parallel_flow.sh
+./deploy/deploy_ui.sh
 # Only after the documented full verification gate:
-./deploy_processor.sh
+./deploy/deploy_processor.sh
 ```
 
 `build_processor_image.sh` builds and pushes the non-root processor image using
@@ -85,6 +87,13 @@ The selected Vault secret must be a JSON object containing `host`, `port`,
 `user`, `credential`, and `database`; optional `control_database` and
 `stream_data_database` fields keep control and growing durable data separate.
 Plain-text password-only Vault secrets are not accepted.
+The selected Vault and key become the default choices in the Database Secret
+tab; they are OCIDs, not secret material.
+All `stream_db` and `stream_data` initialization DDL is stored under
+`loader_core/sql/`, `processor/sql/`, or `ui/myapp/sql/`; see the external
+database schema inventory in `docs/technical-details.md`.
+Unit tests, integration harnesses, and disposable SQL fixtures live under
+`tests/`; production processor images do not copy them.
 
 Before use, confirm:
 

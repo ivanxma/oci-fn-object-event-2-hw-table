@@ -237,6 +237,27 @@ Required OCI and image values are defined in the ignored `deploy/env.sh`:
 | Database | `DB_SECRET_OCID` |
 | Loader | `WRITER_WORKERS`, `BATCH_ROWS`, `OBJECT_STORAGE_RANGE_BYTES`, `OBJECT_STORAGE_READ_TIMEOUT_SECONDS` |
 
+## External database schema inventory
+
+Control and durable database objects are initialized only from repository SQL
+files. Python loads these files, substitutes validated schema/table identifiers
+where documented, and executes the resulting statements.
+
+| Database/object | External SQL |
+|---|---|
+| Control database, `object_storage_mappings`, `target_batch_sequences`, `source_object_batches` | `loader_core/sql/init_control_schema.sql` |
+| Compatibility columns for an older `object_storage_mappings` table | `loader_core/sql/control_migrations/*.sql` |
+| UI-owned mapping bootstrap | `ui/myapp/sql/init_mapping_control.sql` and `ui/myapp/sql/mapping_migrations/*.sql` |
+| `stream_message_capture`, `stream_partition_checkpoint`, `stream_event_tx_log` | `processor/sql/init_stream_capture.sql` |
+| Durable retry/processing compatibility columns | `processor/sql/migrate_stream_capture_retry.sql`, `processor/sql/migrate_stream_capture_processing.sql` |
+| `stream_message_archive_partitions` registry | `ui/myapp/sql/init_stream_message_archive.sql` |
+| Each physical year/month/week archive table | `ui/myapp/sql/init_stream_message_archive_partition.sql` |
+
+The processor image copies both `processor/sql/` and `loader_core/sql/`.
+Dynamic target staging tables remain runtime-generated because their names and
+definitions must match the operator-selected mapped target table; they are not
+control or durable-schema initialization objects.
+
 Only these seven values are passed to a processor container:
 
 ```text
@@ -251,9 +272,23 @@ WRITER_WORKERS
 
 The Vault secret must be a complete JSON bundle. Password-only secrets and raw
 database connection environment variables are not supported by the processor.
+`DB_HOST`, `DB_USER`, and `DB_NAME` in `env.sh` are optional UI form/display
+defaults and are not processor deployment prerequisites.
 OCI Container Instances use resource-principal authentication. The build VM
 pushes to OCIR using its instance-principal credential helper; no registry
 authentication token is used.
+
+On the OCI UI/deployment VM, run `deploy/setup_env.sh` to generate `env.sh`
+with mode `0600`. It uses only the VM instance principal, defaults the
+compartment and region from instance metadata, and prompts the operator to
+choose an availability domain, VCN, subnet, Vault, symmetric encryption key,
+and active database JSON secret. It also derives the OCIR namespace and image
+URL, generates `FLASK_SECRET_KEY`, and records the chosen Vault/network OCIDs.
+Only enabled AES keys are offered. `deploy_ui.sh` passes the selected Vault and
+key OCIDs as non-secret UI defaults, so the Database Secret tab preselects them;
+the operator can still choose another permitted Vault or key.
+Use `--output PATH` for a different destination and `--force` only when an
+existing local environment file is intentionally being replaced.
 
 ## IAM baseline
 
@@ -290,8 +325,8 @@ On the Oracle Linux validation VM:
 cd /home/opc/oci-object-event-2-table
 ./deploy/bootstrap_streaming.sh
 ./deploy/build_processor_image.sh
-./deploy/verify_streaming_deployment.sh
-./deploy/verify_durable_capture.sh
+./tests/integration/verify_streaming_deployment.sh
+./tests/integration/verify_durable_capture.sh
 ./deploy/deploy_ui.sh
 ./deploy/deploy_processor.sh
 ```
@@ -308,7 +343,7 @@ Before a production deployment:
 3. Run durable idempotency, retry, completion, and interrupted-processing
    recovery verification.
 4. Run FIFO create/delete and confirm that delete removes the owned partition.
-5. Run `deploy/verify_parallel_flow.sh`; it creates disposable two-partition
+5. Run `tests/integration/verify_parallel_flow.sh`; it creates disposable two-partition
    resources, verifies 10 creates, deletes five, deletes the remaining five,
    checks durable/transaction state, and cleans its exact resources.
 6. Authenticate over HTTPS and load Flow, Streaming, Resource Mapping, Event

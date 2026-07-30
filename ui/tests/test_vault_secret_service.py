@@ -33,6 +33,27 @@ class VaultSecretServiceTest(unittest.TestCase):
                 service.list_active_secrets()
         self.assertNotIn("opc-request-id", str(raised.exception))
 
+    def test_key_choices_include_only_enabled_symmetric_keys(self):
+        service = VaultSecretService(compartment_id="ocid1.compartment.test", region="uk-london-1")
+        records = [
+            SimpleNamespace(id="ocid1.key.aes", display_name="database-key", lifecycle_state="ENABLED", algorithm="AES"),
+            SimpleNamespace(id="ocid1.key.rsa", display_name="signing-key", lifecycle_state="ENABLED", algorithm="RSA"),
+            SimpleNamespace(id="ocid1.key.old", display_name="old-key", lifecycle_state="DISABLED", algorithm="AES"),
+        ]
+        oci = SimpleNamespace(
+            auth=SimpleNamespace(signers=SimpleNamespace(InstancePrincipalsSecurityTokenSigner=lambda: object())),
+            pagination=SimpleNamespace(list_call_get_all_results=lambda *_args, **_kwargs: SimpleNamespace(data=records)),
+            key_management=SimpleNamespace(
+                KmsVaultClient=lambda *_args, **_kwargs: SimpleNamespace(
+                    get_vault=lambda _vault_id: SimpleNamespace(data=SimpleNamespace(management_endpoint="https://kms.example"))
+                ),
+                KmsManagementClient=lambda *_args, **_kwargs: SimpleNamespace(list_keys=object()),
+            ),
+        )
+        with patch.dict("sys.modules", {"oci": oci}):
+            found = service.list_active_keys("ocid1.vault.test")
+        self.assertEqual([(item.name, item.id) for item in found], [("database-key", "ocid1.key.aes")])
+
     def test_create_database_secret_encodes_json_without_returning_value(self):
         service = VaultSecretService(compartment_id="ocid1.compartment.test", region="uk-london-1")
         created = []

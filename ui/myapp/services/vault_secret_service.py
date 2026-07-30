@@ -110,7 +110,15 @@ class VaultSecretService:
             endpoint = vault_client.get_vault(vault_id).data.management_endpoint
             client = oci.key_management.KmsManagementClient({"region": self.region}, signer=signer, service_endpoint=endpoint)
             records = oci.pagination.list_call_get_all_results(client.list_keys, compartment_id=self.compartment_id).data
-            return sorted([VaultKeyRecord(str(item.id), str(item.display_name)) for item in records if str(getattr(item, "lifecycle_state", "")).upper() == "ENABLED"], key=lambda item: item.name.lower())
+            return sorted(
+                [
+                    VaultKeyRecord(str(item.id), str(item.display_name))
+                    for item in records
+                    if str(getattr(item, "lifecycle_state", "")).upper() == "ENABLED"
+                    and str(getattr(item, "algorithm", "")).upper() == "AES"
+                ],
+                key=lambda item: item.name.lower(),
+            )
         except Exception as error:
             raise VaultSecretError("Could not list Vault encryption keys. Confirm the UI instance principal has 'read keys' permission.") from error
 

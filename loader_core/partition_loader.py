@@ -19,7 +19,11 @@ import mysql.connector
 
 
 IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+MIGRATION_COLUMN = re.compile(r"^\s*--\s*migration-column:\s*([A-Za-z_][A-Za-z0-9_]*)\s*$", re.MULTILINE)
 LOAD_LEASE_SECONDS = int(os.environ.get("LOAD_LEASE_SECONDS", "120"))
+SQL_DIRECTORY = Path(__file__).resolve().parent / "sql"
+CONTROL_SCHEMA_SQL = SQL_DIRECTORY / "init_control_schema.sql"
+CONTROL_MIGRATIONS_DIRECTORY = SQL_DIRECTORY / "control_migrations"
 
 
 def control_database() -> str:
@@ -107,47 +111,57 @@ def source_key(mapping_id: int, source: dict[str, str]) -> bytes:
     return hashlib.sha256(identity.encode("utf-8")).digest()
 
 
+def control_schema_statements(path: Path = CONTROL_SCHEMA_SQL) -> tuple[str, ...]:
+    """Load repository-owned control DDL and bind the validated schema name."""
+    database = control_database()
+    try:
+        script = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise RuntimeError(f"Could not read control schema SQL file: {path.name}.") from error
+    script = script.replace("__CONTROL_DATABASE__", quote_identifier(database, "control database"))
+    statements = tuple(
+        statement.strip()
+        for statement in re.sub(r"^\s*--.*$", "", script, flags=re.MULTILINE).split(";")
+        if statement.strip()
+    )
+    if len(statements) != 4:
+        raise RuntimeError("Control schema SQL must contain the database and three table initialization statements.")
+    return statements
+
+
+def control_migration(path: Path) -> tuple[str, str]:
+    """Return a declared mapping column and its single external ALTER statement."""
+    try:
+        script = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise RuntimeError(f"Could not read control migration SQL file: {path.name}.") from error
+    match = MIGRATION_COLUMN.search(script)
+    if not match:
+        raise RuntimeError(f"Control migration {path.name} does not declare its column.")
+    column = match.group(1)
+    script = script.replace("__CONTROL_DATABASE__", quote_identifier(control_database(), "control database"))
+    statements = tuple(
+        statement.strip()
+        for statement in re.sub(r"^\s*--.*$", "", script, flags=re.MULTILINE).split(";")
+        if statement.strip()
+    )
+    if len(statements) != 1:
+        raise RuntimeError(f"Control migration {path.name} must contain exactly one statement.")
+    return column, statements[0]
+
+
 def ensure_control_tables(db: Database) -> None:
     with db.connection() as connection:
         cursor = connection.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {quote_identifier(control_database(), 'control database')} CHARACTER SET utf8mb4")
-        # Mapping metadata is owned by the UI. The processor only ensures the
-        # current Stream mapping contract and its bounded batch-control tables.
-        mapping_table = control_table('object_storage_mappings')
-        cursor.execute(f"CREATE TABLE IF NOT EXISTS {mapping_table} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, compartment_name VARCHAR(255) NOT NULL, bucket_name VARCHAR(255) NOT NULL, resource_name_pattern VARCHAR(1024) NOT NULL, target_database VARCHAR(64) NOT NULL, target_table VARCHAR(64) NOT NULL, worker_threads SMALLINT UNSIGNED NOT NULL DEFAULT 4, event_rule_id VARCHAR(255) NULL, stream_id VARCHAR(255) NULL, processing_mode ENUM('FIFO','PARALLEL') NOT NULL DEFAULT 'FIFO', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
-        for column, definition in (
-            ("worker_threads", "SMALLINT UNSIGNED NOT NULL DEFAULT 4"),
-            ("event_rule_id", "VARCHAR(255) NULL"),
-            ("stream_id", "VARCHAR(255) NULL"),
-            ("processing_mode", "ENUM('FIFO','PARALLEL') NOT NULL DEFAULT 'FIFO'"),
-        ):
+        for statement in control_schema_statements():
+            cursor.execute(statement)
+        for migration_path in sorted(CONTROL_MIGRATIONS_DIRECTORY.glob("*.sql")):
+            column, statement = control_migration(migration_path)
             cursor.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=%s AND table_name='object_storage_mappings' AND column_name=%s", (control_database(), column))
             if not cursor.fetchone()[0]:
-                cursor.execute(f"ALTER TABLE {mapping_table} ADD COLUMN {quote_identifier(column, 'mapping column')} {definition}")
-        cursor.execute(
-            f"""CREATE TABLE IF NOT EXISTS {control_table('target_batch_sequences')} (
-                target_database VARCHAR(64) NOT NULL,
-                target_table VARCHAR(64) NOT NULL,
-                next_batch_num BIGINT UNSIGNED NOT NULL,
-                PRIMARY KEY (target_database, target_table)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
-        )
-        cursor.execute(
-            f"""CREATE TABLE IF NOT EXISTS {control_table('source_object_batches')} (
-                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                mapping_id BIGINT UNSIGNED NOT NULL,
-                bucket_name VARCHAR(255) NOT NULL,
-                resource_name VARCHAR(1024) NOT NULL,
-                target_database VARCHAR(64) NOT NULL,
-                target_table VARCHAR(64) NOT NULL,
-                batch_num BIGINT UNSIGNED NOT NULL,
-                source_key BINARY(32) NOT NULL,
-                object_version VARCHAR(255) NOT NULL,
-                lifecycle_state VARCHAR(20) NOT NULL,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_source_object (mapping_id, source_key)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
-        )
+                cursor.execute(statement)
+
+
 def resolve_mapping(db: Database, source: dict[str, str]) -> dict[str, Any]:
     with db.connection() as connection:
         cursor = connection.cursor(dictionary=True, buffered=True)

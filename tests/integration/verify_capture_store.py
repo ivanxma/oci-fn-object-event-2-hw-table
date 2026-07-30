@@ -5,7 +5,12 @@ retry/completion, then removes only that record and its checkpoint.
 """
 from __future__ import annotations
 
+import sys
 import uuid
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "processor"))
 
 from database import connect
 from message_store import capture, claim_next, complete, ensure_schema, fail

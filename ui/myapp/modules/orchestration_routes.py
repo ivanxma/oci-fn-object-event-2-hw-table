@@ -22,7 +22,8 @@ def _orchestration_service() -> ContainerOrchestrationService:
 @login_required
 def index():
     vault_secrets, vaults, vault_keys = [], [], []
-    selected_vault_id = request.args.get("vault_id", "")
+    selected_vault_id = request.args.get("vault_id", "").strip() or current_app.config["VAULT_ID"]
+    selected_key_id = current_app.config["VAULT_KEY_ID"] if selected_vault_id == current_app.config["VAULT_ID"] else ""
     mappings, streams, deployments = [], [], []
     managed_state = request.args.get("managed_state", "ALL").upper()
     active_tab = request.args.get("tab", "deployment").lower()
@@ -62,7 +63,8 @@ def index():
             flash(f"OCI Vault encryption-key choices are unavailable: {error}", "warning")
     return render_dashboard(
         "orchestration.html", active_page="orchestration", active_tab=active_tab, managed_state=managed_state, mappings=mappings,
-        streams=streams, deployments=deployments, vault_secrets=vault_secrets, vaults=vaults, vault_keys=vault_keys, selected_vault_id=selected_vault_id,
+        streams=streams, deployments=deployments, vault_secrets=vault_secrets, vaults=vaults, vault_keys=vault_keys,
+        selected_vault_id=selected_vault_id, selected_key_id=selected_key_id,
         settings=_orchestration_service().settings, replacement=replacement,
         orchestration_enabled=current_app.config["OCI_CONTAINER_ORCHESTRATION_ENABLED"],
     )

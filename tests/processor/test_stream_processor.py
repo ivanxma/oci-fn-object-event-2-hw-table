@@ -1,6 +1,11 @@
 import unittest
 import base64
 import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "processor"))
 
 from stream_processor import assigned_partitions, capture_batch, decode_stream_message, is_expired_cursor_error, process_one, validate_mode
 from vault_config import oci_signer, parse_secret_content, stream_data_database_config

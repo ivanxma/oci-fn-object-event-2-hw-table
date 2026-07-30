@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 PROCESSOR = ROOT / "processor"
+FIXTURES = ROOT / "tests" / "fixtures" / "sql"
 sys.path.insert(0, str(PROCESSOR))
 
 import mysql.connector
@@ -166,7 +167,7 @@ class ParallelVerification:
         print(f"PASS: parallel Stream contract: {stream.name} has 2 ACTIVE partitions")
 
     def create_target(self) -> None:
-        script = PROCESSOR / "sql" / "create_employees_parallel_verification.sql"
+        script = FIXTURES / "create_employees_parallel_verification.sql"
         sql = statements(
             script,
             {
