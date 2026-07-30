@@ -225,15 +225,19 @@ class ContainerOrchestrationService:
                 return getattr(value, name, default)
 
             container_summaries = list(getattr(item, "containers", []) or [])
-            if not container_summaries and hasattr(client, "list_containers"):
+            if hasattr(client, "list_containers"):
                 try:
-                    container_summaries = oci.pagination.list_call_get_all_results(
+                    listed_containers = oci.pagination.list_call_get_all_results(
                         client.list_containers,
                         compartment_id=self.settings.compartment_id,
                         container_instance_id=deployment_id,
                     ).data
+                    if listed_containers:
+                        # Instance GET may return skeletal summaries; the list
+                        # endpoint includes image and resource-principal state.
+                        container_summaries = listed_containers
                 except Exception:
-                    container_summaries = []
+                    pass
             container_records = []
             for summary in container_summaries:
                 container = summary
