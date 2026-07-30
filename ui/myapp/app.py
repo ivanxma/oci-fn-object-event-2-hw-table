@@ -38,7 +38,6 @@ def create_app(test_config: dict | None = None) -> Flask:
         PROFILE_SETTINGS=profile_settings,
         SSH_KEY_FOLDER=os.environ.get("SSH_KEY_FOLDER", str(Path(app.instance_path) / "profile_ssh_keys")),
         MAX_CONTENT_LENGTH=25 * 1024 * 1024,
-        LOADER_DATABASE=os.environ.get("LOADER_DATABASE", os.environ.get("DB_NAME", "")),
         CONTROL_DATABASE=os.environ.get("CONTROL_DATABASE", ""),
         STREAM_USER=os.environ.get("STREAM_USER", "streamuser"),
         OCI_COMPARTMENT_ID=os.environ.get("OCI_COMPARTMENT_ID", ""),
@@ -71,13 +70,10 @@ def create_app(test_config: dict | None = None) -> Flask:
         Path(app.config["PROFILE_SETTINGS"]),
     )
     persisted_ui = app.extensions["profile_store"].ui_configuration()
-    for key in ("LOADER_DATABASE", "CONTROL_DATABASE", "STREAM_DATA_DB_NAME", "STREAM_USER"):
+    for key in ("CONTROL_DATABASE", "STREAM_DATA_DB_NAME", "STREAM_USER"):
         if persisted_ui.get(key):
             app.config[key] = str(persisted_ui[key])
             os.environ[key] = str(persisted_ui[key])
-    if persisted_ui.get("LOADER_DATABASE"):
-        app.config["DB_NAME"] = str(persisted_ui["LOADER_DATABASE"])
-        os.environ["DB_NAME"] = str(persisted_ui["LOADER_DATABASE"])
     app.extensions["session_store"] = SessionStore()
 
     app.register_blueprint(auth_bp)

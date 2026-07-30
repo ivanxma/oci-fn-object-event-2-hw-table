@@ -19,15 +19,14 @@ ACCOUNT = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 
 def _databases(form) -> dict[str, str]:
     values = {
-        "LOADER_DATABASE": validate_identifier(form.get("loader_database", ""), "loader database"),
         "CONTROL_DATABASE": validate_identifier(form.get("control_database", ""), "control database"),
         "STREAM_DATA_DB_NAME": validate_identifier(form.get("stream_data_database", ""), "stream data database"),
         "STREAM_USER": (form.get("stream_user", "") or "").strip(),
     }
     if not ACCOUNT.fullmatch(values["STREAM_USER"]):
         raise ValueError("Stream user must start with a letter and contain only letters, numbers, or underscores (32 characters maximum).")
-    if len({values["LOADER_DATABASE"], values["CONTROL_DATABASE"], values["STREAM_DATA_DB_NAME"]}) < 3:
-        raise ValueError("Loader, control, and stream data databases must be separate.")
+    if values["CONTROL_DATABASE"] == values["STREAM_DATA_DB_NAME"]:
+        raise ValueError("Control and stream data databases must be separate.")
     return values
 
 
@@ -37,9 +36,6 @@ def _apply(values: dict[str, str]) -> None:
     for key, value in values.items():
         current_app.config[key] = value
         os.environ[key] = value
-    # DB_NAME is the legacy processor/loader alias.
-    current_app.config["DB_NAME"] = values["LOADER_DATABASE"]
-    os.environ["DB_NAME"] = values["LOADER_DATABASE"]
 
 
 def _split_sql(path: Path, replacement: dict[str, str] | None = None) -> list[str]:
@@ -53,7 +49,7 @@ def _split_sql(path: Path, replacement: dict[str, str] | None = None) -> list[st
 def _initialize(mysql, values: dict[str, str]) -> None:
     with mysql.connection() as connection:
         cursor = connection.cursor()
-        for database in (values["LOADER_DATABASE"], values["CONTROL_DATABASE"], values["STREAM_DATA_DB_NAME"]):
+        for database in (values["CONTROL_DATABASE"], values["STREAM_DATA_DB_NAME"]):
             cursor.execute(f"CREATE DATABASE IF NOT EXISTS {quote_identifier(database, 'database')} CHARACTER SET utf8mb4")
         control = quote_identifier(values["CONTROL_DATABASE"], "control database")
         for statement in _split_sql(ROOT / "loader_core/sql/init_control_schema.sql", {"__CONTROL_DATABASE__": control}):
@@ -80,7 +76,7 @@ def _initialize(mysql, values: dict[str, str]) -> None:
 def _create_stream_user(mysql, values: dict[str, str], password: str, targets: list[str]) -> None:
     if not password:
         raise ValueError("Stream user password is required for user creation or rotation.")
-    databases = {values["LOADER_DATABASE"], values["CONTROL_DATABASE"], values["STREAM_DATA_DB_NAME"], *targets}
+    databases = {values["CONTROL_DATABASE"], values["STREAM_DATA_DB_NAME"], *targets}
     with mysql.connection() as connection:
         cursor = connection.cursor()
         account = "'" + values["STREAM_USER"].replace("\\", "\\\\").replace("'", "\\'") + "'@'%'"
@@ -96,7 +92,6 @@ def _create_stream_user(mysql, values: dict[str, str], password: str, targets: l
 @login_required
 def manage():
     values = {
-        "LOADER_DATABASE": current_app.config.get("LOADER_DATABASE") or os.environ.get("DB_NAME", "loader_db"),
         "CONTROL_DATABASE": current_app.config.get("CONTROL_DATABASE") or os.environ.get("CONTROL_DATABASE", "stream_db"),
         "STREAM_DATA_DB_NAME": current_app.config.get("STREAM_DATA_DB_NAME") or os.environ.get("STREAM_DATA_DB_NAME", "stream_data"),
         "STREAM_USER": current_app.config.get("STREAM_USER") or os.environ.get("STREAM_USER", "streamuser"),

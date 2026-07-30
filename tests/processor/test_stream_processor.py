@@ -58,7 +58,7 @@ class ProcessorModeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "base64 JSON"):
             parse_secret_content(encoded)
 
-    def test_stream_data_database_can_be_separated_from_loader_database(self):
+    def test_stream_data_database_can_be_separated_from_default_connection_database(self):
         self.assertEqual(
             stream_data_database_config({"database": "stream_db", "stream_data_database": "stream_data"})["database"],
             "stream_data",

@@ -125,11 +125,12 @@ def main() -> None:
         raise ValueError("OCI_STREAM_ID is required.")
     validate_mode(mode, int(os.environ.get("EXPECTED_PARTITION_COUNT", "0")), int(os.environ.get("PROCESSOR_REPLICA_COUNT", "0")))
     partitions = assigned_partitions(mode, int(os.environ["EXPECTED_PARTITION_COUNT"]), os.environ.get("PROCESSOR_PARTITIONS", ""))
-    loader_database_config = load_database_config()
-    # The inherited loader reads DB_* process variables.  Keep it pointed at
-    # its control database while the durable queue has its own connection.
-    apply_database_environment(loader_database_config)
-    connection = connect(stream_data_database_config(loader_database_config))
+    database_config = load_database_config()
+    # The event loader resolves each mapped target database from control state;
+    # the Vault bundle's base database is only a connection fallback. Keep the
+    # inherited loader pointed at the configured control database.
+    apply_database_environment(database_config)
+    connection = connect(stream_data_database_config(database_config))
     try:
         ensure_schema(connection)
         connection.commit()
