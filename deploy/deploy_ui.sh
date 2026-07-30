@@ -138,14 +138,14 @@ EXISTING_UI_IMAGE=$(
     head -1
 )
 if [[ -n "$EXISTING_UI_IMAGE" ]]; then
-  sudo podman pull --authfile "$REGISTRY_AUTH_FILE" "$UI_IMAGE"
+  sudo env "PATH=$PATH" podman pull --authfile "$REGISTRY_AUTH_FILE" "$UI_IMAGE"
 else
   sudo podman build --tag "$UI_IMAGE" --file "$ROOT_DIR/ui/Dockerfile" \
     --build-arg "RELEASE_VERSION=$RELEASE_VERSION" --build-arg "GIT_SHA=$GIT_SHA" \
     --build-arg "SOURCE_BRANCH=$SOURCE_BRANCH" --build-arg "BUILD_UTC=$BUILD_UTC" \
     --build-arg "UI_IMAGE_NAME=$UI_REGISTRY_IMAGE_NAME" --build-arg "UI_IMAGE_TAG=$UI_REGISTRY_IMAGE_TAG" \
     --build-arg "CONFIG_SCHEMA_VERSION=${CONFIG_SCHEMA_VERSION:-2}" "$ROOT_DIR/ui"
-  sudo podman push --authfile "$REGISTRY_AUTH_FILE" "$UI_IMAGE"
+  sudo env "PATH=$PATH" podman push --authfile "$REGISTRY_AUTH_FILE" "$UI_IMAGE"
 fi
 
 SERVICE_FILE="/etc/systemd/system/${UI_SERVICE_NAME}.service"

@@ -27,7 +27,14 @@ class UiDeploymentContractTest(unittest.TestCase):
             'UI_REGISTRY_IMAGE_NAME="$REGION_KEY.ocir.io/$OBJECT_STORAGE_NAMESPACE/$OCI_REGISTRY_REPOSITORY"',
             script,
         )
-        self.assertIn('sudo podman push --authfile "$REGISTRY_AUTH_FILE" "$UI_IMAGE"', script)
+        self.assertIn(
+            'sudo env "PATH=$PATH" podman push --authfile "$REGISTRY_AUTH_FILE" "$UI_IMAGE"',
+            script,
+        )
+        self.assertIn(
+            'sudo env "PATH=$PATH" podman pull --authfile "$REGISTRY_AUTH_FILE" "$UI_IMAGE"',
+            script,
+        )
         self.assertIn('--image-name "$UI_REGISTRY_IMAGE_NAME"', script)
 
 
