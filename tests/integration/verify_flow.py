@@ -120,6 +120,9 @@ class FlowVerification:
         self.managed_stream = os.environ.get("FLOW_MANAGED_STREAM", "false").lower() == "true"
         resume_mapping = os.environ.get("FLOW_RESUME_MAPPING_ID", "").strip()
         self.mapping_id: int | None = int(resume_mapping) if resume_mapping else None
+        self.resume_phase = os.environ.get("FLOW_RESUME_PHASE", "CREATE").strip().upper()
+        if self.resume_phase not in {"CREATE", "DELETE_SUBSET", "DELETE_REMAINING"}:
+            raise ValueError("FLOW_RESUME_PHASE must be CREATE, DELETE_SUBSET, or DELETE_REMAINING.")
         self.stream_id = (
             required("FLOW_RESUME_STREAM_ID")
             if self.managed_stream and self.mapping_id is not None
@@ -659,8 +662,15 @@ class FlowVerification:
                 )
                 self.create_started = time.monotonic()
                 self.metrics["resumed"] = True
-            created = self.wait_for_create_flow()
-            deleted = self.delete_subset_and_verify()
+            if self.mapping_id is not None and self.resume_phase != "CREATE":
+                created = {"resumed_after_create": True}
+                print(f"PASS: resuming at {self.resume_phase} checkpoint", flush=True)
+            else:
+                created = self.wait_for_create_flow()
+            if self.mapping_id is not None and self.resume_phase == "DELETE_REMAINING":
+                deleted = {"resumed_after_first_five_deletes": True}
+            else:
+                deleted = self.delete_subset_and_verify()
             self.delete_remaining_and_verify()
             print(
                 f"PASS: {self.mode} flow verified "
