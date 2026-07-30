@@ -7,6 +7,9 @@ ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
 set -a; . "$ENV_FILE"; set +a
 source "$ROOT_DIR/deploy/oci_context.sh"
 oci_context_resolve
+PROCESSOR_SHAPE="${PROCESSOR_SHAPE:-CI.Standard.E4.Flex}"
+PROCESSOR_OCPUS="${PROCESSOR_OCPUS:-1}"
+PROCESSOR_MEMORY_GBS="${PROCESSOR_MEMORY_GBS:-16}"
 for value in COMPARTMENT_ID REGION SUBNET_ID DB_SECRET_OCID PROCESSOR_IMAGE_TAG PROCESSOR_SHAPE PROCESSOR_OCPUS PROCESSOR_MEMORY_GBS; do
   [[ -n "${!value:-}" ]] || { echo "FAIL: $value is required" >&2; exit 1; }
 done
