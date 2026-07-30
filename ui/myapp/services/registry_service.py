@@ -24,6 +24,15 @@ class RegistryService:
         except Exception as error:
             raise RegistryError(f"Could not authenticate to OCI Container Registry: {type(error).__name__}: {error}") from error
 
+    def _namespace_value(self) -> str:
+        if self.namespace.strip():
+            return self.namespace.strip()
+        try:
+            signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+            return str(oci.object_storage.ObjectStorageClient({"region": self.region}, signer=signer).get_namespace().data)
+        except Exception as error:
+            raise RegistryError(f"Could not resolve the OCI Object Storage namespace for image references: {type(error).__name__}: {error}") from error
+
     @staticmethod
     def _field(value: Any, name: str, default: Any = "") -> Any:
         return value.get(name, default) if isinstance(value, dict) else getattr(value, name, default)
@@ -55,7 +64,7 @@ class RegistryService:
                 repository_name=repository_name,
             ).data
             region_key = self.region_key.strip()
-            namespace = self.namespace.strip()
+            namespace = self._namespace_value()
             prefix = f"{region_key}.ocir.io/{namespace}/{repository_name}:" if region_key and namespace else ""
             return [
                 {
