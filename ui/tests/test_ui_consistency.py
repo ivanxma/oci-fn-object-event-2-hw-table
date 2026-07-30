@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 TEMPLATES = Path(__file__).resolve().parents[1] / "myapp" / "templates"
+STYLESHEET = Path(__file__).resolve().parents[1] / "myapp" / "static" / "app.css"
 
 
 class UIConsistencySourceTest(unittest.TestCase):
@@ -34,6 +35,18 @@ class UIConsistencySourceTest(unittest.TestCase):
         source = (TEMPLATES / "mappings.html").read_text(encoding="utf-8")
         self.assertIn(">OCI Rules{% if active_tab == 'rules' %}", source)
         self.assertNotIn("else 'OCI'", source)
+
+    def test_settings_actions_align_with_their_fields(self) -> None:
+        source = (TEMPLATES / "settings.html").read_text(encoding="utf-8")
+        stylesheet = STYLESHEET.read_text(encoding="utf-8")
+        self.assertEqual(source.count("form-actions field-aligned-actions"), 2)
+        self.assertIn("Save configuration", source)
+        self.assertIn("Create / update stream user", source)
+        self.assertIn(".field-aligned-actions{align-items:flex-start;padding-top:21px}", stylesheet)
+        self.assertIn(
+            "@media(max-width:760px){.field-aligned-actions{padding-top:0}}",
+            stylesheet,
+        )
 
 
 if __name__ == "__main__":
