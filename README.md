@@ -131,12 +131,32 @@ more than one user-data schema, grant the required privileges on each approved
 target schema. Store this connection in OCI Vault as the processor JSON secret;
 do not put its password in `env.sh`.
 
-For a fresh OL9 validation VM, create a mode-`0600` config containing only the
-existing Vault secret OCID and Object Storage bucket name, then run:
+For a fresh OL9 validation VM, create a mode-`0600` password file containing
+only the database password and a separate mode-`0600` installer config with
+the bucket, database host/user, and absolute password-file path:
+
+```sh
+export OBJECT_STORAGE_BUCKET_NAME='existing-bucket'
+export DB_HOST='mysql-private-host'
+export DB_PORT='3306'
+export DB_USER='stream_user'
+export DB_PASSWORD_FILE='/absolute/path/to/db-password'
+```
+
+Add `DB_NAME`, `CONTROL_DATABASE`, `STREAM_DATA_DB_NAME`, and
+`STAGING_DATABASE` only when they differ from the documented defaults. If the
+compartment contains multiple active Vaults or AES keys, add the selected
+`VAULT_ID` and `VAULT_KEY_ID`; a unique Vault/key pair is selected
+automatically. Then run:
 
 ```sh
 ./deploy/install_validation_vm.sh --config /path/to/validation-install.env
 ```
+
+The installer creates or updates `stream_hw_secret_key`, atomically writes its
+OCID (not its content) into ignored `deploy/env.sh`, and removes the password
+file. Supplying an existing `DB_SECRET_OCID` is supported for reuse or
+migration, but is not the clean-install verification path.
 
 Control, durable, and staging database names default to `stream_db`,
 `stream_data`, and `staging_db`; override them in the config only when the

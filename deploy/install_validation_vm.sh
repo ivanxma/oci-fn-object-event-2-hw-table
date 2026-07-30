@@ -12,14 +12,24 @@ usage() {
 Usage: ./deploy/install_validation_vm.sh --config PATH
 
 The config is a mode-0600 shell file containing at least:
-  export DB_SECRET_OCID='ocid1.vaultsecret...'
   export OBJECT_STORAGE_BUCKET_NAME='existing-bucket'
+  export DB_HOST='mysql-private-host'
+  export DB_USER='stream_user'
+  export DB_PASSWORD_FILE='/absolute/path/to/mode-0600-password-file'
 
-Optional values include CONTROL_DATABASE (default: stream_db),
+The installer creates or updates the default OCI Vault database secret
+stream_hw_secret_key and removes DB_PASSWORD_FILE after env.sh is written.
+When the compartment has multiple active Vaults or AES keys, also provide
+VAULT_ID and VAULT_KEY_ID. An existing DB_SECRET_OCID is supported only for
+reuse/migration and is not the clean-install path.
+
+Optional values include DB_PORT (default: 3306), DB_NAME,
+CONTROL_DATABASE (default: stream_db),
 STREAM_DATA_DB_NAME (default: stream_data), STAGING_DATABASE (default:
 staging_db), REPOSITORY_PREFIX, PROCESSOR_IMAGE_TAG,
 GENERATE_SELF_SIGNED_CERT, UI_SERVER_NAME, and INSTALL_UI.
-Database access uses only the Vault secret OCID, and OCIR uses the instance principal.
+Runtime database access uses only the generated Vault secret OCID, and OCIR
+uses the instance principal.
 EOF
 }
 
@@ -51,10 +61,22 @@ set -a
 . "$CONFIG_FILE"
 set +a
 
-for value in DB_SECRET_OCID OBJECT_STORAGE_BUCKET_NAME; do
+for value in OBJECT_STORAGE_BUCKET_NAME; do
   [[ -n "${!value:-}" ]] || { echo "$value is required in $CONFIG_FILE." >&2; exit 1; }
 done
-[[ "$DB_SECRET_OCID" == ocid1.vaultsecret.* ]] || { echo "DB_SECRET_OCID is invalid." >&2; exit 1; }
+if [[ -n "${DB_SECRET_OCID:-}" ]]; then
+  [[ "$DB_SECRET_OCID" == ocid1.vaultsecret.* ]] || { echo "DB_SECRET_OCID is invalid." >&2; exit 1; }
+else
+  for value in DB_HOST DB_USER DB_PASSWORD_FILE; do
+    [[ -n "${!value:-}" ]] || { echo "$value is required for a clean installation." >&2; exit 1; }
+  done
+  [[ "$DB_PASSWORD_FILE" == /* ]] || { echo "DB_PASSWORD_FILE must be an absolute path." >&2; exit 1; }
+  [[ -f "$DB_PASSWORD_FILE" && ! -L "$DB_PASSWORD_FILE" ]] || { echo "DB_PASSWORD_FILE must be a regular file." >&2; exit 1; }
+  password_mode=$(stat -c '%a' "$DB_PASSWORD_FILE" 2>/dev/null || stat -f '%Lp' "$DB_PASSWORD_FILE")
+  [[ "$password_mode" == 600 ]] || { echo "DB_PASSWORD_FILE must have mode 0600." >&2; exit 1; }
+fi
+export DB_PORT="${DB_PORT:-3306}"
+export DB_NAME="${DB_NAME:-${TARGET_DATABASE:-target_db}}"
 export CONTROL_DATABASE="${CONTROL_DATABASE:-stream_db}"
 export STREAM_DATA_DB_NAME="${STREAM_DATA_DB_NAME:-stream_data}"
 export STAGING_DATABASE="${STAGING_DATABASE:-staging_db}"
@@ -63,6 +85,10 @@ export REPOSITORY_PREFIX="${REPOSITORY_PREFIX:-object-storage-heatwave-validatio
 export PROCESSOR_IMAGE_TAG="${PROCESSOR_IMAGE_TAG:-validation-$(date -u +%Y%m%d%H%M%S)}"
 export GENERATE_SELF_SIGNED_CERT="${GENERATE_SELF_SIGNED_CERT:-true}"
 "$ROOT_DIR/deploy/setup_env.sh" --non-interactive --force
+if [[ -n "${DB_PASSWORD_FILE:-}" && -e "$DB_PASSWORD_FILE" ]]; then
+  echo "Password file was not removed after Vault secret creation." >&2
+  exit 1
+fi
 
 sudo dnf install -y python3.12 python3.12-pip
 VERIFY_PYTHON="$ROOT_DIR/.venv-verification-py312/bin/python"

@@ -26,8 +26,10 @@ OCI calls use only --auth instance_principal. The generated file contains
 resource OCIDs and non-secret configuration; database access uses a Vault OCID.
 
 With --non-interactive, supply DB_SECRET_OCID or DB_HOST, DB_USER, and
---db-password-file. The password file must be mode 0600 and is removed only
-after the Vault secret OCID is atomically written to the generated env.sh.
+--db-password-file. A unique active Vault/AES key is selected automatically;
+otherwise supply VAULT_ID and VAULT_KEY_ID. The password file must be mode
+0600 and is removed only after the Vault secret OCID is atomically written to
+the generated env.sh.
 Compartment, region, AD, the VM VCN, Vault, and key are derived from instance
 metadata and those resources where possible. The Processor uses a private
 subnet in that same VCN. Explicit environment values take priority.
@@ -107,7 +109,13 @@ select_from_tsv() {
   done <<< "$tsv"
   if [[ "$NON_INTERACTIVE" == true ]]; then
     local selected=${!target:-}
-    [[ -n "$selected" ]] || { echo "$label is required for non-interactive setup." >&2; exit 1; }
+    if [[ -z "$selected" && ${#ids[@]} -eq 1 ]]; then
+      selected=${ids[0]}
+    fi
+    [[ -n "$selected" ]] || {
+      echo "$label is required for non-interactive setup when zero or multiple choices are available." >&2
+      exit 1
+    }
     if ((${#ids[@]} > 0)); then
       local matched=false candidate
       for candidate in "${ids[@]}"; do
