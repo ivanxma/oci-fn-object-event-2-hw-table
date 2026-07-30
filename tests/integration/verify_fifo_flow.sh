@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the disposable two-partition OCI flow using the OL9 verifier environment.
+# Run the disposable FIFO flow using the OL9 verifier environment.
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -14,6 +14,6 @@ if [[ -n "${VALIDATION_ENV_FILE:-}" ]]; then
   set -a; . "$VALIDATION_ENV_FILE"; set +a
 fi
 export OCI_AUTH_MODE=instance_principal
-export FLOW_MODE=PARALLEL
-export FLOW_TARGET_DATABASE="${FLOW_TARGET_DATABASE:-${PARALLEL_TARGET_DATABASE:-}}"
+export FLOW_MODE=FIFO
+export FLOW_TARGET_DATABASE="${FLOW_TARGET_DATABASE:-${FIFO_TARGET_DATABASE:-}}"
 exec "$PYTHON_BIN" "$ROOT_DIR/tests/integration/verify_flow.py"

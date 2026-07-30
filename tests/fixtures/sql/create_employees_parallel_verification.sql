@@ -1,4 +1,4 @@
--- Disposable target used by tests/integration/verify_parallel_flow.py.
+-- Disposable target used by tests/integration/verify_flow.py.
 CREATE DATABASE IF NOT EXISTS __TARGET_DATABASE__ CHARACTER SET utf8mb4;
 
 CREATE TABLE __TARGET_DATABASE__.__TARGET_TABLE__ (

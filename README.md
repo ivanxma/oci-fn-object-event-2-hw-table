@@ -71,6 +71,7 @@ run production deployment scripts from `deploy/` and validation harnesses from
 ./tests/integration/verify_durable_capture.sh
 # Disposable two-partition create/delete verification. It creates uniquely
 # named OCI/DB resources and removes only those exact resources afterward.
+./tests/integration/verify_fifo_flow.sh
 ./tests/integration/verify_parallel_flow.sh
 ./deploy/deploy_ui.sh
 # Only after the documented full verification gate:
@@ -94,6 +95,19 @@ All `stream_db` and `stream_data` initialization DDL is stored under
 database schema inventory in `docs/technical-details.md`.
 Unit tests, integration harnesses, and disposable SQL fixtures live under
 `tests/`; production processor images do not copy them.
+
+For a fresh OL9 validation VM, create a mode-`0600` config containing only the
+existing Vault secret OCID, processor subnet OCID, and isolated control/durable
+database names, then run:
+
+```sh
+./deploy/install_validation_vm.sh --config /path/to/validation-install.env
+```
+
+This non-interactive path bootstraps packages, derives instance/region/AD/VCN
+and Vault/key metadata, generates ignored `env.sh`, builds and pushes the
+processor with instance-principal authentication, initializes the external SQL
+schemas, runs preflight/durable verification, and deploys the HTTPS UI.
 
 Before use, confirm:
 

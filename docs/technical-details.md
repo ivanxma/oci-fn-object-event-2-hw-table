@@ -289,6 +289,11 @@ key OCIDs as non-secret UI defaults, so the Database Secret tab preselects them;
 the operator can still choose another permitted Vault or key.
 Use `--output PATH` for a different destination and `--force` only when an
 existing local environment file is intentionally being replaced.
+For unattended validation hosts, `deploy/install_validation_vm.sh --config
+PATH` runs the complete installation without prompts. The mode-`0600` config
+contains resource OCIDs and schema names only; `DB_SECRET_OCID` supplies the
+credential through Vault and registry authentication remains instance
+principal. Set `INSTALL_UI=false` to stop after image/schema verification.
 
 ## IAM baseline
 
@@ -342,7 +347,8 @@ Before a production deployment:
 2. Run the redacted deployment preflight.
 3. Run durable idempotency, retry, completion, and interrupted-processing
    recovery verification.
-4. Run FIFO create/delete and confirm that delete removes the owned partition.
+4. Run `tests/integration/verify_fifo_flow.sh`; confirm serialized create/delete
+   processing and that delete removes the owned partition.
 5. Run `tests/integration/verify_parallel_flow.sh`; it creates disposable two-partition
    resources, verifies 10 creates, deletes five, deletes the remaining five,
    checks durable/transaction state, and cleans its exact resources.

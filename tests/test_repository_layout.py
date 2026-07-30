@@ -14,6 +14,7 @@ def test_production_directories_do_not_contain_test_harnesses() -> None:
         ROOT / "deploy" / "verify_parallel_flow.sh",
         ROOT / "deploy" / "verify_durable_capture.sh",
         ROOT / "deploy" / "verify_streaming_deployment.sh",
+        ROOT / "tests" / "integration" / "verify_parallel_flow.py",
     }
     assert not [path for path in forbidden if path.exists()]
 

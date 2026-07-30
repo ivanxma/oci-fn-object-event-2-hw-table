@@ -6,10 +6,11 @@ umask 077
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUTPUT="$ROOT_DIR/deploy/env.sh"
 FORCE=false
+NON_INTERACTIVE=false
 
 usage() {
   cat <<'EOF'
-Usage: ./deploy/setup_env.sh [--output PATH] [--force]
+Usage: ./deploy/setup_env.sh [--output PATH] [--force] [--non-interactive]
 
 Discovers the current OCI VM's compartment and region, then prompts for:
   - compartment and region
@@ -20,6 +21,10 @@ Discovers the current OCI VM's compartment and region, then prompts for:
 
 OCI calls use only --auth instance_principal. The generated file contains
 resource OCIDs and configuration, never an OCI auth token or database password.
+
+With --non-interactive, supply DB_SECRET_OCID and SUBNET_ID in the environment.
+Compartment, region, AD, VCN, Vault, and key are derived from instance metadata
+and those resources where possible. Explicit environment values take priority.
 EOF
 }
 
@@ -32,6 +37,10 @@ while (($#)); do
       ;;
     --force)
       FORCE=true
+      shift
+      ;;
+    --non-interactive)
+      NON_INTERACTIVE=true
       shift
       ;;
     -h|--help)
@@ -60,6 +69,12 @@ fi
 
 prompt_required() {
   local target=$1 label=$2 default_value=${3:-} answer
+  if [[ "$NON_INTERACTIVE" == true ]]; then
+    answer=${!target:-$default_value}
+    [[ -n "$answer" ]] || { echo "$label is required for non-interactive setup." >&2; exit 1; }
+    printf -v "$target" '%s' "$answer"
+    return
+  fi
   if [[ -n "$default_value" ]]; then
     read -r -p "$label [$default_value]: " answer
     answer=${answer:-$default_value}
@@ -79,6 +94,19 @@ select_from_tsv() {
     ids+=("$item_id")
     labels+=("${item_label:-$item_id}")
   done <<< "$tsv"
+  if [[ "$NON_INTERACTIVE" == true ]]; then
+    local selected=${!target:-}
+    [[ -n "$selected" ]] || { echo "$label is required for non-interactive setup." >&2; exit 1; }
+    if ((${#ids[@]} > 0)); then
+      local matched=false candidate
+      for candidate in "${ids[@]}"; do
+        [[ "$candidate" != "$selected" ]] || { matched=true; break; }
+      done
+      [[ "$matched" == true ]] || { echo "$label is not available in the selected compartment: $selected" >&2; exit 1; }
+    fi
+    printf -v "$target" '%s' "$selected"
+    return
+  fi
   if ((${#ids[@]} == 0)); then
     prompt_required "$target" "$label OCID/name"
     return
@@ -111,6 +139,7 @@ METADATA=$(
 DEFAULT_COMPARTMENT=$(jq -r '.compartmentId // empty' <<< "${METADATA:-{}}" 2>/dev/null || true)
 DEFAULT_REGION=$(jq -r '.region // empty' <<< "${METADATA:-{}}" 2>/dev/null || true)
 DEFAULT_SERVER_NAME=$(jq -r '.hostname // .displayName // .privateIp // empty' <<< "${METADATA:-{}}" 2>/dev/null || true)
+DEFAULT_AD=$(jq -r '.availabilityDomain // empty' <<< "${METADATA:-{}}" 2>/dev/null || true)
 
 echo "OCI Object Event to MySQL environment setup"
 echo "Authentication: instance principal"
@@ -130,6 +159,21 @@ if [[ -z "$REGION_KEY" || "$REGION_KEY" == null ]]; then
   prompt_required REGION_KEY "OCIR region key"
 fi
 REGION_KEY=$(printf '%s' "$REGION_KEY" | tr '[:upper:]' '[:lower:]')
+
+if [[ "$NON_INTERACTIVE" == true ]]; then
+  CONTAINER_AVAILABILITY_DOMAIN=${CONTAINER_AVAILABILITY_DOMAIN:-$DEFAULT_AD}
+  if [[ -n "${SUBNET_ID:-}" && -z "${VCN_ID:-}" ]]; then
+    VCN_ID=$(
+      oci_json network subnet get --subnet-id "$SUBNET_ID" |
+        jq -r '.data."vcn-id" // empty'
+    )
+  fi
+  if [[ -n "${DB_SECRET_OCID:-}" && ( -z "${VAULT_ID:-}" || -z "${VAULT_KEY_ID:-}" ) ]]; then
+    SECRET_METADATA=$(oci_json vault secret get --secret-id "$DB_SECRET_OCID")
+    VAULT_ID=${VAULT_ID:-$(jq -r '.data."vault-id" // empty' <<< "$SECRET_METADATA")}
+    VAULT_KEY_ID=${VAULT_KEY_ID:-$(jq -r '.data."key-id" // empty' <<< "$SECRET_METADATA")}
+  fi
+fi
 
 AD_TSV=$(
   oci_json iam availability-domain list --compartment-id "$COMPARTMENT_ID" --all |
