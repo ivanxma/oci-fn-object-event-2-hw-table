@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from flask import Blueprint, current_app, flash, redirect, request, url_for
+from mysql.connector import Error as MySQLError
 
 from ..services.mapping_service import MappingService
 from ..services.naming import quote_identifier, validate_identifier
@@ -87,9 +88,19 @@ def _initialize(mysql, values: dict[str, str], *, replace: bool = False) -> None
             cursor.execute(statement)
 
 
-def _create_stream_user(mysql, values: dict[str, str], password: str, targets: list[str]) -> None:
+def _mapped_target_databases(mysql, control_database: str) -> list[str]:
+    with mysql.connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(f"SELECT DISTINCT target_database FROM {quote_identifier(control_database, 'control database')}.`object_storage_mappings` ORDER BY target_database")
+        return [validate_identifier(row[0], "mapped target database") for row in cursor.fetchall()]
+
+
+def _create_stream_user(mysql, values: dict[str, str], password: str) -> None:
     if not password:
         raise ValueError("Stream user password is required for user creation or rotation.")
+    targets = _mapped_target_databases(mysql, values["CONTROL_DATABASE"])
+    if not targets:
+        raise ValueError("Create at least one Resource Mapping before creating the stream user.")
     databases = {values["CONTROL_DATABASE"], values["STREAM_DATA_DB_NAME"], *targets}
     with mysql.connection() as connection:
         cursor = connection.cursor()
@@ -121,11 +132,10 @@ def manage():
                 _initialize(mysql_for_request(), values, replace=action == "reinitialize")
                 flash("Database structures rebuilt from the repository SQL files." if action == "reinitialize" else "Database structures initialized from the repository SQL files.", "success")
             elif action == "create_stream_user":
-                targets = [validate_identifier(item.strip(), "target database") for item in (request.form.get("target_databases", "")).split(",") if item.strip()]
-                _create_stream_user(mysql_for_request(), values, request.form.get("stream_password", ""), targets)
+                _create_stream_user(mysql_for_request(), values, request.form.get("stream_password", ""))
                 flash(f"Stream user {values['STREAM_USER']} created/updated and granted access.", "success")
             else:
                 flash("UI database configuration saved.", "success")
-        except (OSError, ValueError) as error:
+        except (MySQLError, OSError, ValueError) as error:
             flash(str(error), "error")
     return render_dashboard("settings.html", active_page="settings", settings=values)
