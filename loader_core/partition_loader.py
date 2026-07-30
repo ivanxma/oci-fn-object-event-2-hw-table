@@ -134,8 +134,8 @@ def control_schema_statements(path: Path = CONTROL_SCHEMA_SQL) -> tuple[str, ...
         for statement in re.sub(r"^\s*--.*$", "", script, flags=re.MULTILINE).split(";")
         if statement.strip()
     )
-    if len(statements) != 4:
-        raise RuntimeError("Control schema SQL must contain the database and three table initialization statements.")
+    if len(statements) != 5:
+        raise RuntimeError("Control schema SQL must contain the database and four table initialization statements.")
     return statements
 
 

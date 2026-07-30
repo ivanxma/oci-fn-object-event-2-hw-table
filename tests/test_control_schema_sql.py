@@ -28,12 +28,13 @@ from partition_loader import (  # noqa: E402
 def test_control_table_creation_is_external_and_complete() -> None:
     with patch.dict(os.environ, {"CONTROL_DATABASE": "stream_db"}, clear=False):
         statements = control_schema_statements()
-    assert len(statements) == 4
+    assert len(statements) == 5
     sql = "\n".join(statements)
     assert "CREATE DATABASE IF NOT EXISTS `stream_db`" in sql
     assert "CREATE TABLE IF NOT EXISTS `stream_db`.object_storage_mappings" in sql
     assert "CREATE TABLE IF NOT EXISTS `stream_db`.target_batch_sequences" in sql
     assert "CREATE TABLE IF NOT EXISTS `stream_db`.source_object_batches" in sql
+    assert "CREATE TABLE IF NOT EXISTS `stream_db`.deployment_history" in sql
     assert "__CONTROL_DATABASE__" not in sql
     assert CONTROL_SCHEMA_SQL.is_file()
 
