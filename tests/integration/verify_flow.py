@@ -118,10 +118,12 @@ class FlowVerification:
         self.memory_gbs = float(required("PROCESSOR_MEMORY_GBS"))
         self.secret_id = required("DB_SECRET_OCID")
         self.managed_stream = os.environ.get("FLOW_MANAGED_STREAM", "false").lower() == "true"
+        resume_mapping = os.environ.get("FLOW_RESUME_MAPPING_ID", "").strip()
+        self.mapping_id: int | None = int(resume_mapping) if resume_mapping else None
         self.stream_id = (
-            ""
-            if self.managed_stream
-            else required(f"{self.mode}_STREAM_ID")
+            required("FLOW_RESUME_STREAM_ID")
+            if self.managed_stream and self.mapping_id is not None
+            else ("" if self.managed_stream else required(f"{self.mode}_STREAM_ID"))
         )
         self.bucket = required("OBJECT_STORAGE_BUCKET_NAME")
         self.fixture = Path(required("PARALLEL_CSV_PATH"))
@@ -134,8 +136,6 @@ class FlowVerification:
             os.environ.get("FLOW_RESUME_TARGET_TABLE", "").strip() or f"employees_{self.mode.lower()}_{suffix}",
             "flow target table",
         )
-        resume_mapping = os.environ.get("FLOW_RESUME_MAPPING_ID", "").strip()
-        self.mapping_id: int | None = int(resume_mapping) if resume_mapping else None
         self.rule_id = os.environ.get("FLOW_RESUME_RULE_ID", "").strip()
         self.container_ids = [
             value.strip()
@@ -184,7 +184,7 @@ class FlowVerification:
         self.image_url = f"{region_key}.ocir.io/{self.namespace}/{repository}/{image_name}:{image_tag}"
 
     def create_managed_stream(self) -> None:
-        if not self.managed_stream:
+        if not self.managed_stream or self.stream_id:
             return
         details = oci.streaming.models.CreateStreamDetails(
             name=f"{self.prefix}-stream",
