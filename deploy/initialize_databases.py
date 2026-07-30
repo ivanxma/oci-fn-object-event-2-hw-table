@@ -43,6 +43,10 @@ def main() -> None:
     )
     try:
         cursor = connection.cursor()
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{durable.replace('`', '``')}` CHARACTER SET utf8mb4")
+        cursor.execute(f"USE `{durable.replace('`', '``')}`")
+        from message_store import ensure_schema
+        ensure_schema(connection)
         registry = f"`{durable}`.`stream_message_archive_partitions`"
         archive_sql = (ROOT / "ui" / "myapp" / "sql" / "init_stream_message_archive.sql").read_text(
             encoding="utf-8"
