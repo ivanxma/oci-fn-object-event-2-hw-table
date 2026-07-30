@@ -347,7 +347,8 @@ Before a production deployment:
 2. Run the redacted deployment preflight.
 3. Run durable idempotency, retry, completion, and interrupted-processing
    recovery verification.
-4. Run `tests/integration/verify_fifo_flow.sh`; confirm serialized create/delete
+4. Set `FLOW_MANAGED_STREAM=true` in the validation overlay and run
+   `tests/integration/verify_fifo_flow.sh`; confirm serialized create/delete
    processing and that delete removes the owned partition.
 5. Run `tests/integration/verify_parallel_flow.sh`; it creates disposable two-partition
    resources, verifies 10 creates, deletes five, deletes the remaining five,
@@ -360,6 +361,11 @@ Before a production deployment:
 The permanent seed partition is expected. An empty file-owned partition is
 valid only for an active header-only object. A deleted object must have a
 `DELETED` batch record and no corresponding target partition.
+
+Automated runs should use a fresh managed Stream. When an externally managed
+Stream is reused, the verifier retains durable capture rows for at least the
+Stream retention window: deleting those deduplication rows while old messages
+remain available would allow a trim-horizon cursor recovery to replay them.
 
 ## Authoritative service references
 

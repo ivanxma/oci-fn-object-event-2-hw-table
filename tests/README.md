@@ -2,8 +2,9 @@
 
 - `tests/processor/`: processor unit tests.
 - `tests/integration/`: deployment preflight and bounded OCI/MySQL verification
-  harnesses. These load ignored `deploy/env.sh`; the FIFO/Parallel verifier
-  creates disposable resources and preserves them on failure by default.
+  harnesses. These load ignored `deploy/env.sh`; set
+  `FLOW_MANAGED_STREAM=true` so the FIFO/Parallel verifier owns a fresh Stream,
+  creates disposable resources, and preserves them on failure by default.
 - `tests/fixtures/sql/`: non-production target schemas used only by integration
   verification.
 - `tests/performance/`: deterministic data generators for bounded throughput

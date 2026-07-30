@@ -117,7 +117,12 @@ class FlowVerification:
         self.ocpus = float(required("PROCESSOR_OCPUS"))
         self.memory_gbs = float(required("PROCESSOR_MEMORY_GBS"))
         self.secret_id = required("DB_SECRET_OCID")
-        self.stream_id = required(f"{self.mode}_STREAM_ID")
+        self.managed_stream = os.environ.get("FLOW_MANAGED_STREAM", "false").lower() == "true"
+        self.stream_id = (
+            ""
+            if self.managed_stream
+            else required(f"{self.mode}_STREAM_ID")
+        )
         self.bucket = required("OBJECT_STORAGE_BUCKET_NAME")
         self.fixture = Path(required("PARALLEL_CSV_PATH"))
         if not self.fixture.is_file():
@@ -177,6 +182,37 @@ class FlowVerification:
         image_tag = required("PROCESSOR_IMAGE_TAG")
         region_key = required("REGION_KEY")
         self.image_url = f"{region_key}.ocir.io/{self.namespace}/{repository}/{image_name}:{image_tag}"
+
+    def create_managed_stream(self) -> None:
+        if not self.managed_stream:
+            return
+        details = oci.streaming.models.CreateStreamDetails(
+            name=f"{self.prefix}-stream",
+            partitions=self.partition_count,
+            compartment_id=self.compartment_id,
+            retention_in_hours=24,
+            freeform_tags={
+                "managed-by": MANAGED_BY,
+                "purpose": f"{self.mode.lower()}-verification",
+            },
+        )
+        self.stream_id = str(self.stream_admin.create_stream(details).data.id)
+        wait_until(
+            f"managed {self.mode} Stream ACTIVE",
+            lambda: (
+                state
+                if (state := str(self.stream_admin.get_stream(self.stream_id).data.lifecycle_state).upper()) == "ACTIVE"
+                else (
+                    False
+                    if state not in {"FAILED", "DELETED"}
+                    else (_ for _ in ()).throw(
+                        RuntimeError(f"Managed verification Stream entered {state}")
+                    )
+                )
+            ),
+            timeout=600,
+            interval=5,
+        )
 
     def verify_contract(self) -> None:
         stream = self.stream_admin.get_stream(self.stream_id).data
@@ -525,25 +561,27 @@ class FlowVerification:
             except Exception:
                 pass
         if self.mapping_id is not None:
-            connection = connect(self.config, self.stream_data_database)
-            try:
-                cursor = connection.cursor()
-                cursor.execute(
-                    """DELETE tx FROM stream_event_tx_log tx
-                       JOIN stream_message_capture capture ON capture.id=tx.capture_id
-                      WHERE capture.stream_id=%s
-                        AND JSON_UNQUOTE(JSON_EXTRACT(capture.payload,'$.data.resourceName')) LIKE %s""",
-                    (self.stream_id, f"{self.prefix}/%"),
-                )
-                cursor.execute(
-                    """DELETE FROM stream_message_capture
-                       WHERE stream_id=%s
-                         AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.data.resourceName')) LIKE %s""",
-                    (self.stream_id, f"{self.prefix}/%"),
-                )
-                connection.commit()
-            finally:
-                connection.close()
+            if self.managed_stream:
+                connection = connect(self.config, self.stream_data_database)
+                try:
+                    cursor = connection.cursor()
+                    cursor.execute(
+                        """DELETE tx FROM stream_event_tx_log tx
+                           JOIN stream_message_capture capture ON capture.id=tx.capture_id
+                          WHERE capture.stream_id=%s""",
+                        (self.stream_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM stream_message_capture WHERE stream_id=%s",
+                        (self.stream_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM stream_partition_checkpoint WHERE stream_id=%s",
+                        (self.stream_id,),
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
             connection = connect(self.config, self.control_database)
             try:
                 cursor = connection.cursor()
@@ -571,11 +609,29 @@ class FlowVerification:
             connection.commit()
         finally:
             connection.close()
+        if self.managed_stream and self.stream_id:
+            self.stream_admin.delete_stream(self.stream_id)
+
+            def stream_deleted():
+                try:
+                    return str(
+                        self.stream_admin.get_stream(self.stream_id).data.lifecycle_state
+                    ).upper() == "DELETED"
+                except Exception as error:
+                    return getattr(error, "status", None) == 404
+
+            wait_until(
+                "managed verification Stream DELETED",
+                stream_deleted,
+                timeout=600,
+                interval=5,
+            )
         print(f"PASS: disposable {self.mode} verification resources cleaned up")
 
     def run(self) -> None:
         succeeded = False
         try:
+            self.create_managed_stream()
             self.verify_contract()
             if self.mapping_id is None:
                 self.create_target()

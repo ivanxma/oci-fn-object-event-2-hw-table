@@ -69,8 +69,9 @@ run production deployment scripts from `deploy/` and validation harnesses from
 # Optional bounded integration check against the configured durable database.
 # On OL9 it uses the project-local Python 3.12 verifier environment.
 ./tests/integration/verify_durable_capture.sh
-# Disposable two-partition create/delete verification. It creates uniquely
-# named OCI/DB resources and removes only those exact resources afterward.
+# Disposable create/delete verification. Set FLOW_MANAGED_STREAM=true in the
+# validation overlay so each run creates and deletes a fresh Stream as well as
+# its uniquely named OCI/DB resources.
 ./tests/integration/verify_fifo_flow.sh
 ./tests/integration/verify_parallel_flow.sh
 ./deploy/deploy_ui.sh
