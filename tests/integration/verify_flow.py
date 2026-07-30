@@ -116,7 +116,10 @@ class FlowVerification:
         self.shape = required("PROCESSOR_SHAPE")
         self.ocpus = float(required("PROCESSOR_OCPUS"))
         self.memory_gbs = float(required("PROCESSOR_MEMORY_GBS"))
-        self.secret_id = required("DB_SECRET_OCID")
+        self.secret_id = (
+            os.environ.get("PROCESSOR_DB_SECRET_OCID", "").strip()
+            or required("DB_SECRET_OCID")
+        )
         self.managed_stream = os.environ.get("FLOW_MANAGED_STREAM", "false").lower() == "true"
         resume_mapping = os.environ.get("FLOW_RESUME_MAPPING_ID", "").strip()
         self.mapping_id: int | None = int(resume_mapping) if resume_mapping else None
