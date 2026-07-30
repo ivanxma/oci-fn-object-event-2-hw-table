@@ -474,16 +474,51 @@ class FlowVerification:
             target.write_text(output + "\n", encoding="utf-8")
 
     def cleanup(self) -> None:
+        rule_delete_requested = False
         if self.rule_id:
             try:
                 self.events.delete_rule(self.rule_id)
+                rule_delete_requested = True
             except Exception as error:
                 print(f"WARN: could not delete rule: {type(error).__name__}", file=sys.stderr)
+        if rule_delete_requested:
+            def rule_deleted():
+                try:
+                    return str(
+                        self.events.get_rule(self.rule_id).data.lifecycle_state
+                    ).upper() == "DELETED"
+                except Exception as error:
+                    return getattr(error, "status", None) == 404
+
+            wait_until("verification Events rule DELETED", rule_deleted, timeout=300, interval=5)
+
+        requested_container_deletes: list[str] = []
         for container_id in self.container_ids:
             try:
                 self.containers.delete_container_instance(container_id)
+                requested_container_deletes.append(container_id)
             except Exception as error:
                 print(f"WARN: could not delete processor {container_id}: {type(error).__name__}", file=sys.stderr)
+        for container_id in requested_container_deletes:
+            def container_deleted(container_id=container_id):
+                try:
+                    return str(
+                        self.containers.get_container_instance(container_id).data.lifecycle_state
+                    ).upper() == "DELETED"
+                except Exception as error:
+                    return getattr(error, "status", None) == 404
+
+            wait_until(
+                f"verification processor {container_id} DELETED",
+                container_deleted,
+                timeout=600,
+                interval=5,
+            )
+
+        # Only after event emission and consumption are stopped is it safe to
+        # remove the objects and their mapping. Otherwise a shutting-down
+        # processor can durably capture cleanup DELETE events after the mapping
+        # has disappeared, leaving retryable verifier-only rows.
         for name in self.object_names:
             try:
                 self.object_storage.delete_object(self.namespace, self.bucket, name)

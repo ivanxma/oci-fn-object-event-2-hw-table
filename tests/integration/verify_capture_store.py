@@ -59,6 +59,7 @@ def main() -> None:
     finally:
         cleanup = connection.cursor()
         cleanup.execute("DELETE FROM stream_partition_checkpoint WHERE stream_id=%s", (stream_id,))
+        cleanup.execute("DELETE FROM stream_event_tx_log WHERE stream_id=%s", (stream_id,))
         cleanup.execute("DELETE FROM stream_message_capture WHERE stream_id=%s", (stream_id,))
         connection.commit()
         connection.close()
