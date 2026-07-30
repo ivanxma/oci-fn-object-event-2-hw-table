@@ -5,6 +5,8 @@ from ..services.orchestration_service import ProcessorRuntime, ContainerOrchestr
 from ..services.streaming_service import StreamingService
 from ..services.vault_secret_service import VaultSecretError, VaultSecretService
 from ..services.registry_service import RegistryError, RegistryService
+from ..services.release_history_service import ReleaseHistoryService
+from ..release import processor_release_from_image
 
 orchestration_bp = Blueprint("orchestration", __name__, url_prefix="/orchestration")
 
@@ -108,6 +110,13 @@ def deploy():
         if runtime.db_secret_ocid not in allowed_secrets:
             raise ValueError("Choose an active OCI Vault secret from this compartment.")
         result = service.create(mapping=mapping, stream_partitions=stream.partitions, partition_assignment=request.form.get("partition_assignment", ""), runtime=runtime)
+        try:
+            ReleaseHistoryService(mysql_for_request(), current_app.config["CONTROL_DATABASE"]).record(
+                component="PROCESSOR", deployment_name=result["display_name"], deployment_id=result["id"],
+                mapping_id=str(mapping_id), release=processor_release_from_image(runtime.image_url),
+            )
+        except Exception:
+            current_app.logger.warning("Processor deployment history could not be recorded.")
         flash(f"Container Instance requested: {result['display_name']} ({result['lifecycle_state']}).", "success")
     except (ValueError, OrchestrationError, VaultSecretError) as error:
         flash(str(error), "error")

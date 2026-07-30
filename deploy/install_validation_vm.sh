@@ -13,7 +13,7 @@ Usage: ./deploy/install_validation_vm.sh --config PATH
 
 The config is a mode-0600 shell file containing at least:
   export DB_SECRET_OCID='ocid1.vaultsecret...'
-  export SUBNET_ID='ocid1.subnet...'
+  export OBJECT_STORAGE_BUCKET_NAME='existing-bucket'
   export CONTROL_DATABASE='stream_db_validation'
   export STREAM_DATA_DB_NAME='stream_data_validation'
 
@@ -51,11 +51,10 @@ set -a
 . "$CONFIG_FILE"
 set +a
 
-for value in DB_SECRET_OCID SUBNET_ID CONTROL_DATABASE STREAM_DATA_DB_NAME; do
+for value in DB_SECRET_OCID OBJECT_STORAGE_BUCKET_NAME CONTROL_DATABASE STREAM_DATA_DB_NAME; do
   [[ -n "${!value:-}" ]] || { echo "$value is required in $CONFIG_FILE." >&2; exit 1; }
 done
 [[ "$DB_SECRET_OCID" == ocid1.vaultsecret.* ]] || { echo "DB_SECRET_OCID is invalid." >&2; exit 1; }
-[[ "$SUBNET_ID" == ocid1.subnet.* ]] || { echo "SUBNET_ID is invalid." >&2; exit 1; }
 "$ROOT_DIR/deploy/bootstrap_streaming.sh"
 export REPOSITORY_PREFIX="${REPOSITORY_PREFIX:-object-storage-heatwave-validation}"
 export PROCESSOR_IMAGE_TAG="${PROCESSOR_IMAGE_TAG:-validation-$(date -u +%Y%m%d%H%M%S)}"

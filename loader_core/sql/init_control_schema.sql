@@ -41,3 +41,23 @@ CREATE TABLE IF NOT EXISTS __CONTROL_DATABASE__.source_object_batches (
     PRIMARY KEY (id),
     UNIQUE KEY uq_source_object (mapping_id, source_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS __CONTROL_DATABASE__.deployment_history (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    component ENUM('UI','PROCESSOR') NOT NULL,
+    deployment_name VARCHAR(255) NOT NULL,
+    deployment_id VARCHAR(255) NULL,
+    mapping_id BIGINT UNSIGNED NULL,
+    release_version VARCHAR(128) NOT NULL,
+    git_sha VARCHAR(128) NOT NULL,
+    source_branch VARCHAR(255) NOT NULL,
+    build_utc VARCHAR(64) NOT NULL,
+    image_name VARCHAR(255) NOT NULL,
+    image_tag VARCHAR(255) NOT NULL,
+    image_digest VARCHAR(255) NULL,
+    config_schema_version VARCHAR(32) NOT NULL,
+    recorded_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    KEY ix_deployment_history_component (component, recorded_at),
+    KEY ix_deployment_history_instance (deployment_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

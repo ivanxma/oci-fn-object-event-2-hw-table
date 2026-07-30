@@ -11,6 +11,8 @@ from mysql.connector import Error as MySQLError
 
 from ..services.mapping_service import MappingService
 from ..services.registry_service import RegistryError, RegistryService
+from ..services.release_history_service import ReleaseHistoryService
+from ..release import release_metadata
 from ..services.naming import quote_identifier, validate_identifier
 from .common import connection_state, login_required, mysql_for_request, render_dashboard
 
@@ -25,6 +27,7 @@ def _databases(form) -> dict[str, str]:
         "STREAM_DATA_DB_NAME": validate_identifier(form.get("stream_data_database", ""), "stream data database"),
         "STREAM_USER": (form.get("stream_user", "") or "").strip(),
         "OCI_REGISTRY_REPOSITORY": (form.get("registry_repository") or current_app.config.get("OCI_REGISTRY_REPOSITORY", "")).strip(),
+        "OBJECT_STORAGE_BUCKET_NAME": (form.get("object_storage_bucket_name") or current_app.config.get("OBJECT_STORAGE_BUCKET_NAME", "")).strip(),
     }
     if not ACCOUNT.fullmatch(values["STREAM_USER"]):
         raise ValueError("Stream user must start with a letter and contain only letters, numbers, or underscores (32 characters maximum).")
@@ -32,6 +35,8 @@ def _databases(form) -> dict[str, str]:
         raise ValueError("Control and stream data databases must be separate.")
     if values["OCI_REGISTRY_REPOSITORY"] and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,254}", values["OCI_REGISTRY_REPOSITORY"]):
         raise ValueError("Registry repository must contain only letters, numbers, dots, underscores, slashes, and hyphens.")
+    if values["OBJECT_STORAGE_BUCKET_NAME"] and len(values["OBJECT_STORAGE_BUCKET_NAME"]) > 256:
+        raise ValueError("Object Storage bucket name is too long.")
     return values
 
 
@@ -59,7 +64,7 @@ def _initialize(mysql, values: dict[str, str], *, replace: bool = False) -> None
             cursor.execute(f"CREATE DATABASE IF NOT EXISTS {quote_identifier(database, 'database')} CHARACTER SET utf8mb4")
         control = quote_identifier(values["CONTROL_DATABASE"], "control database")
         if replace:
-            for table in ("source_object_batches", "target_batch_sequences", "object_storage_mappings"):
+            for table in ("source_object_batches", "target_batch_sequences", "object_storage_mappings", "deployment_history"):
                 cursor.execute(f"DROP TABLE IF EXISTS {control}.{quote_identifier(table, 'control table')}")
         for statement in _split_sql(ROOT / "loader_core/sql/init_control_schema.sql", {"__CONTROL_DATABASE__": control}):
             cursor.execute(statement)
@@ -127,6 +132,7 @@ def manage():
         "STREAM_DATA_DB_NAME": current_app.config.get("STREAM_DATA_DB_NAME") or os.environ.get("STREAM_DATA_DB_NAME", "stream_data"),
         "STREAM_USER": current_app.config.get("STREAM_USER") or os.environ.get("STREAM_USER", "streamuser"),
         "OCI_REGISTRY_REPOSITORY": current_app.config.get("OCI_REGISTRY_REPOSITORY") or os.environ.get("OCI_REGISTRY_REPOSITORY", ""),
+        "OBJECT_STORAGE_BUCKET_NAME": current_app.config.get("OBJECT_STORAGE_BUCKET_NAME") or os.environ.get("OBJECT_STORAGE_BUCKET_NAME", ""),
     }
     if request.method == "POST":
         try:
@@ -153,4 +159,9 @@ def manage():
         ).list_repositories()
     except RegistryError as error:
         flash(f"OCI Container Registry choices are unavailable: {error}", "warning")
-    return render_dashboard("settings.html", active_page="settings", settings=values, registry_repositories=repositories)
+    history = []
+    try:
+        history = ReleaseHistoryService(mysql_for_request(), values["CONTROL_DATABASE"]).recent()
+    except Exception:
+        pass  # The control schema can be initialized from this page.
+    return render_dashboard("settings.html", active_page="settings", settings=values, registry_repositories=repositories, release=release_metadata(), deployment_history=history)

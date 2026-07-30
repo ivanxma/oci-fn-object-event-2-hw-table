@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 import re
+import os
 
 
 class OrchestrationError(RuntimeError):
@@ -56,7 +57,7 @@ class DeploymentSettings:
     control_database: str
     name_prefix: str = "object-storage-stream-processor"
     writer_workers: int = 4
-    staging_database: str = "stream_staging"
+    staging_database: str = "staging_db"
 
 
 @dataclass(frozen=True)
@@ -192,7 +193,12 @@ class ContainerOrchestrationService:
                 shape=spec["shape"], shape_config=models.CreateContainerInstanceShapeConfigDetails(ocpus=spec["ocpus"], memory_in_gbs=spec["memory_gbs"]),
                 containers=[models.CreateContainerDetails(**spec["container"])],
                 vnics=[models.CreateContainerVnicDetails(subnet_id=spec["subnet_id"], is_public_ip_assigned=False)],
-                freeform_tags={"managed-by": "oci-object-event-2-table", "mapping-id": str(mapping.get("id", ""))},
+                freeform_tags={
+                    "managed-by": "oci-object-event-2-table", "mapping-id": str(mapping.get("id", "")),
+                    "release-version": os.environ.get("RELEASE_VERSION", str(spec["container"]["image_url"]).rsplit(":", 1)[-1]),
+                    "git-sha": os.environ.get("GIT_SHA", "image-tag-only")[:64],
+                    "config-schema": os.environ.get("CONFIG_SCHEMA_VERSION", "2"),
+                },
             )
             result = client.create_container_instance(details).data
             return {"id": str(result.id), "display_name": str(result.display_name), "lifecycle_state": str(result.lifecycle_state)}

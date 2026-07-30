@@ -8,6 +8,8 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
 [[ -r "$ENV_FILE" ]] || { echo "Missing $ENV_FILE" >&2; exit 1; }
 set -a; . "$ENV_FILE"; set +a
+source "$ROOT_DIR/deploy/oci_context.sh"
+oci_context_resolve
 for value in REGION_KEY REPOSITORY_PREFIX PROCESSOR_IMAGE_NAME PROCESSOR_IMAGE_TAG; do
   [[ -n "${!value:-}" ]] || { echo "$value is required" >&2; exit 1; }
 done
@@ -20,6 +22,16 @@ printf '{\n  "credHelpers": {\n    "%s.ocir.io": "ocir"\n  }\n}\n' "$REGION_KEY"
 cp "$HOME/.docker/config.json" "$HOME/.config/containers/auth.json"
 chmod 700 "$HOME/.docker" "$HOME/.config/containers"
 chmod 600 "$HOME/.docker/config.json" "$HOME/.config/containers/auth.json"
-docker build --file "$ROOT_DIR/processor/Dockerfile" --tag "$IMAGE" "$ROOT_DIR"
+RELEASE_VERSION="${RELEASE_VERSION:-$PROCESSOR_IMAGE_TAG}"
+GIT_SHA="${GIT_SHA:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}"
+SOURCE_BRANCH="${SOURCE_BRANCH:-$(git -C "$ROOT_DIR" branch --show-current)}"
+BUILD_UTC="${BUILD_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+docker build --file "$ROOT_DIR/processor/Dockerfile" --tag "$IMAGE" \
+  --build-arg "RELEASE_VERSION=$RELEASE_VERSION" --build-arg "GIT_SHA=$GIT_SHA" \
+  --build-arg "SOURCE_BRANCH=$SOURCE_BRANCH" --build-arg "BUILD_UTC=$BUILD_UTC" \
+  --build-arg "PROCESSOR_IMAGE_NAME=$PROCESSOR_IMAGE_NAME" --build-arg "PROCESSOR_IMAGE_TAG=$PROCESSOR_IMAGE_TAG" \
+  --build-arg "CONFIG_SCHEMA_VERSION=${CONFIG_SCHEMA_VERSION:-2}" "$ROOT_DIR"
 docker push "$IMAGE"
+IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || true)
 echo "Processor image pushed: $IMAGE"
+echo "Processor release: $RELEASE_VERSION ($GIT_SHA, $BUILD_UTC) ${IMAGE_DIGEST:-digest-unavailable}"

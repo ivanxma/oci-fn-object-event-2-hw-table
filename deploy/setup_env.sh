@@ -7,10 +7,11 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUTPUT="$ROOT_DIR/deploy/env.sh"
 FORCE=false
 NON_INTERACTIVE=false
+DB_PASSWORD_FILE="${DB_PASSWORD_FILE:-}"
 
 usage() {
   cat <<'EOF'
-Usage: ./deploy/setup_env.sh [--output PATH] [--force] [--non-interactive]
+Usage: ./deploy/setup_env.sh [--output PATH] [--force] [--non-interactive] [--db-password-file PATH]
 
 Discovers the current OCI VM's compartment and region, then prompts for:
   - compartment and region
@@ -22,7 +23,9 @@ Discovers the current OCI VM's compartment and region, then prompts for:
 OCI calls use only --auth instance_principal. The generated file contains
 resource OCIDs and non-secret configuration; database access uses a Vault OCID.
 
-With --non-interactive, supply DB_SECRET_OCID and SUBNET_ID in the environment.
+With --non-interactive, supply DB_SECRET_OCID or DB_HOST, DB_USER, and
+--db-password-file. The password file must be mode 0600 and is removed only
+after the Vault secret OCID is atomically written to the generated env.sh.
 Compartment, region, AD, VCN, Vault, and key are derived from instance metadata
 and those resources where possible. Explicit environment values take priority.
 EOF
@@ -42,6 +45,11 @@ while (($#)); do
     --non-interactive)
       NON_INTERACTIVE=true
       shift
+      ;;
+    --db-password-file)
+      (($# >= 2)) || { echo "--db-password-file requires a path." >&2; exit 2; }
+      DB_PASSWORD_FILE=$2
+      shift 2
       ;;
     -h|--help)
       usage
@@ -149,6 +157,10 @@ prompt_required COMPARTMENT_ID "Compartment OCID" "$DEFAULT_COMPARTMENT"
   exit 1
 }
 prompt_required REGION "OCI region" "$DEFAULT_REGION"
+source "$ROOT_DIR/deploy/oci_context.sh"
+# Resolve the setup VM subnet when its instance-principal metadata permits it;
+# an explicit value still wins for a different processor subnet.
+oci_context_resolve || true
 
 REGION_KEY=$(
   oci_json iam region list --all |
@@ -218,13 +230,37 @@ KEY_TSV=$(
 )
 select_from_tsv VAULT_KEY_ID "Symmetric Vault encryption key" "$KEY_TSV"
 
-SECRET_TSV=$(
-  oci_json vault secret list --compartment-id "$COMPARTMENT_ID" \
-    --vault-id "$VAULT_ID" --all |
-    jq -r '.data[] | select(."lifecycle-state" == "ACTIVE") |
-      [.id, ((."secret-name" // "(unnamed secret)") + " | " + .id)] | @tsv'
-)
-select_from_tsv DB_SECRET_OCID "Processor database JSON secret" "$SECRET_TSV"
+DB_SECRET_NAME=${DB_SECRET_NAME:-stream_hw_secret_key}
+if [[ -z "${DB_SECRET_OCID:-}" ]]; then
+  prompt_required DB_HOST "Database host"
+  prompt_required DB_PORT "Database port" "3306"
+  prompt_required DB_USER "Database user"
+  prompt_required DB_NAME "Default database" "${CONTROL_DATABASE:-stream_db}"
+  prompt_required CONTROL_DATABASE "Control database" "stream_db"
+  prompt_required STREAM_DATA_DB_NAME "Durable stream database" "stream_data"
+  prompt_required STAGING_DATABASE "Staging database" "staging_db"
+  if [[ -n "$DB_PASSWORD_FILE" ]]; then
+    [[ -f "$DB_PASSWORD_FILE" && ! -L "$DB_PASSWORD_FILE" ]] || { echo "Password file must be a regular file." >&2; exit 1; }
+    mode=$(stat -c '%a' "$DB_PASSWORD_FILE" 2>/dev/null || stat -f '%Lp' "$DB_PASSWORD_FILE")
+    [[ "$mode" == 600 ]] || { echo "Password file must have mode 0600." >&2; exit 1; }
+    DB_PASSWORD=$(<"$DB_PASSWORD_FILE")
+  elif [[ "$NON_INTERACTIVE" == true ]]; then
+    echo "DB_SECRET_OCID or --db-password-file is required for non-interactive setup." >&2; exit 1
+  else
+    read -r -s -p "Database password: " DB_PASSWORD; echo
+  fi
+  [[ -n "$DB_PASSWORD" ]] || { echo "Database password is required." >&2; exit 1; }
+  SECRET_PAYLOAD=$(jq -cn --arg host "$DB_HOST" --argjson port "$DB_PORT" --arg user "$DB_USER" --arg credential "$DB_PASSWORD" --arg database "$DB_NAME" --arg control_database "$CONTROL_DATABASE" --arg stream_data_database "$STREAM_DATA_DB_NAME" --arg staging_database "$STAGING_DATABASE" '{host:$host,port:$port,user:$user,credential:$credential,database:$database,control_database:$control_database,stream_data_database:$stream_data_database,staging_database:$staging_database}')
+  SECRET_CONTENT=$(printf '%s' "$SECRET_PAYLOAD" | base64 | tr -d '\n')
+  EXISTING_SECRET=$(oci_json vault secret list --compartment-id "$COMPARTMENT_ID" --vault-id "$VAULT_ID" --all | jq -r --arg name "$DB_SECRET_NAME" '.data[] | select(."secret-name" == $name and ."lifecycle-state" == "ACTIVE") | .id' | head -1)
+  if [[ -n "$EXISTING_SECRET" ]]; then
+    oci_json vault secret update-base64 --secret-id "$EXISTING_SECRET" --secret-content-content "$SECRET_CONTENT" --secret-content-name "${DB_SECRET_NAME}-$(date -u +%Y%m%d%H%M%S)" --secret-content-stage CURRENT >/dev/null
+    DB_SECRET_OCID=$EXISTING_SECRET
+  else
+    DB_SECRET_OCID=$(oci_json vault secret create-base64 --compartment-id "$COMPARTMENT_ID" --vault-id "$VAULT_ID" --key-id "$VAULT_KEY_ID" --secret-name "$DB_SECRET_NAME" --description 'Processor database connectivity configuration.' --secret-content-content "$SECRET_CONTENT" --secret-content-name "${DB_SECRET_NAME}-v1" --secret-content-stage CURRENT | jq -r '.data.id')
+  fi
+  unset DB_PASSWORD SECRET_PAYLOAD SECRET_CONTENT
+fi
 [[ "$DB_SECRET_OCID" == ocid1.vaultsecret.* ]] || {
   echo "The database secret must be a Vault secret OCID." >&2
   exit 1
@@ -239,8 +275,10 @@ REPOSITORY_PREFIX_LOWER=$(printf '%s' "$REPOSITORY_PREFIX" | tr '[:upper:]' '[:l
 PROCESSOR_IMAGE_URL="$REGION_KEY.ocir.io/$NAMESPACE/$REPOSITORY_PREFIX_LOWER/$PROCESSOR_IMAGE_NAME:$PROCESSOR_IMAGE_TAG"
 FLASK_SECRET_KEY=$(openssl rand -hex 32)
 
-prompt_required CONTROL_DATABASE "Control database" "stream_db"
-prompt_required STREAM_DATA_DB_NAME "Durable stream database" "stream_data"
+CONTROL_DATABASE=${CONTROL_DATABASE:-stream_db}
+STREAM_DATA_DB_NAME=${STREAM_DATA_DB_NAME:-stream_data}
+STAGING_DATABASE=${STAGING_DATABASE:-staging_db}
+prompt_required OBJECT_STORAGE_BUCKET_NAME "Object Storage bucket name"
 prompt_required UI_SERVER_NAME "UI server name" "${DEFAULT_SERVER_NAME:-_}"
 
 TMP_FILE=$(mktemp "${OUTPUT}.tmp.XXXXXX")
@@ -254,65 +292,31 @@ write_export() {
   printf '%s\n' '# This file is intentionally git-ignored. Keep mode 0600.'
 } > "$TMP_FILE"
 
-write_export COMPARTMENT_ID "$COMPARTMENT_ID"
-write_export REGION "$REGION"
-write_export REGION_KEY "$REGION_KEY"
-write_export VCN_ID "$VCN_ID"
-write_export SUBNET_ID "$SUBNET_ID"
-write_export CONTAINER_AVAILABILITY_DOMAIN "$CONTAINER_AVAILABILITY_DOMAIN"
-write_export VAULT_ID "$VAULT_ID"
-write_export VAULT_KEY_ID "$VAULT_KEY_ID"
 write_export DB_SECRET_OCID "$DB_SECRET_OCID"
+write_export DB_SECRET_NAME "$DB_SECRET_NAME"
 write_export REPOSITORY_PREFIX "$REPOSITORY_PREFIX"
 write_export PROCESSOR_IMAGE_NAME "$PROCESSOR_IMAGE_NAME"
 write_export PROCESSOR_IMAGE_TAG "$PROCESSOR_IMAGE_TAG"
-write_export PROCESSOR_IMAGE_URL "$PROCESSOR_IMAGE_URL"
 write_export FLASK_SECRET_KEY "$FLASK_SECRET_KEY"
 write_export CONTROL_DATABASE "$CONTROL_DATABASE"
 write_export STREAM_DATA_DB_NAME "$STREAM_DATA_DB_NAME"
+write_export STAGING_DATABASE "$STAGING_DATABASE"
+write_export OBJECT_STORAGE_BUCKET_NAME "$OBJECT_STORAGE_BUCKET_NAME"
 write_export UI_SERVER_NAME "$UI_SERVER_NAME"
-write_export GENERATE_SELF_SIGNED_CERT "${GENERATE_SELF_SIGNED_CERT:-false}"
+write_export UI_IMAGE_NAME "${UI_IMAGE_NAME:-object-storage-heatwave-ui}"
+write_export UI_IMAGE_TAG "${UI_IMAGE_TAG:-$PROCESSOR_IMAGE_TAG}"
+write_export GENERATE_SELF_SIGNED_CERT "${GENERATE_SELF_SIGNED_CERT:-true}"
 write_export TLS_CERT_FILE "${TLS_CERT_FILE:-}"
 write_export TLS_KEY_FILE "${TLS_KEY_FILE:-}"
-
-cat >> "$TMP_FILE" <<'EOF'
-export PROCESSOR_CONTAINER_NAME_PREFIX='object-storage-stream-processor'
-export PROCESSOR_SHAPE='CI.Standard.E4.Flex'
-export PROCESSOR_OCPUS='1'
-export PROCESSOR_MEMORY_GBS='16'
-export WRITER_WORKERS='4'
-export BATCH_ROWS='10000'
-export OBJECT_STORAGE_RANGE_BYTES='33554432'
-export OBJECT_STORAGE_READ_TIMEOUT_SECONDS='300'
-export PROCESSOR_PROCESSING_LEASE_SECONDS='300'
-export OCI_AUTH_MODE='resource_principal'
-export OCI_EVENT_RULE_MANAGEMENT_ENABLED='true'
-export OCI_STREAMING_MANAGEMENT_ENABLED='true'
-export OCI_CONTAINER_ORCHESTRATION_ENABLED='true'
-export OCI_EVENT_RULE_PREFIX='object-event-2-table'
-export UI_SERVICE_NAME='object-storage-heatwave-ui'
-export UI_CONTAINER_NAME='object-storage-heatwave-ui'
-export UI_BIND_PORT='8080'
-export OBJECT_STORAGE_NAMESPACE=''
-export OBJECT_STORAGE_BUCKET_NAME=''
-export OBJECT_STORAGE_OBJECT_NAME_PATTERN=''
-export DB_HOST=''
-export DB_PORT='3306'
-export DB_USER=''
-export DB_NAME=''
-export DB_SSL_DISABLED='false'
-export OCI_STREAM_ID=''
-export PROCESSING_MODE='FIFO'
-export EXPECTED_PARTITION_COUNT='1'
-export PROCESSOR_REPLICA_COUNT='1'
-export PROCESSOR_PARTITIONS='0'
-export PROCESSOR_MAPPING_ID=''
-EOF
 
 mkdir -p "$(dirname "$OUTPUT")"
 chmod 600 "$TMP_FILE"
 mv "$TMP_FILE" "$OUTPUT"
 trap - EXIT
+
+if [[ -n "$DB_PASSWORD_FILE" ]]; then
+  rm -f -- "$DB_PASSWORD_FILE"
+fi
 
 echo
 echo "Created $OUTPUT (mode 0600)"

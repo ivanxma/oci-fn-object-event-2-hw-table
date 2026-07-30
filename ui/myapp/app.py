@@ -45,6 +45,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         OCI_REGION_KEY=os.environ.get("REGION_KEY", os.environ.get("OCI_REGION_KEY", "")),
         OCI_OBJECT_STORAGE_NAMESPACE=os.environ.get("OCI_OBJECT_STORAGE_NAMESPACE", ""),
         OCI_REGISTRY_REPOSITORY=os.environ.get("OCI_REGISTRY_REPOSITORY", ""),
+        OBJECT_STORAGE_BUCKET_NAME=os.environ.get("OBJECT_STORAGE_BUCKET_NAME", ""),
         VAULT_ID=os.environ.get("VAULT_ID", ""),
         VAULT_KEY_ID=os.environ.get("VAULT_KEY_ID", ""),
         OCI_EVENT_RULE_MANAGEMENT_ENABLED=os.environ.get("OCI_EVENT_RULE_MANAGEMENT_ENABLED", "false").lower() in {"1", "true", "yes"},
@@ -55,7 +56,8 @@ def create_app(test_config: dict | None = None) -> Flask:
         PROCESSOR_OCPUS=os.environ.get("PROCESSOR_OCPUS", ""), PROCESSOR_MEMORY_GBS=os.environ.get("PROCESSOR_MEMORY_GBS", ""),
         PROCESSOR_IMAGE_URL=os.environ.get("PROCESSOR_IMAGE_URL", ""), PROCESSOR_CONTAINER_NAME_PREFIX=os.environ.get("PROCESSOR_CONTAINER_NAME_PREFIX", "object-storage-stream-processor"),
         WRITER_WORKERS=os.environ.get("WRITER_WORKERS", "4"),
-        DB_SECRET_OCID=os.environ.get("DB_SECRET_OCID", ""), DB_HOST=os.environ.get("DB_HOST", ""), DB_PORT=os.environ.get("DB_PORT", "3306"), DB_USER=os.environ.get("DB_USER", ""), DB_NAME=os.environ.get("DB_NAME", ""), STREAM_DATA_DB_NAME=os.environ.get("STREAM_DATA_DB_NAME", ""), STAGING_DATABASE=os.environ.get("STAGING_DATABASE", "stream_staging"), SUBNET_ID=os.environ.get("SUBNET_ID", ""),
+        UI_IMAGE_NAME=os.environ.get("UI_IMAGE_NAME", "object-storage-heatwave-ui"), UI_IMAGE_TAG=os.environ.get("UI_IMAGE_TAG", "dev"),
+        DB_SECRET_OCID=os.environ.get("DB_SECRET_OCID", ""), DB_HOST=os.environ.get("DB_HOST", ""), DB_PORT=os.environ.get("DB_PORT", "3306"), DB_USER=os.environ.get("DB_USER", ""), DB_NAME=os.environ.get("DB_NAME", ""), STREAM_DATA_DB_NAME=os.environ.get("STREAM_DATA_DB_NAME", ""), STAGING_DATABASE=os.environ.get("STAGING_DATABASE", "staging_db"), SUBNET_ID=os.environ.get("SUBNET_ID", ""),
     )
     if test_config:
         app.config.update(test_config)
@@ -72,7 +74,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         Path(app.config["PROFILE_SETTINGS"]),
     )
     persisted_ui = app.extensions["profile_store"].ui_configuration()
-    for key in ("CONTROL_DATABASE", "STREAM_DATA_DB_NAME", "STREAM_USER", "OCI_REGISTRY_REPOSITORY"):
+    for key in ("CONTROL_DATABASE", "STREAM_DATA_DB_NAME", "STREAM_USER", "OCI_REGISTRY_REPOSITORY", "OBJECT_STORAGE_BUCKET_NAME"):
         if persisted_ui.get(key):
             app.config[key] = str(persisted_ui[key])
             os.environ[key] = str(persisted_ui[key])

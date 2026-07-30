@@ -13,6 +13,7 @@ from typing import Any
 DEFAULT_SCHEMA_SQL = Path(__file__).with_name("sql") / "init_stream_capture.sql"
 RETRY_MIGRATION_SQL = Path(__file__).with_name("sql") / "migrate_stream_capture_retry.sql"
 PROCESSING_MIGRATION_SQL = Path(__file__).with_name("sql") / "migrate_stream_capture_processing.sql"
+RELEASE_MIGRATION_SQL = Path(__file__).with_name("sql") / "migrate_release_stamp.sql"
 
 
 def schema_sql_path() -> Path:
@@ -55,6 +56,11 @@ def ensure_schema(connection: Any) -> None:
         if cursor.fetchone()[0] == 0:
             for statement in migration_statements(migration):
                 cursor.execute(statement)
+    for table in ("stream_message_capture", "stream_event_tx_log"):
+        cursor.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=%s AND column_name='processor_release_stamp'", (table,))
+        if cursor.fetchone()[0] == 0:
+            statement = next(item for item in migration_statements(RELEASE_MIGRATION_SQL) if item.startswith(f"ALTER TABLE {table}"))
+            cursor.execute(statement)
 
 
 def retry_delay_seconds(attempts: int) -> int:
@@ -85,14 +91,15 @@ def save_checkpoint(connection: Any, *, stream_id: str, partition: str, cursor_v
     connection.commit()
 
 def capture(connection: Any, *, stream_id: str, partition: str, offset: int, key: str, payload: dict[str, Any]) -> None:
+    from release import release_stamp
     cursor = connection.cursor()
     cursor.execute("""INSERT INTO stream_message_capture
-      (stream_id, partition_id, stream_offset, message_key, payload)
-      VALUES (%s,%s,%s,%s,%s)
-      ON DUPLICATE KEY UPDATE received_at=received_at""", (stream_id, partition, offset, key, json.dumps(payload, separators=(",", ":"))))
+      (stream_id, partition_id, stream_offset, message_key, payload, processor_release_stamp)
+      VALUES (%s,%s,%s,%s,%s,%s)
+      ON DUPLICATE KEY UPDATE received_at=received_at""", (stream_id, partition, offset, key, json.dumps(payload, separators=(",", ":")), release_stamp()))
     cursor.execute("""INSERT INTO stream_event_tx_log
-      (capture_id, stream_id, partition_id, stream_offset, event_status, attempts, received_at)
-      SELECT id, stream_id, partition_id, stream_offset, status, attempts, received_at
+      (capture_id, stream_id, partition_id, stream_offset, processor_release_stamp, event_status, attempts, received_at)
+      SELECT id, stream_id, partition_id, stream_offset, processor_release_stamp, status, attempts, received_at
         FROM stream_message_capture WHERE stream_id=%s AND partition_id=%s AND stream_offset=%s
       ON DUPLICATE KEY UPDATE updated_at=updated_at""", (stream_id, partition, offset))
     connection.commit()

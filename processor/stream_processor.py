@@ -119,6 +119,7 @@ def main() -> None:
     from vault_config import apply_database_environment, load_database_config, stream_data_database_config
     from stream_client import client_for_stream
     from loader import process_event
+    from release import release_metadata
     mode = os.environ.get("PROCESSING_MODE", "").upper()
     stream_id = os.environ.get("OCI_STREAM_ID", "")
     if not stream_id.startswith("ocid1.stream."):
@@ -135,7 +136,7 @@ def main() -> None:
         ensure_schema(connection)
         connection.commit()
         oci, client = client_for_stream(stream_id, os.environ.get("OCI_REGION", ""))
-        print(f"processor-ready mode={mode} stream={stream_id} partitions={','.join(partitions)}", flush=True)
+        print(f"processor-ready mode={mode} stream={stream_id} partitions={','.join(partitions)} release={release_metadata()['release_version']} sha={release_metadata()['git_sha']}", flush=True)
         while True:
             read_count = 0
             for partition in partitions:

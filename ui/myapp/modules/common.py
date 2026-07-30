@@ -7,6 +7,7 @@ from functools import wraps
 from flask import current_app, flash, make_response, redirect, render_template, session, url_for
 
 from ..services.mysql_service import MySQLService
+from ..release import release_metadata
 
 
 def connection_state():
@@ -48,6 +49,7 @@ def render_dashboard(template: str, *, active_page: str, **context):
             active_page=active_page,
             selected_profile=state.profile if state else {},
             current_username=state.username if state else "",
+            ui_release=release_metadata(),
             **context,
         )
     )

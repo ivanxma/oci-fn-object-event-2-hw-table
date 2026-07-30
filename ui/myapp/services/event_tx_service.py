@@ -22,7 +22,7 @@ class EventTransactionService:
             stream_data_database or os.environ.get("STREAM_DATA_DB_NAME", ""),
             "stream data database",
         )
-        configured_staging = os.environ.get("STAGING_DATABASE", "stream_staging").strip()
+        configured_staging = os.environ.get("STAGING_DATABASE", "staging_db").strip()
         self.staging_database = validate_identifier(configured_staging, "staging database") if configured_staging else ""
 
     def _capture_exists(self, cursor) -> bool:
