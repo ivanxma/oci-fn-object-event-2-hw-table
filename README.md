@@ -86,8 +86,9 @@ one Container Instance for one explicit partition assignment. `deploy_ui.sh`
 deploys the Flask container behind nginx HTTPS. Keep `deploy/env.sh`, database
 credentials, Vault values, TLS private keys, and Flask secrets out of Git.
 The selected Vault secret must be a JSON object containing `host`, `port`,
-`user`, `credential`, and `database`; optional `control_database` and
-`stream_data_database` fields keep control and growing durable data separate.
+`user`, `credential`, `database`, `control_database`, `stream_data_database`,
+and `staging_database`. The staging database is dedicated to transient loader
+tables and must not be used as a Resource Mapping target.
 Plain-text password-only Vault secrets are not accepted.
 The selected Vault and key become the default choices in the Database Secret
 tab; they are OCIDs, not secret material.
@@ -230,7 +231,8 @@ troubleshooting, and validation commands.
   out of order. Publishers must avoid simultaneous updates to the same logical
   data set.
 - A timeout can leave a staging table behind. The UI exposes confirmed cleanup,
-  while protecting a target that still has an active loading lease.
+  while protecting a target that still has an active loading lease. Staging
+  tables are created in `staging_database`, never in the mapped user database.
 - More worker threads help only while MySQL CPU, connection capacity, storage
   throughput, and IOPS have headroom.
 

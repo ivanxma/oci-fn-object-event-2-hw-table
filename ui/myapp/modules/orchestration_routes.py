@@ -14,7 +14,7 @@ def _orchestration_service() -> ContainerOrchestrationService:
         enabled=bool(config["OCI_CONTAINER_ORCHESTRATION_ENABLED"]), compartment_id=config["OCI_COMPARTMENT_ID"], region=config["OCI_REGION"],
         subnet_id=config["SUBNET_ID"], availability_domain=config["CONTAINER_AVAILABILITY_DOMAIN"], shape=config["PROCESSOR_SHAPE"],
         ocpus=float(config["PROCESSOR_OCPUS"] or 0), memory_gbs=float(config["PROCESSOR_MEMORY_GBS"] or 0), image_url=config["PROCESSOR_IMAGE_URL"],
-        db_secret_ocid=config["DB_SECRET_OCID"], db_host=config["DB_HOST"], db_port=config["DB_PORT"], db_user=config["DB_USER"], db_name=config["DB_NAME"], stream_data_db_name=config["STREAM_DATA_DB_NAME"], control_database=config["CONTROL_DATABASE"], writer_workers=int(config["WRITER_WORKERS"] or 4),
+        db_secret_ocid=config["DB_SECRET_OCID"], db_host=config["DB_HOST"], db_port=config["DB_PORT"], db_user=config["DB_USER"], db_name=config["DB_NAME"], stream_data_db_name=config["STREAM_DATA_DB_NAME"], staging_database=config["STAGING_DATABASE"], control_database=config["CONTROL_DATABASE"], writer_workers=int(config["WRITER_WORKERS"] or 4),
         name_prefix=config["PROCESSOR_CONTAINER_NAME_PREFIX"],
     ))
 
@@ -100,7 +100,7 @@ def deploy():
 def create_database_secret():
     try:
         vault_service = VaultSecretService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"])
-        values = dict(host=request.form.get("db_host", ""), port=request.form.get("db_port", "3306"), user=request.form.get("db_user", ""), credential=request.form.get("db_credential", ""), database=request.form.get("db_name", ""), control_database=request.form.get("control_database", ""), stream_data_database=request.form.get("stream_data_database", ""))
+        values = dict(host=request.form.get("db_host", ""), port=request.form.get("db_port", "3306"), user=request.form.get("db_user", ""), credential=request.form.get("db_credential", ""), database=request.form.get("db_name", ""), control_database=request.form.get("control_database", ""), stream_data_database=request.form.get("stream_data_database", ""), staging_database=request.form.get("staging_database", ""))
         existing_secret_id = request.form.get("existing_secret_id", "")
         if existing_secret_id:
             vault_service.update_database_secret(secret_id=existing_secret_id, **values)

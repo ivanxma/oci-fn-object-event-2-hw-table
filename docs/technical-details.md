@@ -104,11 +104,15 @@ not exactly-once: durable capture and idempotent loader state handle replay.
 ## Database layout
 
 - The JSON Vault secret supplies `host`, `port`, `user`, `credential`, and
-  `database`.
+  `database`, plus the required `control_database`, `stream_data_database`,
+  and isolated `staging_database` schemas.
 - `control_database` optionally selects the bounded mapping/batch control
   schema.
-- `stream_data_database` optionally selects the growing durable capture,
+- `stream_data_database` selects the growing durable capture,
   checkpoint, transaction, retry, and archive schema.
+- `staging_database` selects the transient staging schema. It must be separate
+  from every Resource Mapping target, so interruptions cannot leave staging
+  tables in user databases.
 - Target tables live in mapping-selected schemas.
 - Target tables use LIST partitioning on the invisible `batch_num` column.
   Every unique key must contain `batch_num`.
@@ -125,7 +129,8 @@ For create and update:
 
 1. The processor reserves or reuses the source object's `batch_num`.
 2. It ensures the file-owned target partition exists.
-3. It creates a nonpartitioned staging table with `CREATE TABLE ... LIKE` and
+3. It creates a nonpartitioned staging table in `staging_database` with
+   `CREATE TABLE ... LIKE` and
    removes the copied partitioning definition.
 4. Multiple writer threads load the CSV into the staging table while assigning
    the same `batch_num` to every row.

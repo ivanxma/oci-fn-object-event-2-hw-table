@@ -97,6 +97,16 @@ def table_name(schema: str, table: str) -> str:
     return f"{quote_identifier(schema, 'target database')}.{quote_identifier(table, 'target table')}"
 
 
+def staging_database(mapping: dict[str, Any] | None = None) -> str:
+    """Return the dedicated staging schema, falling back only for legacy secrets."""
+    value = os.environ.get("STAGING_DATABASE", "").strip()
+    if value:
+        return validate_identifier(value, "staging database")
+    if mapping and mapping.get("target_database"):
+        return validate_identifier(str(mapping["target_database"]), "target database")
+    raise ValueError("STAGING_DATABASE is required for processor staging.")
+
+
 def stage_name(target_table: str) -> str:
     """Create a collision-resistant, MySQL-valid staging-table name."""
     return f"{target_table[:45]}_stage_{uuid.uuid4().hex[:12]}"
@@ -331,7 +341,7 @@ def ensure_partition(db: Database, mapping: dict[str, Any], batch_num: int) -> N
 def create_stage_table(db: Database, mapping: dict[str, Any], batch_num: int) -> str:
     target = table_name(mapping["target_database"], mapping["target_table"])
     stage = stage_name(mapping["target_table"])
-    stage_quoted = table_name(mapping["target_database"], stage)
+    stage_quoted = table_name(staging_database(mapping), stage)
     with db.connection() as connection:
         cursor = connection.cursor()
         cursor.execute(f"CREATE TABLE {stage_quoted} LIKE {target}")
@@ -343,7 +353,7 @@ def drop_stage_table(db: Database, mapping: dict[str, Any], stage: str) -> None:
     """Remove a per-batch staging table after exchange or failed processing."""
     with db.connection() as connection:
         connection.cursor().execute(
-            f"DROP TABLE IF EXISTS {table_name(mapping['target_database'], stage)}"
+            f"DROP TABLE IF EXISTS {table_name(staging_database(mapping), stage)}"
         )
 
 
@@ -398,7 +408,7 @@ def insert_batch(db: Database, mapping: dict[str, Any], stage: str, batch_num: i
     with db.connection() as connection:
         cursor = connection.cursor()
         cursor.executemany(
-            f"INSERT INTO {table_name(mapping['target_database'], stage)} ({names}) VALUES ({placeholders})",
+            f"INSERT INTO {table_name(staging_database(mapping), stage)} ({names}) VALUES ({placeholders})",
             [(batch_num, *row) for row in rows],
         )
     return len(rows)
@@ -419,7 +429,7 @@ def load_csv_parallel(db: Database, mapping: dict[str, Any], stage: str, batch_n
 
 def validate_and_exchange(db: Database, mapping: dict[str, Any], stage: str, batch_num: int) -> None:
     target = table_name(mapping["target_database"], mapping["target_table"])
-    stage_quoted = table_name(mapping["target_database"], stage)
+    stage_quoted = table_name(staging_database(mapping), stage)
     with db.connection() as connection:
         cursor = connection.cursor()
         cursor.execute(f"SELECT COUNT(*) FROM {stage_quoted} WHERE batch_num <> %s", (batch_num,))

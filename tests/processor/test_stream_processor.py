@@ -37,7 +37,7 @@ class ProcessorModeTest(unittest.TestCase):
             decoded_payload(["not", "an", "object"])
 
     def test_parses_vault_database_bundle(self):
-        value = base64.b64encode(json.dumps({"host":"db","port":3306,"user":"u","credential":"p","database":"d"}).encode()).decode()
+        value = base64.b64encode(json.dumps({"host":"db","port":3306,"user":"u","credential":"p","database":"d","control_database":"c","stream_data_database":"s","staging_database":"stage"}).encode()).decode()
         self.assertEqual(parse_secret_content(value)["host"], "db")
 
     def test_rejects_unknown_oci_auth_mode(self):

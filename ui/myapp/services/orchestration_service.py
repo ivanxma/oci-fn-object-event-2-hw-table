@@ -56,6 +56,7 @@ class DeploymentSettings:
     control_database: str
     name_prefix: str = "object-storage-stream-processor"
     writer_workers: int = 4
+    staging_database: str = "stream_staging"
 
 
 @dataclass(frozen=True)

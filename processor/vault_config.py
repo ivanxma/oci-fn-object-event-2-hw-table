@@ -5,8 +5,8 @@ import json
 import os
 from typing import Any
 
-REQUIRED = {"host", "port", "user", "credential", "database"}
-OPTIONAL_DATABASES = {"control_database", "stream_data_database"}
+REQUIRED = {"host", "port", "user", "credential", "database", "control_database", "stream_data_database", "staging_database"}
+OPTIONAL_DATABASES = set()
 
 
 def oci_signer():
@@ -26,8 +26,11 @@ def parse_secret_content(encoded: str) -> dict[str, Any]:
         raise ValueError("Vault database secret must contain base64 JSON.") from error
     if not isinstance(value, dict) or not REQUIRED <= value.keys():
         raise ValueError("Vault database secret is missing required connection fields.")
-    if any(not isinstance(value.get(key), str) or not value[key].strip() for key in OPTIONAL_DATABASES if key in value):
+    if any(not isinstance(value.get(key), str) or not value[key].strip() for key in ("database", "control_database", "stream_data_database", "staging_database")):
         raise ValueError("Vault database secret contains an invalid database name.")
+    names = {str(value[key]).strip() for key in ("database", "control_database", "stream_data_database", "staging_database")}
+    if len(names) != 4:
+        raise ValueError("Vault database secret requires separate default, control, stream-data, and staging databases.")
     return value
 
 
@@ -62,5 +65,7 @@ def apply_database_environment(config: dict[str, Any]) -> None:
     values = {"DB_HOST": config["host"], "DB_PORT": str(config["port"]), "DB_USER": config["user"], "DB_CREDENTIAL": config["credential"]}
     if config.get("control_database"):
         values["CONTROL_DATABASE"] = str(config["control_database"])
+    if config.get("staging_database"):
+        values["STAGING_DATABASE"] = str(config["staging_database"])
     for key, value in values.items():
         os.environ[key] = value

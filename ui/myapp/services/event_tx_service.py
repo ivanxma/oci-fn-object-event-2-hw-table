@@ -22,8 +22,11 @@ class EventTransactionService:
             stream_data_database or os.environ.get("STREAM_DATA_DB_NAME", ""),
             "stream data database",
         )
+        configured_staging = os.environ.get("STAGING_DATABASE", "stream_staging").strip()
+        self.staging_database = validate_identifier(configured_staging, "staging database") if configured_staging else ""
 
     def _capture_exists(self, cursor) -> bool:
+        staging_database = self.staging_database or database
         cursor.execute(
             "SELECT 1 FROM information_schema.tables WHERE table_schema=%s AND table_name=%s",
             (self.stream_data_database, STREAM_CAPTURE_TABLE),
@@ -126,7 +129,7 @@ class EventTransactionService:
                  FROM information_schema.tables
                 WHERE table_schema=%s AND table_name LIKE %s
                 ORDER BY table_name""",
-            (database, f"{table[:45]}\\_stage\\_%"),
+            (staging_database, f"{table[:45]}\\_stage\\_%"),
         )
         pattern = re.compile(rf"^{re.escape(table[:45])}_stage_[0-9a-f]{{12}}$")
         discovered = [row for row in cursor.fetchall() if pattern.fullmatch(str(row.get("table_name", "")))]
@@ -188,7 +191,8 @@ class EventTransactionService:
                 raise ValueError("The selected staging table no longer exists for this target.")
             if blocked or not match["cleanup_allowed"]:
                 raise ValueError("Staging-table cleanup is blocked while this target has active messages or loads.")
-            target = f"{quote_identifier(database, 'target database')}.{quote_identifier(stage_table, 'staging table')}"
+            staging_database = self.staging_database or database
+            target = f"{quote_identifier(staging_database, 'staging database')}.{quote_identifier(stage_table, 'staging table')}"
             cursor.execute(f"DROP TABLE IF EXISTS {target}")
 
     def cleanup_stage_tables(self, database: str, table: str) -> list[str]:
@@ -201,7 +205,8 @@ class EventTransactionService:
                 raise ValueError("Staging-table cleanup is blocked while this target has active messages or loads.")
             names = [row["table_name"] for row in rows if row["cleanup_allowed"]]
             for name in names:
-                target = f"{quote_identifier(database, 'target database')}.{quote_identifier(name, 'staging table')}"
+                staging_database = self.staging_database or database
+                target = f"{quote_identifier(staging_database, 'staging database')}.{quote_identifier(name, 'staging table')}"
                 cursor.execute(f"DROP TABLE IF EXISTS {target}")
             return names
 
