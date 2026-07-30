@@ -2,20 +2,35 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
 
-from .common import login_required, render_dashboard
+from ..services.mysql_service import MySQLService
+from .common import connection_state, login_required, render_dashboard
 
 profile_bp = Blueprint("profiles", __name__, url_prefix="/profiles")
 
 
 @profile_bp.route("/new", methods=["GET", "POST"])
 def create():
-    """Create a non-secret connection profile before first sign-in."""
+    """Create a profile either before sign-in or from authenticated settings.
+
+    The creation policy controls only the unauthenticated login-screen link;
+    disabling that link must not remove the authenticated Connection Profiles
+    workflow.
+    """
     store = current_app.extensions["profile_store"]
-    if not store.profile_creation_enabled():
+    state = connection_state()
+    if not state and not store.profile_creation_enabled():
         flash("Profile creation at the login screen is disabled. Sign in and enable it from Connection Profiles if needed.", "warning")
         return redirect(url_for("auth.login"))
+    if state:
+        try:
+            MySQLService(state).health_check()
+        except Exception:
+            current_app.extensions["session_store"].clear(session.get("connection_id"))
+            session.clear()
+            flash("The database connection is no longer available. Please sign in again.", "warning")
+            return redirect(url_for("auth.login"))
     if request.method == "POST":
         try:
             store.save(request.form, request.files.get("ssh_key"), create_only=True)
@@ -23,7 +38,7 @@ def create():
             return redirect(url_for("auth.login"))
         except (ValueError, OSError) as error:
             flash(str(error), "error")
-    return render_template("profile_form.html", public_creation=True)
+    return render_template("profile_form.html", public_creation=not state)
 
 
 @profile_bp.route("/", methods=["GET", "POST"])

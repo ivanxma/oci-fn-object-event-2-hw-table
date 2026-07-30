@@ -45,6 +45,22 @@ class ProfileCreationPolicyTest(unittest.TestCase):
         self.assertEqual(blocked.status_code, 302)
         self.assertTrue(blocked.headers["Location"].endswith("/login"))
 
+    def test_authenticated_create_profile_remains_available_when_login_creation_disabled(self) -> None:
+        store = self.app.extensions["profile_store"]
+        store.set_profile_creation_enabled(False)
+        connection_id = self.app.extensions["session_store"].create(
+            {"name": "Local MySQL", "mode": "direct", "host": "127.0.0.1", "port": 3306},
+            "admin",
+            "not-rendered",
+        )
+        with self.client.session_transaction() as browser_session:
+            browser_session["connection_id"] = connection_id
+        with patch("myapp.modules.profile_routes.MySQLService.health_check", return_value=None):
+            response = self.client.get("/profiles/new")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Create a connection profile", response.data)
+        self.assertIn(b"href=\"/profiles/\"", response.data)
+
     def test_policy_is_private_persistent_and_fails_closed_if_corrupt(self) -> None:
         store = self.app.extensions["profile_store"]
         store.set_profile_creation_enabled(False)
