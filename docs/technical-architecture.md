@@ -122,7 +122,7 @@ sequenceDiagram
     P->>C: Resolve mapping and object batch ownership
     alt Create or update
         P->>OS: HEAD then bounded range GET requests
-        P->>G: CREATE TABLE LIKE target; remove partitioning
+        P->>G: CREATE TABLE LIKE target and remove partitioning
         loop CSV batches
             P->>G: Parallel executemany INSERT
         end
