@@ -270,6 +270,75 @@ Both tag types are immutable. Event Processor includes only `processor-*` tags
 in its Container image selector, so UI and unqualified legacy images cannot be
 deployed to OCI Container Instances.
 
+### Image build, publication, and deployment runbook
+
+Run release commands on the UI/deployment VM after `setup_env.sh` has generated
+`deploy/env.sh`. The VM instance principal supplies OCIR authentication; do not
+use a registry username or authentication token.
+
+Publish both components and activate the UI with one version:
+
+```sh
+cd /home/opc/oci-object-event-2-table
+git pull --ff-only origin main-with-stream
+VERSION="$(git rev-parse --short HEAD)"
+./deploy/publish_release.sh --version "$VERSION"
+```
+
+The command loads `env.sh`, applies the external database migrations, publishes
+`processor-<version>` and `ui-<version>` in the configured repository, switches
+the systemd UI service to the exact UI tag, and records its secret-free release
+history.
+
+If the process stopped only after publishing the Processor tag, continue the
+same version without overwriting that immutable tag:
+
+```sh
+./deploy/publish_release.sh --version "$VERSION" --resume
+```
+
+For a Processor-only publication, with no UI build or service change:
+
+```sh
+./deploy/publish_release.sh --version "$VERSION" --skip-ui
+```
+
+The lower-level component commands remain available for diagnostics:
+
+```sh
+PROCESSOR_IMAGE_TAG_OVERRIDE="$VERSION" ./deploy/build_processor_image.sh
+UI_IMAGE_TAG_OVERRIDE="$VERSION" ./deploy/deploy_ui.sh
+```
+
+Prefer `publish_release.sh` for normal releases because it applies migrations
+before UI activation and guarantees matching component versions. Direct
+Processor builds reject an existing tag.
+
+Publishing the Processor image does not replace a running OCI Container
+Instance. In **Event Processor → Deployment**, select the new immutable
+`processor-<version>` tag and current Vault database secret, create the
+replacement, verify it is ACTIVE and consuming, then delete the retired
+instance. For a direct mapping-specific deployment, export its stream,
+mapping, mode, partition assignment, and replica values, then run
+`./deploy/deploy_processor.sh`; the script verifies the image tag before it
+creates the Container Instance.
+
+Verify the activated release:
+
+```sh
+sudo systemctl is-active object-storage-heatwave-ui
+sudo podman ps --format '{{.Names}} {{.Image}}'
+curl -kI https://127.0.0.1/
+set -a
+source deploy/env.sh
+set +a
+source deploy/oci_context.sh
+oci_context_resolve
+oci --auth instance_principal --region "$REGION" \
+  artifacts container image list --compartment-id "$COMPARTMENT_ID" --all \
+  --query 'data.items[].{repository:"repository-name",tag:version,state:"lifecycle-state"}'
+```
+
 To enable the Event Processor **Database Secret** tab to create a new JSON
 database-connectivity secret, grant the UI/deployment principal the following
 additional least-privilege permissions in the compartment containing the

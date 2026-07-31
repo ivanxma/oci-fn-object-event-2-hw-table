@@ -45,6 +45,10 @@ EXISTING_TAG=$(
     head -1
 )
 [[ -z "$EXISTING_TAG" ]] || {
+  if [[ "${PROCESSOR_IMAGE_ALLOW_EXISTING:-false}" == "true" ]]; then
+    echo "Reusing published Processor image: $OCI_REGISTRY_REPOSITORY:$PROCESSOR_REGISTRY_IMAGE_TAG"
+    exit 0
+  fi
   echo "Processor image tag already exists in $OCI_REGISTRY_REPOSITORY: $PROCESSOR_REGISTRY_IMAGE_TAG" >&2
   echo "Increase PROCESSOR_IMAGE_TAG; released image tags are immutable." >&2
   exit 1

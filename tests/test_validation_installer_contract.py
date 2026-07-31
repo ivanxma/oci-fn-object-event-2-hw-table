@@ -81,6 +81,8 @@ class ValidationInstallerContractTest(unittest.TestCase):
         self.assertIn('publish_release.sh" --version "$PROCESSOR_IMAGE_TAG"', installer)
         self.assertIn('export PROCESSOR_IMAGE_TAG_OVERRIDE="$VERSION"', release)
         self.assertIn('export UI_IMAGE_TAG_OVERRIDE="$VERSION"', release)
+        self.assertIn('export PROCESSOR_IMAGE_ALLOW_EXISTING="$RESUME"', release)
+        self.assertIn("--resume", release)
         self.assertIn('"$ROOT_DIR/deploy/build_processor_image.sh"', release)
         self.assertIn('"$ROOT_DIR/deploy/deploy_ui.sh"', release)
         self.assertIn('ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"', release)
@@ -89,6 +91,7 @@ class ValidationInstallerContractTest(unittest.TestCase):
             'PROCESSOR_IMAGE_TAG="${PROCESSOR_IMAGE_TAG_OVERRIDE:-${PROCESSOR_IMAGE_TAG:-}}"',
             processor,
         )
+        self.assertIn("PROCESSOR_IMAGE_ALLOW_EXISTING", processor)
         self.assertIn(
             '-m pip install -r "$ROOT_DIR/ui/requirements.txt"',
             installer,

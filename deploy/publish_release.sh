@@ -11,15 +11,18 @@ set -a
 set +a
 VERSION=""
 DEPLOY_UI=true
+RESUME=false
 
 usage() {
   cat <<'EOF'
-Usage: ./deploy/publish_release.sh [--version VERSION] [--skip-ui]
+Usage: ./deploy/publish_release.sh [--version VERSION] [--skip-ui] [--resume]
 
 Publishes immutable tags processor-VERSION and ui-VERSION to the single OCIR
 repository configured by OCI_REGISTRY_REPOSITORY_ID. The UI image is built,
 pushed, and activated by deploy_ui.sh. VERSION defaults to the current short
-Git revision. --skip-ui publishes only the Processor image.
+Git revision. --skip-ui publishes only the Processor image. Use --resume only
+to continue the same version after a stopped partial release; an already
+published Processor tag is reused rather than overwritten.
 EOF
 }
 
@@ -32,6 +35,10 @@ while (($#)); do
       ;;
     --skip-ui)
       DEPLOY_UI=false
+      shift
+      ;;
+    --resume)
+      RESUME=true
       shift
       ;;
     -h|--help)
@@ -57,8 +64,8 @@ VERSION="${VERSION#ui-}"
 export RELEASE_VERSION="$VERSION"
 export PROCESSOR_IMAGE_TAG_OVERRIDE="$VERSION"
 export UI_IMAGE_TAG_OVERRIDE="$VERSION"
+export PROCESSOR_IMAGE_ALLOW_EXISTING="$RESUME"
 
-"$ROOT_DIR/deploy/build_processor_image.sh"
 if [[ "$DEPLOY_UI" == true ]]; then
   MIGRATION_PYTHON="${DEPLOYMENT_PYTHON_BIN:-$ROOT_DIR/.venv-verification-py312/bin/python}"
   if [[ ! -x "$MIGRATION_PYTHON" ]] && command -v python3 >/dev/null &&
@@ -70,6 +77,10 @@ if [[ "$DEPLOY_UI" == true ]]; then
     exit 1
   }
   OCI_AUTH_MODE=instance_principal "$MIGRATION_PYTHON" "$ROOT_DIR/deploy/initialize_databases.py"
+fi
+
+"$ROOT_DIR/deploy/build_processor_image.sh"
+if [[ "$DEPLOY_UI" == true ]]; then
   "$ROOT_DIR/deploy/deploy_ui.sh"
   echo "Release published: processor-$VERSION and ui-$VERSION"
 else
