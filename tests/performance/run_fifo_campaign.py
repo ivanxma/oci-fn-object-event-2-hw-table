@@ -179,6 +179,10 @@ class Campaign:
         mysql = importlib.import_module("mysql")
         importlib.import_module("mysql.connector")
         oci = importlib.import_module("oci")
+        # This harness runs on the deployment VM. Match the OCI clients below
+        # and use its instance principal for the Vault bundle unless an
+        # operator explicitly selected another supported mode.
+        os.environ.setdefault("OCI_AUTH_MODE", "instance_principal")
         self.args = args
         self.run_started = time.monotonic()
         self.run_started_utc = datetime.now(UTC)
