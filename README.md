@@ -430,4 +430,5 @@ troubleshooting, and validation commands.
 ## More information
 
 - [Setup and deployment guide](docs/setup-and-deployment-guide.md)
+- [Technical architecture and scaling guide](docs/technical-architecture.md)
 - [Technical deployment and operations guide](docs/technical-details.md)

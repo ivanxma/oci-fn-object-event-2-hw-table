@@ -673,5 +673,6 @@ Then verify:
 
 ## Related documentation
 
+- [Technical architecture and scaling guide](technical-architecture.md)
 - [Technical implementation and operations details](technical-details.md)
 - [Project overview and deployment commands](../README.md)
