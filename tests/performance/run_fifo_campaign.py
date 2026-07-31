@@ -923,12 +923,16 @@ class Campaign:
         finally:
             self.sampler_stop.set()
             sampler.join(timeout=15)
+            heatwave_storage_gb = int(
+                os.environ.get("PERF_HEATWAVE_STORAGE_GB", "50")
+            )
             self.results["heatwave"] = {
                 "shape": os.environ.get("PERF_HEATWAVE_SHAPE", "MySQL.2"),
-                "storage_gb": int(os.environ.get("PERF_HEATWAVE_STORAGE_GB", "50")),
+                "storage_gb": heatwave_storage_gb,
                 "iops_model": (
                     "HeatWave storage IOPS capacity is coupled to allocated storage; "
-                    "this deployment used 50 GB. Direct IOPS telemetry was not inferred."
+                    f"this deployment used {heatwave_storage_gb} GB. "
+                    "Direct IOPS telemetry was not inferred."
                 ),
                 **summarize_heatwave_samples(self.heatwave_samples),
             }
