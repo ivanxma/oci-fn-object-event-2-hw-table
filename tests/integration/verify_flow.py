@@ -183,11 +183,12 @@ class FlowVerification:
         self.containers = oci.container_instances.ContainerInstanceClient(client_config, signer=signer)
         self.namespace = self.object_storage.get_namespace().data
         self.compartment_name = self.identity.get_compartment(self.compartment_id).data.name
-        repository = required("REPOSITORY_PREFIX").strip("/").lower()
-        image_name = required("PROCESSOR_IMAGE_NAME")
+        repository = required("OCI_REGISTRY_REPOSITORY").strip("/").lower()
         image_tag = required("PROCESSOR_IMAGE_TAG")
+        if not image_tag.startswith("processor-"):
+            image_tag = f"processor-{image_tag}"
         region_key = required("REGION_KEY")
-        self.image_url = f"{region_key}.ocir.io/{self.namespace}/{repository}/{image_name}:{image_tag}"
+        self.image_url = f"{region_key}.ocir.io/{self.namespace}/{repository}:{image_tag}"
 
     def create_managed_stream(self) -> None:
         if not self.managed_stream or self.stream_id:

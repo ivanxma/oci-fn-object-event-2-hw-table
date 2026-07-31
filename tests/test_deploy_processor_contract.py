@@ -26,6 +26,14 @@ class ProcessorDeploymentContractTest(unittest.TestCase):
         self.assertIn('--image-name "$OCI_REGISTRY_REPOSITORY"', source)
         self.assertIn('--image-tag "$PROCESSOR_REGISTRY_IMAGE_TAG"', source)
 
+    def test_flow_verifier_uses_the_same_shared_repository_contract(self):
+        source = (ROOT / "tests" / "integration" / "verify_flow.py").read_text()
+        self.assertIn('required("OCI_REGISTRY_REPOSITORY")', source)
+        self.assertIn('image_tag = f"processor-{image_tag}"', source)
+        self.assertIn('{repository}:{image_tag}', source)
+        self.assertNotIn('required("REPOSITORY_PREFIX")', source)
+        self.assertNotIn('required("PROCESSOR_IMAGE_NAME")', source)
+
 
 if __name__ == "__main__":
     unittest.main()
