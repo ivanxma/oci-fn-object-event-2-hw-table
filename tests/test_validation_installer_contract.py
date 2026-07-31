@@ -83,6 +83,8 @@ class ValidationInstallerContractTest(unittest.TestCase):
         self.assertIn('export UI_IMAGE_TAG_OVERRIDE="$VERSION"', release)
         self.assertIn('"$ROOT_DIR/deploy/build_processor_image.sh"', release)
         self.assertIn('"$ROOT_DIR/deploy/deploy_ui.sh"', release)
+        self.assertIn('ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"', release)
+        self.assertIn('. "$ENV_FILE"', release)
         self.assertIn(
             'PROCESSOR_IMAGE_TAG="${PROCESSOR_IMAGE_TAG_OVERRIDE:-${PROCESSOR_IMAGE_TAG:-}}"',
             processor,

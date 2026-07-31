@@ -3,6 +3,12 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
+[[ -r "$ENV_FILE" ]] || { echo "Missing $ENV_FILE" >&2; exit 1; }
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
 VERSION=""
 DEPLOY_UI=true
 
