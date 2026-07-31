@@ -176,8 +176,8 @@ OCID (not its content) into ignored `deploy/env.sh`, and removes the password
 file. Supplying an existing `DB_SECRET_OCID` is supported for reuse or
 migration, but is not the clean-install verification path.
 
-Control, durable, and staging database names default to `stream_db`,
-`stream_data`, and `staging_db`; override them in the config only when the
+The default target, control, durable, and staging database names are `testdb`,
+`stream_db`, `stream_data`, and `stream_staging`; override them in the config only when the
 selected Vault secret uses isolated validation schemas. This non-interactive
 path bootstraps packages, derives instance/region/AD/VCN
 and Vault/key metadata, selects a private Processor subnet in the UI VM's VCN,

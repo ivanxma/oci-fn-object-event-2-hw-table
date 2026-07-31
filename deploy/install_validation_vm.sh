@@ -28,7 +28,7 @@ reuse/migration and is not the clean-install path.
 Optional values include DB_PORT (default: 3306), DB_NAME,
 CONTROL_DATABASE (default: stream_db),
 STREAM_DATA_DB_NAME (default: stream_data), STAGING_DATABASE (default:
-staging_db), PROCESSOR_IMAGE_TAG,
+stream_staging), PROCESSOR_IMAGE_TAG,
 GENERATE_SELF_SIGNED_CERT, UI_SERVER_NAME, and INSTALL_UI.
 Runtime database access uses only the generated Vault secret OCID, and OCIR
 uses the instance principal.
@@ -78,10 +78,10 @@ else
   [[ "$password_mode" == 600 ]] || { echo "DB_PASSWORD_FILE must have mode 0600." >&2; exit 1; }
 fi
 export DB_PORT="${DB_PORT:-3306}"
-export DB_NAME="${DB_NAME:-${TARGET_DATABASE:-target_db}}"
+export DB_NAME="${DB_NAME:-${TARGET_DATABASE:-testdb}}"
 export CONTROL_DATABASE="${CONTROL_DATABASE:-stream_db}"
 export STREAM_DATA_DB_NAME="${STREAM_DATA_DB_NAME:-stream_data}"
-export STAGING_DATABASE="${STAGING_DATABASE:-staging_db}"
+export STAGING_DATABASE="${STAGING_DATABASE:-stream_staging}"
 "$ROOT_DIR/deploy/bootstrap_streaming.sh"
 export PROCESSOR_IMAGE_TAG="${PROCESSOR_IMAGE_TAG:-validation-$(date -u +%Y%m%d%H%M%S)}"
 export GENERATE_SELF_SIGNED_CERT="${GENERATE_SELF_SIGNED_CERT:-true}"

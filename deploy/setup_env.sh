@@ -260,10 +260,10 @@ if [[ -z "${DB_SECRET_OCID:-}" ]]; then
   prompt_required DB_PORT "Database port" "3306"
   [[ "$DB_PORT" =~ ^[0-9]+$ ]] && (( DB_PORT >= 1 && DB_PORT <= 65535 )) || { echo "Database port must be 1..65535." >&2; exit 1; }
   prompt_required DB_USER "Database user"
-  prompt_required DB_NAME "Default database" "${CONTROL_DATABASE:-stream_db}"
+  prompt_required DB_NAME "Default target database" "testdb"
   prompt_required CONTROL_DATABASE "Control database" "stream_db"
   prompt_required STREAM_DATA_DB_NAME "Durable stream database" "stream_data"
-  prompt_required STAGING_DATABASE "Staging database" "staging_db"
+  prompt_required STAGING_DATABASE "Staging database" "stream_staging"
   if [[ -n "$DB_PASSWORD_FILE" ]]; then
     [[ -f "$DB_PASSWORD_FILE" && ! -L "$DB_PASSWORD_FILE" ]] || { echo "Password file must be a regular file." >&2; exit 1; }
     mode=$(stat -c '%a' "$DB_PASSWORD_FILE" 2>/dev/null || stat -f '%Lp' "$DB_PASSWORD_FILE")
@@ -323,7 +323,7 @@ FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-$(openssl rand -hex 32)}
 
 CONTROL_DATABASE=${CONTROL_DATABASE:-stream_db}
 STREAM_DATA_DB_NAME=${STREAM_DATA_DB_NAME:-stream_data}
-STAGING_DATABASE=${STAGING_DATABASE:-staging_db}
+STAGING_DATABASE=${STAGING_DATABASE:-stream_staging}
 prompt_required OBJECT_STORAGE_BUCKET_NAME "Object Storage bucket name"
 prompt_required UI_SERVER_NAME "UI server name" "${DEFAULT_SERVER_NAME:-_}"
 

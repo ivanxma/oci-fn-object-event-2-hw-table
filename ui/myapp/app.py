@@ -58,7 +58,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         PROCESSOR_IMAGE_URL=os.environ.get("PROCESSOR_IMAGE_URL", ""), PROCESSOR_CONTAINER_NAME_PREFIX=os.environ.get("PROCESSOR_CONTAINER_NAME_PREFIX", "object-storage-stream-processor"),
         WRITER_WORKERS=os.environ.get("WRITER_WORKERS", "4"),
         UI_IMAGE_NAME=os.environ.get("UI_IMAGE_NAME", "object-storage-heatwave-ui"), UI_IMAGE_TAG=os.environ.get("UI_IMAGE_TAG", "dev"),
-        DB_SECRET_OCID=os.environ.get("DB_SECRET_OCID", ""), DB_HOST=os.environ.get("DB_HOST", ""), DB_PORT=os.environ.get("DB_PORT", "3306"), DB_USER=os.environ.get("DB_USER", ""), DB_NAME=os.environ.get("DB_NAME", ""), STREAM_DATA_DB_NAME=os.environ.get("STREAM_DATA_DB_NAME", ""), STAGING_DATABASE=os.environ.get("STAGING_DATABASE", "staging_db"), SUBNET_ID=os.environ.get("SUBNET_ID", ""),
+        DB_SECRET_OCID=os.environ.get("DB_SECRET_OCID", ""), DB_HOST=os.environ.get("DB_HOST", ""), DB_PORT=os.environ.get("DB_PORT", "3306"), DB_USER=os.environ.get("DB_USER", ""), DB_NAME=os.environ.get("DB_NAME", ""), STREAM_DATA_DB_NAME=os.environ.get("STREAM_DATA_DB_NAME", ""), STAGING_DATABASE=os.environ.get("STAGING_DATABASE", "stream_staging"), SUBNET_ID=os.environ.get("SUBNET_ID", ""),
     )
     if test_config:
         app.config.update(test_config)
