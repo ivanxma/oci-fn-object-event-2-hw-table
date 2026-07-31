@@ -35,6 +35,22 @@ class EventTxPaginationContractTest(unittest.TestCase):
         self.assertIn("def error_logs_page(", service)
         self.assertIn("offset=(max(page, 1) - 1) * max(page_size, 1)", service)
 
+    def test_object_event_table_exposes_processor_metrics(self):
+        service = (ROOT / "myapp" / "services" / "event_tx_service.py").read_text()
+        template = (ROOT / "myapp" / "templates" / "event_transactions.html").read_text()
+        for column in (
+            "rows_affected",
+            "object_size_bytes",
+            "queue_delay_ms",
+            "loader_duration_ms",
+            "exchange_duration_ms",
+            "processing_duration_ms",
+            "processor_release",
+        ):
+            self.assertIn(column, service)
+        self.assertIn("'Rows affected'", template)
+        self.assertIn("'Read + load (ms)'", template)
+
 
 if __name__ == "__main__":
     unittest.main()

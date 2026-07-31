@@ -15,7 +15,7 @@ PROCESSOR_SHAPE="${PROCESSOR_SHAPE:-CI.Standard.E4.Flex}"
 PROCESSOR_OCPUS="${PROCESSOR_OCPUS:-1}"
 PROCESSOR_MEMORY_GBS="${PROCESSOR_MEMORY_GBS:-16}"
 WRITER_WORKERS="${WRITER_WORKERS:-4}"
-for value in OCI_STREAM_ID PROCESSING_MODE EXPECTED_PARTITION_COUNT PROCESSOR_REPLICA_COUNT PROCESSOR_PARTITIONS PROCESSOR_MAPPING_ID COMPARTMENT_ID REGION REGION_KEY SUBNET_ID CONTAINER_AVAILABILITY_DOMAIN PROCESSOR_SHAPE PROCESSOR_OCPUS PROCESSOR_MEMORY_GBS DB_SECRET_OCID WRITER_WORKERS PROCESSOR_IMAGE_TAG REPOSITORY_PREFIX PROCESSOR_IMAGE_NAME; do
+for value in OCI_STREAM_ID PROCESSING_MODE EXPECTED_PARTITION_COUNT PROCESSOR_REPLICA_COUNT PROCESSOR_PARTITIONS PROCESSOR_MAPPING_ID COMPARTMENT_ID REGION REGION_KEY SUBNET_ID CONTAINER_AVAILABILITY_DOMAIN PROCESSOR_SHAPE PROCESSOR_OCPUS PROCESSOR_MEMORY_GBS DB_SECRET_OCID WRITER_WORKERS PROCESSOR_IMAGE_TAG OCI_REGISTRY_REPOSITORY_ID; do
   [[ -n "${!value:-}" ]] || { echo "$value is required" >&2; exit 1; }
 done
 case "$PROCESSING_MODE" in
@@ -33,9 +33,41 @@ for partition in "${PARTITION_LIST[@]}"; do
 done
 [[ "$PROCESSING_MODE" != FIFO || "$PROCESSOR_PARTITIONS" == 0 ]] || { echo 'FIFO processor must be assigned partition 0.' >&2; exit 1; }
 [[ "$WRITER_WORKERS" =~ ^[0-9]+$ ]] && (( WRITER_WORKERS >= 1 && WRITER_WORKERS <= 32 )) || { echo 'WRITER_WORKERS must be from 1 to 32.' >&2; exit 1; }
-command -v oci >/dev/null || { echo 'Missing OCI CLI.' >&2; exit 1; }
+for command in oci jq; do
+  command -v "$command" >/dev/null || { echo "Missing $command." >&2; exit 1; }
+done
 NAMESPACE=$(oci --auth instance_principal --region "$REGION" os ns get --query data --raw-output)
-IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/${REPOSITORY_PREFIX,,}/$PROCESSOR_IMAGE_NAME:$PROCESSOR_IMAGE_TAG"
+REPOSITORY_JSON=$(oci --auth instance_principal --region "$REGION" artifacts container repository get --repository-id "$OCI_REGISTRY_REPOSITORY_ID" --output json)
+RESOLVED_REPOSITORY=$(jq -r '.data."display-name" // empty' <<< "$REPOSITORY_JSON")
+[[ "$(jq -r '.data."compartment-id" // empty' <<< "$REPOSITORY_JSON")" == "$COMPARTMENT_ID" &&
+   "$(jq -r '.data."lifecycle-state" // empty' <<< "$REPOSITORY_JSON")" == "AVAILABLE" ]] || {
+  echo "The configured OCI Container Registry repository is unavailable or outside the deployment compartment." >&2
+  exit 1
+}
+[[ -z "${OCI_REGISTRY_REPOSITORY:-}" || "$OCI_REGISTRY_REPOSITORY" == "$RESOLVED_REPOSITORY" ]] || {
+  echo "OCI_REGISTRY_REPOSITORY does not match OCI_REGISTRY_REPOSITORY_ID." >&2
+  exit 1
+}
+OCI_REGISTRY_REPOSITORY=$RESOLVED_REPOSITORY
+case "$PROCESSOR_IMAGE_TAG" in
+  processor-*) PROCESSOR_REGISTRY_IMAGE_TAG="$PROCESSOR_IMAGE_TAG" ;;
+  *) PROCESSOR_REGISTRY_IMAGE_TAG="processor-$PROCESSOR_IMAGE_TAG" ;;
+esac
+IMAGE="$REGION_KEY.ocir.io/$NAMESPACE/$OCI_REGISTRY_REPOSITORY:$PROCESSOR_REGISTRY_IMAGE_TAG"
+PUBLISHED_IMAGE=$(
+  oci --auth instance_principal --region "$REGION" artifacts container image list \
+    --compartment-id "$COMPARTMENT_ID" --all --output json |
+    jq -r --arg repository "$OCI_REGISTRY_REPOSITORY" --arg version "$PROCESSOR_REGISTRY_IMAGE_TAG" \
+      '.data.items[] |
+       select(."repository-name" == $repository and .version == $version and ."lifecycle-state" != "DELETED") |
+       .id' |
+    head -1
+)
+[[ -n "$PUBLISHED_IMAGE" ]] || {
+  echo "Processor image is not published: $OCI_REGISTRY_REPOSITORY:$PROCESSOR_REGISTRY_IMAGE_TAG" >&2
+  echo "Run deploy/build_processor_image.sh with this version before deployment." >&2
+  exit 1
+}
 PARTITION_SUFFIX=${PROCESSOR_PARTITIONS//,/-}
 CONTAINER_NAME="${PROCESSOR_CONTAINER_NAME_PREFIX}-${PROCESSING_MODE,,}-p${PARTITION_SUFFIX}"
 CONFIG=$(mktemp); trap 'rm -f "$CONFIG"' EXIT
@@ -80,7 +112,7 @@ if [[ -x "$DEPLOYMENT_PYTHON" ]]; then
     --deployment-id "$DEPLOYMENT_ID" --mapping-id "$PROCESSOR_MAPPING_ID" \
     --release-version "$RELEASE_VERSION" --git-sha "$GIT_SHA" \
     --source-branch "$SOURCE_BRANCH" --build-utc "$BUILD_UTC" \
-    --image-name "$PROCESSOR_IMAGE_NAME" --image-tag "$PROCESSOR_IMAGE_TAG" \
+    --image-name "$OCI_REGISTRY_REPOSITORY" --image-tag "$PROCESSOR_REGISTRY_IMAGE_TAG" \
     --config-schema-version "$CONFIG_SCHEMA_VERSION" ||
     echo "WARNING: Processor deployment succeeded but deployment history could not be recorded." >&2
 else

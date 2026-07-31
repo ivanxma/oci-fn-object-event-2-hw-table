@@ -111,10 +111,10 @@ python3.12 -m venv "$ROOT_DIR/.venv-verification-py312"
 OCI_AUTH_MODE=instance_principal "$VERIFY_PYTHON" "$ROOT_DIR/deploy/initialize_databases.py"
 "$ROOT_DIR/tests/integration/verify_durable_capture.sh"
 "$ROOT_DIR/tests/integration/verify_streaming_deployment.sh"
-"$ROOT_DIR/deploy/build_processor_image.sh"
-
 if [[ "$INSTALL_UI" == true ]]; then
-  "$ROOT_DIR/deploy/deploy_ui.sh"
+  "$ROOT_DIR/deploy/publish_release.sh" --version "$PROCESSOR_IMAGE_TAG"
+else
+  "$ROOT_DIR/deploy/publish_release.sh" --version "$PROCESSOR_IMAGE_TAG" --skip-ui
 fi
 
 echo "PASS: non-interactive validation VM installation completed."

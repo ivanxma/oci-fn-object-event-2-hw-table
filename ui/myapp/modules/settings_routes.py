@@ -86,7 +86,7 @@ def _initialize(mysql, values: dict[str, str], *, replace: bool = False) -> None
                 cursor.execute(f"DROP TABLE IF EXISTS {durable}.{quote_identifier(row[0], 'durable table')}")
         for statement in _split_sql(ROOT / "processor/sql/init_stream_capture.sql"):
             cursor.execute(statement)
-        for path in (ROOT / "processor/sql/migrate_stream_capture_retry.sql", ROOT / "processor/sql/migrate_stream_capture_processing.sql", ROOT / "processor/sql/migrate_release_stamp.sql"):
+        for path in (ROOT / "processor/sql/migrate_stream_capture_retry.sql", ROOT / "processor/sql/migrate_stream_capture_processing.sql", ROOT / "processor/sql/migrate_release_stamp.sql", ROOT / "processor/sql/migrate_stream_capture_metrics.sql"):
             for statement in _split_sql(path):
                 try:
                     cursor.execute(statement)

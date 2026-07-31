@@ -66,8 +66,8 @@ def process_one(connection: Any, processor: Any, *, stream_id: str, partitions: 
         # Claim normally normalizes JSON, but normalize again at the execution
         # boundary so a Connector/Python representation can never reach the
         # loader as a JSON string.
-        processor(decoded_payload(row["payload"]))
-        complete(connection, int(row["id"]))
+        metrics = processor(decoded_payload(row["payload"])) or {}
+        complete(connection, int(row["id"]), metrics)
         return True
     except Exception as error:
         # Object Storage returns 404 after a source is deleted. If its later
@@ -75,7 +75,7 @@ def process_one(connection: Any, processor: Any, *, stream_id: str, partitions: 
         # the older load is superseded rather than retryable. Completing it
         # lets the DELETE drop the owned target partition.
         if getattr(error, "status", None) == 404 and has_later_delete(connection, row):
-            complete(connection, int(row["id"]))
+            complete(connection, int(row["id"]), {"rows": 0})
             return True
         fail(connection, int(row["id"]), error)
         return False

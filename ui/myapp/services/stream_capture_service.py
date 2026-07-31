@@ -17,6 +17,7 @@ VALID_ARCHIVE_GRANULARITIES = {"YEAR", "MONTH", "WEEK"}
 class StreamCaptureService:
     def __init__(self, mysql, database: str):
         self.mysql = mysql
+        self.database_name = database
         self.database = quote_identifier(database, "stream data database")
         self.table = f"{self.database}.`stream_message_capture`"
         self.registry = f"{self.database}.`stream_message_archive_partitions`"
@@ -64,11 +65,36 @@ class StreamCaptureService:
         cursor.execute(f"SELECT table_name FROM {self.registry} WHERE partition_name=%s", (name,))
         row = cursor.fetchone()
         if row:
-            return name, str(row["table_name"] if isinstance(row, dict) else row[0])
+            table_name = str(row["table_name"] if isinstance(row, dict) else row[0])
+            self._ensure_partition_metrics(cursor, table_name)
+            return name, table_name
         table = self._partition_table(table_name)
         cursor.execute(self._sql(ARCHIVE_PARTITION_SQL).replace("__ARCHIVE_TABLE__", table))
         cursor.execute(f"INSERT INTO {self.registry} (partition_name, granularity, period_key, table_name) VALUES (%s,%s,%s,%s)", (name, granularity.upper(), period, table_name))
         return name, table_name
+
+    def _ensure_partition_metrics(self, cursor, table_name: str) -> None:
+        """Upgrade an existing physical archive table before inserting metrics."""
+        table = self._partition_table(table_name)
+        definitions = {
+            "rows_affected": "BIGINT UNSIGNED NULL",
+            "object_size_bytes": "BIGINT UNSIGNED NULL",
+            "loader_duration_ms": "DECIMAL(15,3) NULL",
+            "exchange_duration_ms": "DECIMAL(15,3) NULL",
+            "processor_release_stamp": "VARCHAR(255) NOT NULL DEFAULT 'unknown'",
+        }
+        cursor.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema=%s AND table_name=%s",
+            (self.database_name, table_name),
+        )
+        existing = {
+            str(row["column_name"] if isinstance(row, dict) else row[0])
+            for row in cursor.fetchall()
+        }
+        for column, definition in definitions.items():
+            if column not in existing:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN `{column}` {definition}")
 
     def summary(self) -> dict[str, int]:
         counts = {status: 0 for status in VALID_CAPTURE_STATUSES}; counts["ARCHIVED"] = 0
@@ -140,7 +166,7 @@ class StreamCaptureService:
         capture_id = self._identifier(capture_id)
         with self.mysql.connection() as conn:
             cursor = conn.cursor(dictionary=True); _, table_name = self._ensure_partition(cursor, granularity); table = self._partition_table(table_name)
-            cursor.execute(f"INSERT INTO {table} (capture_id, stream_id, partition_id, stream_offset, message_key, payload, status, attempts, last_error, received_at, completed_at) SELECT id, stream_id, partition_id, stream_offset, message_key, payload, status, attempts, last_error, received_at, completed_at FROM {self.table} WHERE id=%s AND status IN ('COMPLETED','FAILED')", (capture_id,))
+            cursor.execute(f"INSERT INTO {table} (capture_id, stream_id, partition_id, stream_offset, message_key, payload, status, attempts, rows_affected, object_size_bytes, loader_duration_ms, exchange_duration_ms, processor_release_stamp, last_error, received_at, completed_at) SELECT id, stream_id, partition_id, stream_offset, message_key, payload, status, attempts, rows_affected, object_size_bytes, loader_duration_ms, exchange_duration_ms, processor_release_stamp, last_error, received_at, completed_at FROM {self.table} WHERE id=%s AND status IN ('COMPLETED','FAILED')", (capture_id,))
             if cursor.rowcount != 1: conn.rollback(); return False
             cursor.execute(f"DELETE FROM {self.table} WHERE id=%s AND status IN ('COMPLETED','FAILED')", (capture_id,)); conn.commit(); return True
 

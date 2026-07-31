@@ -64,7 +64,9 @@ run production deployment scripts from `deploy/` and validation harnesses from
 # AD, VCN, subnet, Vault, enabled AES key, and database secret interactively.
 ./deploy/setup_env.sh
 # Or copy env.sh.example and fill only its mandatory settings.
-./deploy/build_processor_image.sh
+# One version publishes processor-<version> and ui-<version> to the same
+# repository, then activates the UI release.
+./deploy/publish_release.sh --version "$(git rev-parse --short HEAD)"
 ./tests/integration/verify_streaming_deployment.sh
 # Optional bounded integration check against the configured durable database.
 # On OL9 it uses the project-local Python 3.12 verifier environment.
@@ -74,11 +76,13 @@ run production deployment scripts from `deploy/` and validation harnesses from
 # its uniquely named OCI/DB resources.
 ./tests/integration/verify_fifo_flow.sh
 ./tests/integration/verify_parallel_flow.sh
-./deploy/deploy_ui.sh
 # Only after the documented full verification gate:
 ./deploy/deploy_processor.sh
 ```
 
+`publish_release.sh` is the supported scripted release entry point. One
+`--version` value produces immutable `processor-<version>` and `ui-<version>`
+tags in the same configured repository, then activates the UI release.
 `build_processor_image.sh` builds and pushes the non-root processor image using
 the deployment host's instance-principal OCIR credential helper; it never uses
 a static registry credential. Interactive and silent setup validate the
@@ -89,7 +93,10 @@ deployment-owned and read-only in Settings; releases vary only by immutable
 tag. Increase `PROCESSOR_IMAGE_TAG` for every Processor image release; the
 build refuses to overwrite a tag already present in that repository.
 `deploy_processor.sh` creates
-one Container Instance for one explicit partition assignment. Set
+one Container Instance for one explicit partition assignment. It resolves the
+same authoritative repository OCID used by the build, normalizes the selected
+version to `processor-<version>`, and refuses deployment unless that immutable
+tag is already published. Set
 `PROCESSOR_DB_SECRET_OCID` for a mapping-specific replacement that must use a
 different Vault database bundle without changing the deployment host's default
 `DB_SECRET_OCID`. `deploy_ui.sh`

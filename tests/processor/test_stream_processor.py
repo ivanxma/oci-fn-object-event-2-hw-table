@@ -222,7 +222,7 @@ class ProcessorModeTest(unittest.TestCase):
             @staticmethod
             def has_later_delete(*_args): return True
             @staticmethod
-            def complete(_connection, capture_id): calls.append(("complete", capture_id))
+            def complete(_connection, capture_id, metrics=None): calls.append(("complete", capture_id, metrics))
             @staticmethod
             def fail(*_args): raise AssertionError("superseded event must not fail")
 
@@ -235,7 +235,7 @@ class ProcessorModeTest(unittest.TestCase):
                     partitions=["0"],
                 )
             )
-        self.assertEqual(calls, [("complete", 9)])
+        self.assertEqual(calls, [("complete", 9, {"rows": 0})])
 
     def test_object_not_found_remains_retryable_without_later_delete(self):
         import sys
@@ -275,6 +275,41 @@ class ProcessorModeTest(unittest.TestCase):
         from unittest.mock import patch
         from loader import process_event
         received = []
-        with patch.dict(sys.modules, {"event_processor": SimpleNamespace(process_cloud_event=lambda event: received.append(event))}):
-            process_event({"eventType": "test"})
+        result = {"rows": 12}
+        with patch.dict(sys.modules, {"event_processor": SimpleNamespace(process_cloud_event=lambda event: (received.append(event) or result))}):
+            self.assertEqual(process_event({"eventType": "test"}), result)
         self.assertEqual(received, [{"eventType": "test"}])
+
+    def test_processor_passes_loader_metrics_to_durable_completion(self):
+        import sys
+        from unittest.mock import patch
+        completed = []
+        metrics = {
+            "rows": 25,
+            "object_size_bytes": 1024,
+            "loader_duration_ms": 12.5,
+            "exchange_duration_ms": 1.25,
+        }
+
+        class Store:
+            @staticmethod
+            def claim_next(*_args, **_kwargs):
+                return {"id": 42, "payload": {"eventType": "test"}}
+            @staticmethod
+            def decoded_payload(value): return value
+            @staticmethod
+            def has_later_delete(*_args): return False
+            @staticmethod
+            def complete(_connection, capture_id, result):
+                completed.append((capture_id, result))
+            @staticmethod
+            def fail(*_args): raise AssertionError("metric completion must not fail")
+
+        with patch.dict(sys.modules, {"message_store": Store}):
+            self.assertTrue(
+                process_one(
+                    None, lambda _payload: metrics,
+                    stream_id="ocid1.stream.test", partitions=["0"],
+                )
+            )
+        self.assertEqual(completed, [(42, metrics)])

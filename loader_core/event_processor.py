@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -84,7 +85,11 @@ class ObjectStorageRangeStream(io.RawIOBase):
         if self._body is not None:
             self._body.close()
             self._body = None
-            self._body_remaining = 0
+        self._body_remaining = 0
+
+    @property
+    def length(self) -> int:
+        return self._length
 
     def _open_range(self) -> None:
         end = min(self._position + self._range_bytes, self._length) - 1
@@ -156,14 +161,18 @@ def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, cr
         object_stream = _object_stream(event, source)
         # Decode a bounded range stream directly: no object copy is made in /tmp
         # or elsewhere on the processor filesystem.
+        load_started = time.perf_counter()
         with io.TextIOWrapper(io.BufferedReader(object_stream), encoding="utf-8", newline="") as csv_stream:
             rows = load_csv_parallel(
                 db, mapping, stage, record["batch_num"], columns, csv_stream,
                 int(os.environ.get("BATCH_ROWS", "10000")), int(os.environ.get("WRITER_WORKERS") or mapping.get("worker_threads") or "4"),
             )
+        loader_duration_ms = (time.perf_counter() - load_started) * 1000
+        exchange_started = time.perf_counter()
         validate_and_exchange(db, mapping, stage, record["batch_num"])
+        exchange_duration_ms = (time.perf_counter() - exchange_started) * 1000
         mark_active(db, record["id"])
-        return {"action": action.lower(), "batch_num": record["batch_num"], "rows": rows, "target": f"{mapping['target_database']}.{mapping['target_table']}", "processing_mode": mapping.get("processing_mode", "FIFO"), "worker_threads": mapping.get("worker_threads", 4)}
+        return {"action": action.lower(), "batch_num": record["batch_num"], "rows": rows, "object_size_bytes": object_stream.length, "loader_duration_ms": round(loader_duration_ms, 3), "exchange_duration_ms": round(exchange_duration_ms, 3), "target": f"{mapping['target_database']}.{mapping['target_table']}", "processing_mode": mapping.get("processing_mode", "FIFO"), "worker_threads": mapping.get("worker_threads", 4)}
     except Exception as error:
         if record is not None:
             try:

@@ -14,6 +14,7 @@ DEFAULT_SCHEMA_SQL = Path(__file__).with_name("sql") / "init_stream_capture.sql"
 RETRY_MIGRATION_SQL = Path(__file__).with_name("sql") / "migrate_stream_capture_retry.sql"
 PROCESSING_MIGRATION_SQL = Path(__file__).with_name("sql") / "migrate_stream_capture_processing.sql"
 RELEASE_MIGRATION_SQL = Path(__file__).with_name("sql") / "migrate_release_stamp.sql"
+METRICS_MIGRATION_SQL = Path(__file__).with_name("sql") / "migrate_stream_capture_metrics.sql"
 
 
 def schema_sql_path() -> Path:
@@ -60,6 +61,10 @@ def ensure_schema(connection: Any) -> None:
         cursor.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=%s AND column_name='processor_release_stamp'", (table,))
         if cursor.fetchone()[0] == 0:
             statement = next(item for item in migration_statements(RELEASE_MIGRATION_SQL) if item.startswith(f"ALTER TABLE {table}"))
+            cursor.execute(statement)
+    cursor.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='stream_message_capture' AND column_name='rows_affected'")
+    if cursor.fetchone()[0] == 0:
+        for statement in migration_statements(METRICS_MIGRATION_SQL):
             cursor.execute(statement)
 
 
@@ -187,10 +192,34 @@ def claim_next(connection: Any, *, stream_id: str, partitions: list[str]) -> dic
     connection.commit()
     return row
 
-def complete(connection: Any, capture_id: int) -> None:
+def complete(connection: Any, capture_id: int, metrics: dict[str, Any] | None = None) -> None:
+    metrics = metrics or {}
+    values = (
+        metrics.get("rows"),
+        metrics.get("object_size_bytes"),
+        metrics.get("loader_duration_ms"),
+        metrics.get("exchange_duration_ms"),
+        capture_id,
+    )
     cursor = connection.cursor()
-    cursor.execute("UPDATE stream_message_capture SET status='COMPLETED', completed_at=UTC_TIMESTAMP(6), next_retry_at=NULL, processing_started_at=NULL WHERE id=%s", (capture_id,))
-    cursor.execute("UPDATE stream_event_tx_log SET event_status='COMPLETED', completed_at=UTC_TIMESTAMP(6), message=NULL WHERE capture_id=%s", (capture_id,))
+    cursor.execute(
+        """UPDATE stream_message_capture
+              SET status='COMPLETED', completed_at=UTC_TIMESTAMP(6),
+                  rows_affected=%s, object_size_bytes=%s,
+                  loader_duration_ms=%s, exchange_duration_ms=%s,
+                  next_retry_at=NULL
+            WHERE id=%s""",
+        values,
+    )
+    cursor.execute(
+        """UPDATE stream_event_tx_log
+              SET event_status='COMPLETED', completed_at=UTC_TIMESTAMP(6),
+                  rows_affected=%s, object_size_bytes=%s,
+                  loader_duration_ms=%s, exchange_duration_ms=%s,
+                  message=NULL
+            WHERE capture_id=%s""",
+        values,
+    )
     connection.commit()
 
 def fail(connection: Any, capture_id: int, error: Exception) -> None:

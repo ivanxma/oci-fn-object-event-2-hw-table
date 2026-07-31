@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import uuid
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
@@ -515,9 +516,14 @@ def run_delete(event_path: Path) -> dict[str, Any]:
             # the partition itself so deleted objects do not leave an
             # ever-growing set of empty partitions. A later create re-adds it
             # through ensure_partition before loading the replacement data.
-            cursor.execute(f"ALTER TABLE {table_name(record['target_database'], record['target_table'])} DROP PARTITION {quote_identifier(partition_name(record['batch_num']), 'partition name')}")
+            target = table_name(record["target_database"], record["target_table"])
+            cursor.execute(f"SELECT COUNT(*) FROM {target} WHERE batch_num=%s", (record["batch_num"],))
+            rows_affected = int(cursor.fetchone()[0])
+            exchange_started = time.perf_counter()
+            cursor.execute(f"ALTER TABLE {target} DROP PARTITION {quote_identifier(partition_name(record['batch_num']), 'partition name')}")
+            exchange_duration_ms = (time.perf_counter() - exchange_started) * 1000
             cursor.execute(f"UPDATE {control_table('source_object_batches')} SET lifecycle_state = 'DELETED' WHERE id = %s", (record["id"],))
-        return {"event": "delete", "batch_num": record["batch_num"], "target": f"{record['target_database']}.{record['target_table']}"}
+        return {"event": "delete", "batch_num": record["batch_num"], "target": f"{record['target_database']}.{record['target_table']}", "rows": rows_affected, "exchange_duration_ms": round(exchange_duration_ms, 3)}
     except Exception:
         raise
 

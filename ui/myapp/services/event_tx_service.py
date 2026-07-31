@@ -69,9 +69,16 @@ class EventTransactionService:
         cursor.execute(
             f"""SELECT capture.id, capture.stream_id, capture.partition_id, capture.stream_offset,
                        capture.payload, capture.status, capture.attempts, capture.last_error,
+                       capture.processor_release_stamp, capture.processing_started_at,
+                       capture.rows_affected, capture.object_size_bytes,
+                       capture.loader_duration_ms, capture.exchange_duration_ms,
                        capture.received_at AS event_received_at, capture.completed_at AS event_completed_at,
                        CASE WHEN capture.completed_at IS NULL THEN NULL ELSE
                          TIMESTAMPDIFF(MICROSECOND,capture.received_at,capture.completed_at)/1000 END AS event_duration_ms,
+                       CASE WHEN capture.processing_started_at IS NULL THEN NULL ELSE
+                         TIMESTAMPDIFF(MICROSECOND,capture.received_at,capture.processing_started_at)/1000 END AS queue_delay_ms,
+                       CASE WHEN capture.completed_at IS NULL OR capture.processing_started_at IS NULL THEN NULL ELSE
+                         TIMESTAMPDIFF(MICROSECOND,capture.processing_started_at,capture.completed_at)/1000 END AS processing_duration_ms,
                        mapping.id AS mapping_id, mapping.target_database, mapping.target_table,
                        mapping.processing_mode
                   FROM {capture}.`stream_message_capture` capture
@@ -328,7 +335,13 @@ class EventTransactionService:
 
     @staticmethod
     def object_event_columns(_database: str) -> list[str]:
-        return ["event_time", "event_type", "bucket_name", "resource_name", "stream_partition", "stream_offset", "target", "message", "received_at", "completed_at", "duration_ms"]
+        return [
+            "event_time", "event_type", "bucket_name", "resource_name",
+            "stream_partition", "stream_offset", "target", "status",
+            "rows_affected", "object_size_bytes", "attempts", "queue_delay_ms",
+            "loader_duration_ms", "exchange_duration_ms",
+            "processing_duration_ms", "duration_ms", "processor_release",
+        ]
 
     def object_event_page(self, database: str, *, page: int, page_size: int, sort_column: str | None = None, sort_direction: str = "desc") -> tuple[list[str], list[dict[str, Any]], int, str, str]:
         if validate_identifier(database, "stream data database") != self.stream_data_database:
@@ -343,7 +356,16 @@ class EventTransactionService:
             total = int(cursor.fetchone()["total"])
             rows = self._capture_rows(cursor, limit=max(page_size, 1), offset=(max(page, 1)-1)*max(page_size, 1))
         for row in rows:
-            row.update({"event_time": row["event_received_at"], "event_type": row["event_action"], "stream_partition": row["partition_id"], "stream_offset": row["stream_offset"], "target": row["target_label"], "received_at": row["event_received_at"], "completed_at": row["event_completed_at"], "duration_ms": row["event_duration_ms"]})
+            row.update({
+                "event_time": row["event_received_at"],
+                "event_type": row["event_action"],
+                "stream_partition": row["partition_id"],
+                "stream_offset": row["stream_offset"],
+                "target": row["target_label"],
+                "status": row["event_status"],
+                "duration_ms": row["event_duration_ms"],
+                "processor_release": row["processor_release_stamp"],
+            })
         return columns, rows, total, "received_at", "desc"
 
     def object_event_export(self, database: str, **_kwargs) -> tuple[list[str], list[dict[str, Any]]]:

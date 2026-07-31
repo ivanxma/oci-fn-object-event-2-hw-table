@@ -68,6 +68,26 @@ class ValidationInstallerContractTest(unittest.TestCase):
         self.assertIn('UI_IMAGE_TAG_OVERRIDE="${UI_IMAGE_TAG_OVERRIDE:-}"', source)
         self.assertIn("UI_IMAGE_TAG_OVERRIDE:-${UI_IMAGE_TAG:-", source)
 
+    def test_straight_through_installer_uses_one_versioned_release_script(self):
+        installer = (ROOT / "deploy" / "install_validation_vm.sh").read_text(
+            encoding="utf-8"
+        )
+        release = (ROOT / "deploy" / "publish_release.sh").read_text(
+            encoding="utf-8"
+        )
+        processor = (ROOT / "deploy" / "build_processor_image.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('publish_release.sh" --version "$PROCESSOR_IMAGE_TAG"', installer)
+        self.assertIn('export PROCESSOR_IMAGE_TAG_OVERRIDE="$VERSION"', release)
+        self.assertIn('export UI_IMAGE_TAG_OVERRIDE="$VERSION"', release)
+        self.assertIn('"$ROOT_DIR/deploy/build_processor_image.sh"', release)
+        self.assertIn('"$ROOT_DIR/deploy/deploy_ui.sh"', release)
+        self.assertIn(
+            'PROCESSOR_IMAGE_TAG="${PROCESSOR_IMAGE_TAG_OVERRIDE:-${PROCESSOR_IMAGE_TAG:-}}"',
+            processor,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

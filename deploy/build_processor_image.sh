@@ -6,8 +6,10 @@ set -euo pipefail
 umask 077
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/deploy/env.sh}"
+PROCESSOR_IMAGE_TAG_OVERRIDE="${PROCESSOR_IMAGE_TAG_OVERRIDE:-}"
 [[ -r "$ENV_FILE" ]] || { echo "Missing $ENV_FILE" >&2; exit 1; }
 set -a; . "$ENV_FILE"; set +a
+PROCESSOR_IMAGE_TAG="${PROCESSOR_IMAGE_TAG_OVERRIDE:-${PROCESSOR_IMAGE_TAG:-}}"
 source "$ROOT_DIR/deploy/oci_context.sh"
 oci_context_resolve
 for value in REGION_KEY OCI_REGISTRY_REPOSITORY_ID PROCESSOR_IMAGE_TAG; do

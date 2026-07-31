@@ -62,6 +62,32 @@ class UIConsistencySourceTest(unittest.TestCase):
         self.assertIn("settings.OCI_REGISTRY_REPOSITORY_ID", source)
         self.assertIn("Deployment-owned repository shared by every Processor and UI release.", source)
 
+    def test_managed_processors_have_state_filter_and_colored_badges(self) -> None:
+        source = (TEMPLATES / "orchestration.html").read_text(encoding="utf-8")
+        self.assertIn('name="managed_state"', source)
+        self.assertIn(">All states</option>", source)
+        self.assertIn(">Active only</option>", source)
+        self.assertIn("instance_state = deployment.lifecycle_state|upper", source)
+        self.assertIn('class="lifecycle-cell"', source)
+        self.assertIn("lifecycle-badge", source)
+        self.assertIn("instance_state == 'ACTIVE'", source)
+        self.assertIn("instance_state == 'DELETED'", source)
+
+    def test_event_tx_server_paging_controls_share_one_aligned_row(self) -> None:
+        stylesheet = STYLESHEET.read_text(encoding="utf-8")
+        self.assertIn(
+            ".server-table-controls{align-items:center;display:flex;gap:8px;margin:0}",
+            stylesheet,
+        )
+        self.assertIn(
+            ".server-table-controls label{align-items:center;display:inline-flex",
+            stylesheet,
+        )
+        self.assertIn(
+            ".server-table-controls label select{display:inline-block;margin:0;width:auto}",
+            stylesheet,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
