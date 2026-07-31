@@ -148,6 +148,28 @@ class EventRuleService:
                 f"Could not read OCI Events rules: {type(error).__name__}: {error}"
             ) from error
 
+    def get_stream_rule(self, rule_id: str) -> EventRuleRecord | None:
+        """Resolve one mapping rule when OCI list results are eventually consistent."""
+        if not str(rule_id).startswith("ocid1.eventrule."):
+            return None
+        try:
+            oci, client = self._client()
+            rule = client.get_rule(rule_id).data
+            if (
+                str(getattr(rule, "lifecycle_state", "")).upper() == "DELETED"
+                or not self._is_stream_rule(rule)
+            ):
+                return None
+            return self._record(rule)
+        except EventRuleError:
+            raise
+        except Exception as error:
+            if isinstance(error, oci.exceptions.ServiceError) and error.status == 404:
+                return None
+            raise EventRuleError(
+                f"Could not read OCI Events rule: {type(error).__name__}: {error}"
+            ) from error
+
     def ensure_mapping_rule(
         self,
         *,

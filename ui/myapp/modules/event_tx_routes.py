@@ -59,7 +59,12 @@ def list_event_transactions():
     try:
         service = EventTransactionService(mysql_for_request())
         tables, event_log_exists = service.registered_tables()
-        limit = _limit(request.args.get("limit"))
+        # ``limit`` remains a compatibility alias for links created before
+        # server-side paging was added.
+        recent_page = _page(request.args.get("recent_page"))
+        recent_page_size = _limit(
+            request.args.get("recent_page_size") or request.args.get("limit")
+        )
         active_tab = request.args.get("tab", "recent")
         if active_tab not in {"recent", "registered", "object-events", "logs"}:
             raise ValueError("Unknown Event TX tab.")
@@ -85,9 +90,27 @@ def list_event_transactions():
         else:
             events, registered_total, registered_page, registered_page_size, registered_page_count = [], 0, 1, _limit(request.args.get("registered_page_size")), 1
             stage_tables, stage_cleanup_blocked = [], False
-        recent_events = service.recent_events_all(limit)
-        audit_logs = service.audit_logs(limit)
-        error_logs = service.error_logs(limit)
+        recent_events, recent_total = service.recent_events_page(
+            page=recent_page, page_size=recent_page_size
+        )
+        recent_page_count = max(1, (recent_total + recent_page_size - 1) // recent_page_size)
+        if recent_page > recent_page_count:
+            recent_page = recent_page_count
+            recent_events, recent_total = service.recent_events_page(
+                page=recent_page, page_size=recent_page_size
+            )
+        audit_logs = service.audit_logs(recent_page_size)
+        logs_page = _page(request.args.get("logs_page"))
+        logs_page_size = _limit(request.args.get("logs_page_size"))
+        error_logs, logs_total = service.error_logs_page(
+            page=logs_page, page_size=logs_page_size
+        )
+        logs_page_count = max(1, (logs_total + logs_page_size - 1) // logs_page_size)
+        if logs_page > logs_page_count:
+            logs_page = logs_page_count
+            error_logs, logs_total = service.error_logs_page(
+                page=logs_page, page_size=logs_page_size
+            )
         selected_error_id = _error_id(request.args.get("error_id"))
         selected_error = service.error_log(selected_error_id) if selected_error_id else None
         if selected_error and all(item["id"] != selected_error["id"] for item in error_logs):
@@ -125,7 +148,9 @@ def list_event_transactions():
     except (MySQLError, ValueError, RuntimeError) as error:
         detail = str(error).strip() or "No additional diagnostic text was returned."
         flash(f"Could not read Event TX records: {type(error).__name__}: {detail}", "error")
-        tables, event_log_exists, database, table, events, recent_events, audit_logs, error_logs, limit, active_tab, selected_error_id, selected_error = [], False, "", "", [], [], [], [], 10, "recent", None, None
+        tables, event_log_exists, database, table, events, recent_events, audit_logs, error_logs, active_tab, selected_error_id, selected_error = [], False, "", "", [], [], [], [], "recent", None, None
+        recent_total, recent_page, recent_page_size, recent_page_count = 0, 1, 10, 1
+        logs_total, logs_page, logs_page_size, logs_page_count = 0, 1, 10, 1
         registered_total, registered_page, registered_page_size, registered_page_count = 0, 1, 10, 1
         stage_tables, stage_cleanup_blocked = [], False
         object_event_tables, selected_object_database, object_event_columns, object_event_rows = [], "", [], []
@@ -149,7 +174,11 @@ def list_event_transactions():
         error_logs=error_logs,
         selected_error_id=selected_error_id,
         selected_error=selected_error,
-        recent_limit=limit,
+        recent_limit=recent_page_size,
+        recent_total=recent_total,
+        recent_page=recent_page,
+        recent_page_size=recent_page_size,
+        recent_page_count=recent_page_count,
         active_tab=active_tab,
         object_event_tables=object_event_tables,
         selected_object_database=selected_object_database,
@@ -161,6 +190,10 @@ def list_event_transactions():
         object_event_page=object_page,
         object_event_page_size=object_page_size,
         object_event_page_count=object_event_page_count,
+        logs_total=logs_total,
+        logs_page=logs_page,
+        logs_page_size=logs_page_size,
+        logs_page_count=logs_page_count,
     )
 
 
@@ -216,11 +249,13 @@ def download_object_events():
         flash("Could not export object storage events. Confirm this MySQL user can read the durable stream capture table.", "error")
         return render_dashboard("event_transactions.html", active_page="event_tx", registered_tables=[], event_log_exists=False,
                                 selected_database="", selected_table="", events=[], recent_events=[], audit_logs=[], error_logs=[], selected_error_id=None, selected_error=None, recent_limit=10,
+                                recent_total=0, recent_page=1, recent_page_size=10, recent_page_count=1,
                                 registered_total=0, registered_page=1, registered_page_size=10, registered_page_count=1,
                                 active_tab="object-events", object_event_tables=[], selected_object_database="",
                                 object_event_columns=[], object_event_rows=[], object_event_total=0, object_event_sort="",
                                 object_event_direction="desc", object_event_page=1, object_event_page_size=10,
-                                object_event_page_count=1)
+                                object_event_page_count=1, logs_total=0, logs_page=1,
+                                logs_page_size=10, logs_page_count=1)
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer)
     writer.writerow(columns)

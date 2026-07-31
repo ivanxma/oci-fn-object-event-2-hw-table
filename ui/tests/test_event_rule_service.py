@@ -25,6 +25,20 @@ class _Client:
         )
         return SimpleNamespace(data=rule)
 
+    def get_rule(self, _rule_id):
+        action = SimpleNamespace(action_type="OSS", stream_id="ocid1.stream.test")
+        rule = SimpleNamespace(
+            id="ocid1.eventrule.test",
+            display_name="eventual-rule",
+            is_enabled=True,
+            lifecycle_state="ACTIVE",
+            condition="{}",
+            time_created=None,
+            freeform_tags={"managed-by": "oci-object-event-2-table", "mapping-id": "9"},
+            actions=SimpleNamespace(actions=[action]),
+        )
+        return SimpleNamespace(data=rule)
+
 
 class EventRuleServiceTest(unittest.TestCase):
     def test_create_uses_oss_action_and_mapping_tags(self):
@@ -49,6 +63,18 @@ class EventRuleServiceTest(unittest.TestCase):
         with patch.object(service, "_client", side_effect=AssertionError("OCI must not be called")):
             with self.assertRaisesRegex(EventRuleError, "valid OCI Stream"):
                 service.ensure_mapping_rule(mapping_id=1, mapping={"bucket_name": "bucket", "resource_name_pattern": "x", "target_database": "db", "target_table": "table", "stream_id": ""})
+
+    def test_direct_lookup_resolves_eventually_consistent_stream_rule(self):
+        service = EventRuleService(
+            compartment_id="ocid1.compartment.test",
+            region="uk-london-1",
+            enabled=True,
+        )
+        with patch.object(service, "_client", return_value=(SimpleNamespace(), _Client())):
+            result = service.get_stream_rule("ocid1.eventrule.test")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.mapping_id, 9)
+        self.assertEqual(result.lifecycle_state, "ACTIVE")
 
 
 if __name__ == "__main__":

@@ -10,18 +10,38 @@
 </tr>
 {% else %}<tr><td colspan="{{ 7 if target else 6 }}" class="empty-state">No durable stream captures yet.</td></tr>{% endfor %}
 {%- endmacro %}
+{% macro server_table_controls(tab, prefix, page, page_size, page_count, total) -%}
+<div class="table-page-toolbar">
+  <div class="table-toolbar-left server-table-controls"
+       data-event-tx-controls data-tab="{{ tab }}" data-page-param="{{ prefix }}_page"
+       data-size-param="{{ prefix }}_page_size">
+    <label>Show
+      <select aria-label="Rows per page">
+        {% for size in (10,25,50,100,250,500) %}
+        <option value="{{ size }}" {{ 'selected' if page_size == size else '' }}>{{ size }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="secondary-button compact" type="button" data-event-refresh>Refresh</button>
+    <button class="secondary-button compact" type="button" data-event-page="{{ page - 1 }}" {{ 'disabled' if page <= 1 else '' }}>Previous</button>
+    <span>Page {{ page }} of {{ page_count }} · {{ total }} row(s)</span>
+    <button class="secondary-button compact" type="button" data-event-page="{{ page + 1 }}" {{ 'disabled' if page >= page_count else '' }}>Next</button>
+  </div>
+  <div class="table-toolbar-icons"></div>
+</div>
+{%- endmacro %}
 {% block content %}
 <section class="page-heading"><div><p class="eyebrow">EVENT TRANSACTIONS</p><h1>Event TX</h1><p>Processor-owned durable stream captures and transaction lifecycle.</p></div></section>
 <section class="content-card event-tx-tabs">
   <div class="tab-list" role="tablist" aria-label="Event TX views">
-    <button class="tab {{ 'active' if active_tab == 'recent' else '' }}" role="tab" data-server-tab="recent">Recent TX <span>{{ recent_events|length }}</span></button>
+    <button class="tab {{ 'active' if active_tab == 'recent' else '' }}" role="tab" data-server-tab="recent">Recent TX <span>{{ recent_total }}</span></button>
     <button class="tab {{ 'active' if active_tab == 'registered' else '' }}" role="tab" data-server-tab="registered">Registered Table <span>{{ registered_tables|length }}</span></button>
     <button class="tab {{ 'active' if active_tab == 'object-events' else '' }}" role="tab" data-server-tab="object-events">Object Storage Event <span>{{ object_event_total }}</span></button>
-    <button class="tab {{ 'active' if active_tab == 'logs' else '' }}" role="tab" data-server-tab="logs">Log <span>{{ error_logs|length }}</span></button>
+    <button class="tab {{ 'active' if active_tab == 'logs' else '' }}" role="tab" data-server-tab="logs">Log <span>{{ logs_total }}</span></button>
   </div>
   <div id="recent-panel" class="tab-panel" {% if active_tab != 'recent' %}hidden{% endif %}>
     <div class="panel-heading"><div><h2>Recent TX</h2><p>Current processor captures. Processing mode is FIFO or Parallel.</p></div></div>
-    <div class="table-wrap"><table class="event-tx-table"><thead><tr><th>Event type</th><th>Processing mode</th><th>Target</th><th>Status</th><th>Object source</th><th>Message</th><th>Captured</th></tr></thead><tbody>{{ capture_rows(recent_events) }}</tbody></table></div>
+    <div class="table-page-view">{{ server_table_controls('recent','recent',recent_page,recent_page_size,recent_page_count,recent_total) }}<div class="table-wrap"><table class="event-tx-table"><thead><tr><th>Event type</th><th>Processing mode</th><th>Target</th><th>Status</th><th>Object source</th><th>Message</th><th>Captured</th></tr></thead><tbody>{{ capture_rows(recent_events) }}</tbody></table></div></div>
   </div>
   <div id="registered-panel" class="tab-panel" {% if active_tab != 'registered' %}hidden{% endif %}>
     <form method="get" class="registered-table-picker"><input type="hidden" name="tab" value="registered"><label>Target table<select name="table_choice" onchange="const p=this.value.split('|');this.form.database.value=p[0];this.form.table.value=p[1];this.form.submit()">{% for item in registered_tables %}<option value="{{ item.target_database }}|{{ item.target_table }}" {{ 'selected' if item.target_database == selected_database and item.target_table == selected_table else '' }}>{{ item.target_database }}.{{ item.target_table }} — {{ item.event_count }} capture(s)</option>{% endfor %}</select></label><input type="hidden" name="database" value="{{ selected_database }}"><input type="hidden" name="table" value="{{ selected_table }}"></form>
@@ -32,21 +52,22 @@
       {% if stage_cleanup_blocked %}<p class="message">Cleanup is disabled while this target has active batches or stream messages. Retry after processing completes.</p>{% endif %}
     </section>
     {% endif %}
-    <div class="table-wrap"><table class="event-tx-table"><thead><tr><th>Event type</th><th>Processing mode</th><th>Status</th><th>Object source</th><th>Message</th><th>Captured</th></tr></thead><tbody>{{ capture_rows(events, false) }}</tbody></table></div>
+    <div class="table-page-view">{{ server_table_controls('registered','registered',registered_page,registered_page_size,registered_page_count,registered_total) }}<div class="table-wrap"><table class="event-tx-table"><thead><tr><th>Event type</th><th>Processing mode</th><th>Status</th><th>Object source</th><th>Message</th><th>Captured</th></tr></thead><tbody>{{ capture_rows(events, false) }}</tbody></table></div></div>
   </div>
   <div id="object-events-panel" class="tab-panel" {% if active_tab != 'object-events' %}hidden{% endif %}>
     <div class="panel-heading"><div><h2>Object Storage Event</h2><p>Messages captured by the processor from OCI Streaming. This is the authoritative event record.</p></div></div>
-    <div class="table-wrap"><table class="event-tx-table"><thead><tr>{% for column in object_event_columns %}<th>{{ {'event_time':'Event time','event_type':'Event type','stream_partition':'Partition','stream_offset':'Offset','received_at':'Received','completed_at':'Completed','duration_ms':'Duration (ms)'}.get(column, column|replace('_', ' ')|title) }}</th>{% endfor %}</tr></thead><tbody>{% for row in object_event_rows %}<tr>{% for column in object_event_columns %}<td>{{ row[column] if row[column] is not none else '—' }}</td>{% endfor %}</tr>{% else %}<tr><td colspan="{{ object_event_columns|length }}" class="empty-state">No durable stream captures yet.</td></tr>{% endfor %}</tbody></table></div>
+    <div class="table-page-view">{{ server_table_controls('object-events','object',object_event_page,object_event_page_size,object_event_page_count,object_event_total) }}<div class="table-wrap"><table class="event-tx-table"><thead><tr>{% for column in object_event_columns %}<th>{{ {'event_time':'Event time','event_type':'Event type','stream_partition':'Partition','stream_offset':'Offset','received_at':'Received','completed_at':'Completed','duration_ms':'Duration (ms)'}.get(column, column|replace('_', ' ')|title) }}</th>{% endfor %}</tr></thead><tbody>{% for row in object_event_rows %}<tr>{% for column in object_event_columns %}<td>{{ row[column] if row[column] is not none else '—' }}</td>{% endfor %}</tr>{% else %}<tr><td colspan="{{ object_event_columns|length }}" class="empty-state">No durable stream captures yet.</td></tr>{% endfor %}</tbody></table></div></div>
   </div>
   <div id="logs-panel" class="tab-panel" {% if active_tab != 'logs' %}hidden{% endif %}>
     <div class="panel-heading"><div><h2>Processor failures</h2><p>Failed durable captures are retryable from Durable Messages.</p></div></div>
-    <div class="table-wrap"><table class="event-tx-table"><thead><tr><th>Event type</th><th>Processing mode</th><th>Target</th><th>Status</th><th>Object source</th><th>Message</th><th>Captured</th></tr></thead><tbody>{{ capture_rows(error_logs) }}</tbody></table></div>
+    <div class="table-page-view">{{ server_table_controls('logs','logs',logs_page,logs_page_size,logs_page_count,logs_total) }}<div class="table-wrap"><table class="event-tx-table"><thead><tr><th>Event type</th><th>Processing mode</th><th>Target</th><th>Status</th><th>Object source</th><th>Message</th><th>Captured</th></tr></thead><tbody>{{ capture_rows(error_logs) }}</tbody></table></div></div>
   </div>
 </section>
 <dialog id="registered-table-dialog" class="registered-table-dialog value-dialog" aria-labelledby="registered-table-dialog-title"><form method="dialog"><div class="value-dialog-heading"><h2 id="registered-table-dialog-title">Registered table data</h2><button type="submit" class="icon-button" aria-label="Close">×</button></div><p id="registered-table-dialog-status" class="muted">Loading…</p><div id="registered-table-dialog-content" class="dialog-table-content"></div><div class="table-pagination"><div><button type="button" class="secondary-button" id="registered-table-prev">Previous</button><span id="registered-table-page">Page 1 of 1</span><button type="button" class="secondary-button" id="registered-table-next">Next</button></div><label>Rows <select id="registered-table-page-size"><option>25</option><option selected>50</option><option>100</option></select></label></div></form></dialog>
 {% endblock %}
 {% block scripts %}<script>
 document.querySelectorAll('.event-tx-tabs [role="tab"]').forEach(tab=>tab.addEventListener('click',()=>{const url=new URL(window.location.href);url.searchParams.set('tab',tab.dataset.serverTab);window.location.assign(url)}));
+document.querySelectorAll('[data-event-tx-controls]').forEach(controls=>{const select=controls.querySelector('select'),navigate=page=>{const url=new URL(window.location.href);url.searchParams.set('tab',controls.dataset.tab);url.searchParams.set(controls.dataset.sizeParam,select.value);url.searchParams.set(controls.dataset.pageParam,String(page));window.location.assign(url)};controls.querySelector('[data-event-refresh]').addEventListener('click',()=>navigate(1));controls.querySelectorAll('[data-event-page]').forEach(button=>button.addEventListener('click',()=>{if(!button.disabled)navigate(button.dataset.eventPage)}));});
 (()=>{const open=document.getElementById('view-registered-table'), dialog=document.getElementById('registered-table-dialog');if(!open||!dialog)return;const status=document.getElementById('registered-table-dialog-status'),content=document.getElementById('registered-table-dialog-content'),pageLabel=document.getElementById('registered-table-page'),prev=document.getElementById('registered-table-prev'),next=document.getElementById('registered-table-next'),size=document.getElementById('registered-table-page-size');const database={{ selected_database|tojson }},table={{ selected_table|tojson }},endpoint={{ url_for('event_tx.registered_table_content')|tojson }};let page=1,pageCount=1;
 function text(value){return value===null||value===undefined?'—':String(value)}
 function render(data){page=data.page;pageCount=data.page_count;pageLabel.textContent=`Page ${page} of ${pageCount} · ${data.total} row(s)`;prev.disabled=page<=1;next.disabled=page>=pageCount;const t=document.createElement('table');t.className='event-tx-table';const h=t.createTHead().insertRow();data.columns.forEach(c=>{const th=document.createElement('th');th.textContent=c;h.appendChild(th)});const body=t.createTBody();(data.rows||[]).forEach(row=>{const tr=body.insertRow();data.columns.forEach(c=>{const td=tr.insertCell();td.textContent=text(row[c])})});if(!data.rows.length){const tr=body.insertRow(),td=tr.insertCell();td.colSpan=Math.max(data.columns.length,1);td.className='empty-state';td.textContent='No rows.'}content.replaceChildren(t);status.textContent=`${database}.${table}`}

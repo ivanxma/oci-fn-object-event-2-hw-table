@@ -44,6 +44,11 @@ class FlowPerformanceContractTest(unittest.TestCase):
         self.assertIn("url_for('flow.topology')", template)
         self.assertIn('fetch("', template)
 
+    def test_missing_list_rules_are_resolved_directly_by_ocid(self):
+        route = ROUTE.read_text(encoding="utf-8")
+        self.assertIn("missing_rule_ids", route)
+        self.assertIn("rule_service.get_stream_rule", route)
+
     def test_empty_mapping_state_is_explicit_and_skips_oci(self):
         route = ROUTE.read_text(encoding="utf-8")
         template = TEMPLATE.read_text(encoding="utf-8")

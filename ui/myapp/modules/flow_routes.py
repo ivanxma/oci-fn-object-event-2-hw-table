@@ -81,6 +81,32 @@ def _load_topology(mappings: list[dict], config: dict) -> tuple[list[dict], list
     rules, streams = loaded["rules"], loaded["streams"]
     deployments, secrets = loaded["deployments"], loaded["secrets"]
 
+    # Newly created OCI Events rules can be retrievable by OCID before they
+    # appear in the compartment list response. Resolve only missing mapping
+    # rule IDs directly so Flow does not show a false UNRESOLVED state.
+    listed_rule_ids = {str(item.id) for item in rules}
+    missing_rule_ids = {
+        str(mapping.get("event_rule_id") or "")
+        for mapping in mappings
+        if str(mapping.get("event_rule_id") or "").startswith("ocid1.eventrule.")
+        and str(mapping.get("event_rule_id") or "") not in listed_rule_ids
+    }
+    if missing_rule_ids:
+        with ThreadPoolExecutor(max_workers=min(8, len(missing_rule_ids))) as executor:
+            missing_futures = {
+                rule_id: executor.submit(rule_service.get_stream_rule, rule_id)
+                for rule_id in missing_rule_ids
+            }
+            for rule_id, future in missing_futures.items():
+                try:
+                    if rule := future.result():
+                        rules.append(rule)
+                except Exception as error:
+                    warnings.append(
+                        f"Could not load Flow rule {rule_id[-12:]}: "
+                        f"{type(error).__name__}: {error}"
+                    )
+
     # Only active processors assigned to visible mappings need nested Container
     # details. Fetch them concurrently so one slow OCI call does not serialize
     # the entire topology page.

@@ -43,7 +43,16 @@ class EventTransactionService:
             return "DELETE"
         return str(event_type or "UNKNOWN")
 
-    def _capture_rows(self, cursor, *, limit: int, offset: int = 0, database: str = "", table: str = "") -> list[dict[str, Any]]:
+    def _capture_rows(
+        self,
+        cursor,
+        *,
+        limit: int,
+        offset: int = 0,
+        database: str = "",
+        table: str = "",
+        status: str = "",
+    ) -> list[dict[str, Any]]:
         capture = quote_identifier(self.stream_data_database, "stream data database")
         control = quote_identifier(control_database(), "control database")
         filters, values = [], []
@@ -53,6 +62,9 @@ class EventTransactionService:
         if table:
             filters.append("mapping.target_table=%s")
             values.append(table)
+        if status:
+            filters.append("capture.status=%s")
+            values.append(status)
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         cursor.execute(
             f"""SELECT capture.id, capture.stream_id, capture.partition_id, capture.stream_offset,
@@ -94,6 +106,37 @@ class EventTransactionService:
                 else "Unmapped event"
             )
         return rows
+
+    def _capture_count(
+        self,
+        cursor,
+        *,
+        database: str = "",
+        table: str = "",
+        status: str = "",
+    ) -> int:
+        capture = quote_identifier(self.stream_data_database, "stream data database")
+        control = quote_identifier(control_database(), "control database")
+        filters, values = [], []
+        if database:
+            filters.append("mapping.target_database=%s")
+            values.append(database)
+        if table:
+            filters.append("mapping.target_table=%s")
+            values.append(table)
+        if status:
+            filters.append("capture.status=%s")
+            values.append(status)
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        cursor.execute(
+            f"""SELECT COUNT(*) AS total
+                  FROM {capture}.`stream_message_capture` capture
+                  LEFT JOIN {control}.`object_storage_mappings` mapping
+                    ON mapping.stream_id=capture.stream_id
+                  {where}""",
+            tuple(values),
+        )
+        return int(cursor.fetchone()["total"])
 
     def registered_tables(self) -> tuple[list[dict[str, Any]], bool]:
         with self.mysql.connection() as conn:
@@ -238,11 +281,42 @@ class EventTransactionService:
             cursor = conn.cursor(dictionary=True, buffered=True)
             return self._capture_rows(cursor, limit=limit) if self._capture_exists(cursor) else []
 
+    def recent_events_page(
+        self, *, page: int, page_size: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor(dictionary=True, buffered=True)
+            if not self._capture_exists(cursor):
+                return [], 0
+            total = self._capture_count(cursor)
+            rows = self._capture_rows(
+                cursor,
+                limit=max(page_size, 1),
+                offset=(max(page, 1) - 1) * max(page_size, 1),
+            )
+            return rows, total
+
     def audit_logs(self, limit: int) -> list[dict[str, Any]]:
         return self.recent_events_all(limit)
 
     def error_logs(self, limit: int) -> list[dict[str, Any]]:
         return [row for row in self.recent_events_all(limit) if row["event_status"] == "FAILED"]
+
+    def error_logs_page(
+        self, *, page: int, page_size: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        with self.mysql.connection() as conn:
+            cursor = conn.cursor(dictionary=True, buffered=True)
+            if not self._capture_exists(cursor):
+                return [], 0
+            total = self._capture_count(cursor, status="FAILED")
+            rows = self._capture_rows(
+                cursor,
+                limit=max(page_size, 1),
+                offset=(max(page, 1) - 1) * max(page_size, 1),
+                status="FAILED",
+            )
+            return rows, total
 
     def error_log(self, error_id: int) -> dict[str, Any] | None:
         return next((row for row in self.recent_events_all(500) if int(row["id"]) == error_id and row["event_status"] == "FAILED"), None)
