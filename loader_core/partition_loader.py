@@ -517,8 +517,11 @@ def run_delete(event_path: Path) -> dict[str, Any]:
             # ever-growing set of empty partitions. A later create re-adds it
             # through ensure_partition before loading the replacement data.
             target = table_name(record["target_database"], record["target_table"])
-            cursor.execute(f"SELECT COUNT(*) FROM {target} WHERE batch_num=%s", (record["batch_num"],))
-            rows_affected = int(cursor.fetchone()[0])
+            cursor.execute(
+                f"SELECT COUNT(*) AS row_count FROM {target} WHERE batch_num=%s",
+                (record["batch_num"],),
+            )
+            rows_affected = int(cursor.fetchone()["row_count"])
             exchange_started = time.perf_counter()
             cursor.execute(f"ALTER TABLE {target} DROP PARTITION {quote_identifier(partition_name(record['batch_num']), 'partition name')}")
             exchange_duration_ms = (time.perf_counter() - exchange_started) * 1000
