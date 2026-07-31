@@ -1,6 +1,21 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="page-heading"><div><p class="eyebrow">UI CONFIGURATION</p><h1>Settings</h1><p>Configure the control and durable stream databases for this UI instance.</p></div></section>
+{% if setup_required %}
+<section class="content-card settings-card setup-required-card">
+  <div class="panel-heading"><div><p class="eyebrow">SETUP REQUIRED</p><h2>Install application database structures</h2><p>The authenticated database is reachable, but one or more application-owned schemas or tables are absent. This action creates or migrates only the configured control, durable-message, and staging structures; mapped target tables are not changed.</p></div></div>
+  <p class="muted">Missing: {{ missing_schema_objects|join(', ') }}</p>
+  <form method="post">
+    <input type="hidden" name="action" value="initialize">
+    <input type="hidden" name="control_database" value="{{ settings.CONTROL_DATABASE }}">
+    <input type="hidden" name="stream_data_database" value="{{ settings.STREAM_DATA_DB_NAME }}">
+    <input type="hidden" name="stream_user" value="{{ settings.STREAM_USER }}">
+    <input type="hidden" name="object_storage_bucket_name" value="{{ settings.OBJECT_STORAGE_BUCKET_NAME }}">
+    <input type="hidden" name="registry_repository" value="{{ settings.OCI_REGISTRY_REPOSITORY }}">
+    <button class="primary-button" type="submit">Install schemas now</button>
+  </form>
+</section>
+{% endif %}
 <section class="content-card settings-card"><div class="panel-heading"><div><h2>Database and registry configuration</h2><p>Resource Mappings select the visible target databases. Credentials are never stored here.</p></div></div>
 <form method="post" class="form-grid settings-form"><input type="hidden" name="action" value="save"><label>Control database <span>*</span><input name="control_database" value="{{ settings.CONTROL_DATABASE }}" required pattern="[A-Za-z][A-Za-z0-9_]{0,63}"><small>Mappings, batches, and processor control state.</small></label><label>Stream data database <span>*</span><input name="stream_data_database" value="{{ settings.STREAM_DATA_DB_NAME }}" required pattern="[A-Za-z][A-Za-z0-9_]{0,63}"><small>Durable captures, checkpoints, transactions, and archives.</small></label><label>Stream user <span>*</span><input name="stream_user" value="{{ settings.STREAM_USER }}" required pattern="[A-Za-z][A-Za-z0-9_]{0,31}"><small>Database user used by the stream processor.</small></label><label>Default Object Storage bucket <span>*</span><input name="object_storage_bucket_name" value="{{ settings.OBJECT_STORAGE_BUCKET_NAME }}" required><small>Default for new mappings; a mapping can explicitly override it.</small></label><label>Processor registry repository <input value="{{ settings.OCI_REGISTRY_REPOSITORY }}" readonly aria-readonly="true"><small><code>{{ settings.OCI_REGISTRY_REPOSITORY_ID }}</code><br>Deployment-owned repository shared by every Processor and UI release. Event Processor selects only an immutable Processor image tag.</small></label><div class="form-actions field-aligned-actions"><button class="primary-button">Save configuration</button></div></form></section>
 <section class="content-card settings-card"><div class="panel-heading"><div><h2>Initialize database structures</h2><p>Runs external SQL idempotently and preserves existing data where compatible.</p></div></div><form method="post" onsubmit="return confirm('Initialize or migrate the configured database structures?')"><input type="hidden" name="action" value="initialize"><input type="hidden" name="control_database" value="{{ settings.CONTROL_DATABASE }}"><input type="hidden" name="stream_data_database" value="{{ settings.STREAM_DATA_DB_NAME }}"><input type="hidden" name="stream_user" value="{{ settings.STREAM_USER }}"><input type="hidden" name="object_storage_bucket_name" value="{{ settings.OBJECT_STORAGE_BUCKET_NAME }}"><input type="hidden" name="registry_repository" value="{{ settings.OCI_REGISTRY_REPOSITORY }}"><button class="secondary-button" type="submit">Initialize / migrate DB structure</button></form></section>

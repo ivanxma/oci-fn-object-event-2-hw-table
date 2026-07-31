@@ -5,6 +5,7 @@ from __future__ import annotations
 from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
 
 from ..services.mysql_service import MySQLService
+from ..services.schema_inventory import missing_application_objects
 from ..services.ssh_tunnel import open_tunnel
 from .common import connection_state
 
@@ -29,6 +30,35 @@ def login():
                 connection_id = current_app.extensions["session_store"].create(profile, username, credential, tunnel)
                 session.clear()
                 session["connection_id"] = connection_id
+                control = str(current_app.config.get("CONTROL_DATABASE") or "").strip()
+                durable = str(current_app.config.get("STREAM_DATA_DB_NAME") or "").strip()
+                staging = str(current_app.config.get("STAGING_DATABASE") or "").strip()
+                if control and durable and staging:
+                    try:
+                        missing = missing_application_objects(
+                            MySQLService(provisional),
+                            control_database=control,
+                            stream_data_database=durable,
+                            staging_database=staging,
+                        )
+                    except Exception:
+                        current_app.logger.info(
+                            "Application schema readiness check failed after login.",
+                            exc_info=True,
+                        )
+                        flash(
+                            "Connected, but application schema readiness could not be verified. "
+                            "Review Settings before continuing.",
+                            "warning",
+                        )
+                        return redirect(url_for("settings.manage", setup="required"))
+                    if missing:
+                        flash(
+                            "Connected. Application database structures are not installed. "
+                            "Install them from Settings before continuing.",
+                            "warning",
+                        )
+                        return redirect(url_for("settings.manage", setup="required"))
                 if store.profile_creation_enabled():
                     return redirect(url_for("profiles.creation_policy"))
                 return redirect(url_for("imports.home"))

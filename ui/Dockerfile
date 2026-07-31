@@ -9,9 +9,11 @@ ARG UI_IMAGE_NAME=object-storage-heatwave-ui
 ARG UI_IMAGE_TAG=dev
 ARG CONFIG_SCHEMA_VERSION=2
 ENV RELEASE_VERSION=$RELEASE_VERSION GIT_SHA=$GIT_SHA SOURCE_BRANCH=$SOURCE_BRANCH BUILD_UTC=$BUILD_UTC UI_IMAGE_NAME=$UI_IMAGE_NAME UI_IMAGE_TAG=$UI_IMAGE_TAG CONFIG_SCHEMA_VERSION=$CONFIG_SCHEMA_VERSION
-COPY requirements.txt pyproject.toml ./
+COPY ui/requirements.txt ui/pyproject.toml ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY myapp ./myapp
+COPY ui/myapp ./myapp
+COPY loader_core/sql ./schema/loader_core/sql
+COPY processor/sql ./schema/processor/sql
 RUN useradd --create-home --uid 10001 appuser && mkdir -p /app/instance && chown -R appuser:appuser /app
 USER appuser
 EXPOSE 8080

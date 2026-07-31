@@ -153,7 +153,7 @@ else
     --build-arg "RELEASE_VERSION=$RELEASE_VERSION" --build-arg "GIT_SHA=$GIT_SHA" \
     --build-arg "SOURCE_BRANCH=$SOURCE_BRANCH" --build-arg "BUILD_UTC=$BUILD_UTC" \
     --build-arg "UI_IMAGE_NAME=$UI_REGISTRY_IMAGE_NAME" --build-arg "UI_IMAGE_TAG=$UI_REGISTRY_IMAGE_TAG" \
-    --build-arg "CONFIG_SCHEMA_VERSION=${CONFIG_SCHEMA_VERSION:-2}" "$ROOT_DIR/ui"
+    --build-arg "CONFIG_SCHEMA_VERSION=${CONFIG_SCHEMA_VERSION:-2}" "$ROOT_DIR"
   sudo env "PATH=$PATH" podman push --authfile "$REGISTRY_AUTH_FILE" "$UI_IMAGE"
 fi
 

@@ -99,6 +99,30 @@ class ProfileCreationPolicyTest(unittest.TestCase):
         self.assertIn(b"Connection established successfully", prompt.data)
         self.assertIn(b"Disable profile creation", prompt.data)
 
+    def test_login_routes_missing_application_schema_to_one_click_setup(self) -> None:
+        self.app.config.update(
+            CONTROL_DATABASE="stream_db",
+            STREAM_DATA_DB_NAME="stream_data",
+            STAGING_DATABASE="stream_staging",
+        )
+        with patch(
+            "myapp.modules.auth_routes.MySQLService.health_check", return_value=None
+        ), patch(
+            "myapp.modules.auth_routes.missing_application_objects",
+            return_value=["stream_db.object_storage_mappings"],
+        ):
+            response = self.client.post(
+                "/login",
+                data={
+                    "profile": "Local MySQL",
+                    "username": "admin",
+                    "credential": "not-rendered",
+                },
+            )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/settings/", response.headers["Location"])
+        self.assertIn("setup=required", response.headers["Location"])
+
     def test_policy_can_be_disabled_and_enabled_from_connection_profiles(self) -> None:
         profile = {"name": "test", "mode": "direct", "host": "db", "port": 3306}
         connection_id = self.app.extensions["session_store"].create(profile, "admin", "not-rendered")

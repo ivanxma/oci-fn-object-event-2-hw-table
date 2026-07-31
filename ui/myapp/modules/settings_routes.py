@@ -11,12 +11,20 @@ from mysql.connector import Error as MySQLError
 
 from ..services.mapping_service import MappingService
 from ..services.release_history_service import ReleaseHistoryService
+from ..services.schema_inventory import missing_application_objects
 from ..release import release_metadata
 from ..services.naming import quote_identifier, validate_identifier
 from .common import connection_state, login_required, mysql_for_request, render_dashboard
 
 settings_bp = Blueprint("settings", __name__, url_prefix="/settings")
-ROOT = Path(__file__).resolve().parents[3]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+PACKAGED_SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "schema"
+SCHEMA_ROOT = (
+    REPOSITORY_ROOT
+    if (REPOSITORY_ROOT / "loader_core" / "sql").is_dir()
+    else PACKAGED_SCHEMA_ROOT
+)
+UI_SQL_ROOT = Path(__file__).resolve().parents[1] / "sql"
 ACCOUNT = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 
 
@@ -66,7 +74,7 @@ def _initialize(mysql, values: dict[str, str], *, replace: bool = False) -> None
         if replace:
             for table in ("source_object_batches", "target_batch_sequences", "object_storage_mappings", "deployment_history"):
                 cursor.execute(f"DROP TABLE IF EXISTS {control}.{quote_identifier(table, 'control table')}")
-        for statement in _split_sql(ROOT / "loader_core/sql/init_control_schema.sql", {"__CONTROL_DATABASE__": control}):
+        for statement in _split_sql(SCHEMA_ROOT / "loader_core/sql/init_control_schema.sql", {"__CONTROL_DATABASE__": control}):
             cursor.execute(statement)
         # MappingService owns its external mapping migrations and retired-object cleanup.
         os.environ["CONTROL_DATABASE"] = values["CONTROL_DATABASE"]
@@ -84,9 +92,9 @@ def _initialize(mysql, values: dict[str, str], *, replace: bool = False) -> None
             cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema=%s AND table_name IN (%s,%s,%s,%s)", (values["STREAM_DATA_DB_NAME"], "stream_event_tx_log", "stream_partition_checkpoint", "stream_message_capture", "stream_message_archive_partitions"))
             for row in cursor.fetchall():
                 cursor.execute(f"DROP TABLE IF EXISTS {durable}.{quote_identifier(row[0], 'durable table')}")
-        for statement in _split_sql(ROOT / "processor/sql/init_stream_capture.sql"):
+        for statement in _split_sql(SCHEMA_ROOT / "processor/sql/init_stream_capture.sql"):
             cursor.execute(statement)
-        for path in (ROOT / "processor/sql/migrate_stream_capture_retry.sql", ROOT / "processor/sql/migrate_stream_capture_processing.sql", ROOT / "processor/sql/migrate_release_stamp.sql", ROOT / "processor/sql/migrate_stream_capture_metrics.sql"):
+        for path in (SCHEMA_ROOT / "processor/sql/migrate_stream_capture_retry.sql", SCHEMA_ROOT / "processor/sql/migrate_stream_capture_processing.sql", SCHEMA_ROOT / "processor/sql/migrate_release_stamp.sql", SCHEMA_ROOT / "processor/sql/migrate_stream_capture_metrics.sql"):
             for statement in _split_sql(path):
                 try:
                     cursor.execute(statement)
@@ -94,7 +102,7 @@ def _initialize(mysql, values: dict[str, str], *, replace: bool = False) -> None
                     if "duplicate column" not in str(error).lower():
                         raise
         archive = f"{durable}.`stream_message_archive_partitions`"
-        for statement in _split_sql(ROOT / "ui/myapp/sql/init_stream_message_archive.sql", {"__ARCHIVE_REGISTRY__": archive}):
+        for statement in _split_sql(UI_SQL_ROOT / "init_stream_message_archive.sql", {"__ARCHIVE_REGISTRY__": archive}):
             cursor.execute(statement)
 
 
@@ -153,8 +161,26 @@ def manage():
         except (MySQLError, OSError, ValueError) as error:
             flash(str(error), "error")
     history = []
+    missing_schema_objects: list[str] = []
+    try:
+        missing_schema_objects = missing_application_objects(
+            mysql_for_request(),
+            control_database=values["CONTROL_DATABASE"],
+            stream_data_database=values["STREAM_DATA_DB_NAME"],
+            staging_database=current_app.config.get("STAGING_DATABASE", "stream_staging"),
+        )
+    except Exception:
+        missing_schema_objects = ["Schema readiness could not be determined"]
     try:
         history = ReleaseHistoryService(mysql_for_request(), values["CONTROL_DATABASE"]).recent()
     except Exception:
         pass  # The control schema can be initialized from this page.
-    return render_dashboard("settings.html", active_page="settings", settings=values, release=release_metadata(), deployment_history=history)
+    return render_dashboard(
+        "settings.html",
+        active_page="settings",
+        settings=values,
+        release=release_metadata(),
+        deployment_history=history,
+        missing_schema_objects=missing_schema_objects,
+        setup_required=bool(missing_schema_objects),
+    )
