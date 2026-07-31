@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from myapp.services.mapping_service import RETIRED_OBJECT_CLEANUP_SQL, MAPPING_SCHEMA_SQL, MappingService, _migration_column, _sql_statements
+from myapp.services.mapping_service import MAPPING_SCHEMA_SQL, MappingService, _migration_column, _sql_statements
 
 
 class Cursor:
@@ -26,15 +26,6 @@ class MappingSchemaSqlTest(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS `fndb`.object_storage_mappings", statements[1])
         self.assertNotIn("__CONTROL_DATABASE__", "\n".join(statements))
 
-    def test_legacy_function_objects_are_retired_by_external_sql(self) -> None:
-        statements = _sql_statements(RETIRED_OBJECT_CLEANUP_SQL, "fndb")
-        self.assertEqual(len(statements), 4)
-        script = "\n".join(statements)
-        self.assertIn("DROP COLUMN `invocation_mode`", script)
-        self.assertIn("DROP TABLE IF EXISTS `fndb`.object_event", script)
-        self.assertIn("DROP TABLE IF EXISTS `fndb`.event_tx_log", script)
-        self.assertIn("DROP TABLE IF EXISTS `fndb`.event_errors", script)
-
     def test_all_migrations_are_external_single_statement_scripts(self) -> None:
         migrations = sorted(MAPPING_SCHEMA_SQL.parent.joinpath("mapping_migrations").glob("*.sql"))
         self.assertEqual(len(migrations), 4)
@@ -47,10 +38,7 @@ class MappingSchemaSqlTest(unittest.TestCase):
         with patch.dict(os.environ, {"CONTROL_DATABASE": "fndb"}, clear=False):
             MappingService(mysql=None)._ensure_schema(cursor)
         self.assertEqual(sum("CREATE " in statement for statement, _ in cursor.executed), 2)
-        self.assertEqual(sum("information_schema.columns" in statement for statement, _ in cursor.executed), 5)
-        cleanup = _sql_statements(RETIRED_OBJECT_CLEANUP_SQL, "fndb")
-        self.assertEqual(len(cleanup), 4)
-        self.assertTrue(all(statement in [sql for sql, _ in cursor.executed] for statement in cleanup))
+        self.assertEqual(sum("information_schema.columns" in statement for statement, _ in cursor.executed), 4)
 
 
 if __name__ == "__main__":

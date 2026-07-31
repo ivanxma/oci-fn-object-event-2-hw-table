@@ -59,12 +59,8 @@ def list_event_transactions():
     try:
         service = EventTransactionService(mysql_for_request())
         tables, event_log_exists = service.registered_tables()
-        # ``limit`` remains a compatibility alias for links created before
-        # server-side paging was added.
         recent_page = _page(request.args.get("recent_page"))
-        recent_page_size = _limit(
-            request.args.get("recent_page_size") or request.args.get("limit")
-        )
+        recent_page_size = _limit(request.args.get("recent_page_size"))
         active_tab = request.args.get("tab", "recent")
         if active_tab not in {"recent", "registered", "object-events", "logs"}:
             raise ValueError("Unknown Event TX tab.")

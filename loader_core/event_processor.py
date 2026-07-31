@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import io
 import os
-import tempfile
 import time
-from pathlib import Path
 from typing import Any
 
 import oci
@@ -15,6 +13,7 @@ from partition_loader import (
     Database,
     allocate_or_get_batch,
     create_stage_table,
+    delete_event,
     drop_stage_table,
     ensure_control_tables,
     ensure_partition,
@@ -191,18 +190,11 @@ def _run_load(db: Database, event: dict[str, Any], source: dict[str, str], *, cr
 
 
 def _run_delete(db: Database, event: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
-    # Retain the established prototype's deletion semantics, including an idempotent no-op.
-    from partition_loader import run_delete
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as event_file:
-        import json
-        json.dump(event, event_file)
-        event_file.flush()
-        return run_delete(Path(event_file.name))
+    return delete_event(db, event, source)
 
 
 def process_cloud_event(event: dict[str, Any]) -> dict[str, Any]:
-    """Execute a CloudEvent without constructing an FDK HTTP response.
+    """Execute a captured Object Storage CloudEvent.
 
     The Streaming processor calls this directly after durable capture. Durable
     capture and ``stream_event_tx_log`` own transaction status and errors.

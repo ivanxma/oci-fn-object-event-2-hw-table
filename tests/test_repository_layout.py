@@ -17,6 +17,7 @@ def test_production_directories_do_not_contain_test_harnesses() -> None:
         ROOT / "tests" / "integration" / "verify_parallel_flow.py",
     }
     assert not [path for path in forbidden if path.exists()]
+    assert not (ROOT / "performance_test").exists()
 
 
 def test_disposable_sql_fixtures_are_kept_under_tests() -> None:

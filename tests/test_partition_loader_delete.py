@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import sys
-import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -88,21 +86,16 @@ class PartitionLoaderDeleteTest(unittest.TestCase):
             "target_table": "employees01",
         }
         cursor = _Cursor()
-        with tempfile.TemporaryDirectory() as directory:
-            event_path = Path(directory) / "event.json"
-            event_path.write_text(json.dumps(event), encoding="utf-8")
-            with patch.dict("os.environ", {"CONTROL_DATABASE": "stream_db"}), patch.object(
-                partition_loader, "Database", return_value=_Database(cursor)
-            ), patch.object(
-                partition_loader, "ensure_control_tables"
-            ), patch.object(
-                partition_loader, "resolve_mapping", return_value=mapping
-            ), patch.object(
-                partition_loader, "target_definition", return_value=["employee_id"]
-            ), patch.object(
-                partition_loader, "source_key", return_value=b"source-key"
-            ):
-                result = partition_loader.run_delete(event_path)
+        with patch.dict("os.environ", {"CONTROL_DATABASE": "stream_db"}), patch.object(
+            partition_loader, "ensure_control_tables"
+        ), patch.object(
+            partition_loader, "resolve_mapping", return_value=mapping
+        ), patch.object(
+            partition_loader, "target_definition", return_value=["employee_id"]
+        ), patch.object(
+            partition_loader, "source_key", return_value=b"source-key"
+        ):
+            result = partition_loader.delete_event(_Database(cursor), event)
 
         self.assertEqual(result["rows"], 50)
         self.assertTrue(

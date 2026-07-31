@@ -8,11 +8,10 @@ OCI Events and OCI Streaming for event delivery, OCI Container Instances for
 processing, OCI Vault for database connectivity, and a partition-exchange
 loader for efficient and atomic publication of each CSV object.
 
-The architecture replaces the earlier OCI Function target. A Function is useful
-for short, independent invocations, but it does not provide the explicit
-long-lived partition ownership, durable retry queue, deployment sizing, or
-ordering control required by this loader. OCI Streaming provides the ordering
-boundary and decouples event arrival from database processing.
+OCI Streaming provides the partition-local ordering boundary, retained event
+log and replay position required by the loader. It decouples event arrival from
+database processing while Processor Container Instances provide explicit
+partition ownership, durable retry state and independently sized compute.
 
 ## Component architecture
 
@@ -42,7 +41,7 @@ flowchart LR
 | Component | Responsibility | Important behavior |
 |---|---|---|
 | Object Storage | Stores source CSV objects and emits create/update/delete events | An object is the ownership unit for one target partition. Moving/renaming an object is not an atomic move event. |
-| OCI Events rule | Filters compartment, bucket and object-name patterns and routes matching CloudEvents | The action targets OCI Streaming, not OCI Functions. Disable the rule before source cleanup when target deletion is not intended. |
+| OCI Events rule | Filters compartment, bucket and object-name patterns and routes matching CloudEvents | The rule uses a Streaming action. Disable the rule before source cleanup when target deletion is not intended. |
 | OCI Streaming | Buffers events and provides partition-local ordered offsets | FIFO uses one partition. Parallel mode uses multiple partitions and does not guarantee global order. Delivery is at least once. |
 | Processor Container Instance | Polls assigned Stream partitions, captures messages durably, and executes the loader | Runs continuously with explicit partition ownership and a resource principal. Runtime configuration is replaced, not edited in place. |
 | OCI Vault and KMS | Stores the base64 JSON database bundle encrypted by an AES key | Only the secret OCID is passed to the Processor. Credentials are not stored in source, image tags, deployment history or UI profiles. |
@@ -53,23 +52,10 @@ flowchart LR
 | Target database | Holds user-visible partitioned tables | Each active source object owns one `LIST(batch_num)` partition. |
 | Flask UI | Manages Streams, rules, mappings, secrets, Processor deployments, durable messages and transactions | UI Connection Profiles are separate from Processor Vault connectivity. |
 
-## Why OCI Streaming instead of OCI Functions
+## Why OCI Streaming fits the workload
 
-The original design mapped an Object Storage event directly to an OCI Function.
-That created several architectural problems:
-
-- Function invocations are independent and do not establish a durable single
-  consumer for one ordered sequence.
-- Synchronous or detached Function invocation describes invocation behavior,
-  not FIFO data ordering.
-- Large CSV processing can exceed the comfortable lifecycle of a short-lived
-  invocation and needs controllable CPU, memory, worker count and retry state.
-- Retrying an invocation without a durable application record makes it harder
-  to distinguish an at-least-once replay from unfinished work.
-- Parallel Functions can update the same target table without a clear
-  partition-ownership contract.
-
-OCI Streaming solves the transport and ordering part of the problem:
+OCI Streaming supplies the transport and ordering capabilities required by the
+event-driven loader:
 
 - Each message has a Stream OCID, partition and monotonically ordered offset.
 - One FIFO Processor owns partition `0`, so it claims messages sequentially.
@@ -78,6 +64,10 @@ OCI Streaming solves the transport and ordering part of the problem:
   and HeatWave writes.
 - The Processor captures each message in MySQL before processing it, creating a
   durable application queue and transaction record.
+- Stream retention supports controlled replay while durable captures preserve
+  application state independently of cursor lifetime.
+- Processor CPU, memory, worker count, retry policy and network placement are
+  configured independently for long-running CSV ingestion.
 
 Streaming does not create a global exactly-once guarantee. The application adds
 idempotency through unique `(stream_id, partition_id, stream_offset)` capture
@@ -267,7 +257,7 @@ source object receives `p_batch_<batch_num>`.
 5. Validate that staging contains no unexpected batch number.
 6. Execute `ALTER TABLE target EXCHANGE PARTITION ... WITH TABLE stage WITHOUT
    VALIDATION`.
-7. Mark the source batch ACTIVE and drop the now-detached staging table.
+7. Mark the source batch ACTIVE and drop the staging table returned by the exchange.
 
 The application validates the batch number before using `WITHOUT VALIDATION`.
 Because the stage table is structurally cloned from the target, the exchange is
@@ -355,7 +345,7 @@ Collect these alongside the application metrics:
 - temporary table and disk-temporary-table counts;
 - target and staging schema growth;
 - Processor Container Instance CPU and memory utilization;
-- Stream backlog/consumer lag by partition;
+- Stream backlog/Processor lag by partition;
 - Object Storage request latency, range throughput and errors.
 
 Current `loader_duration_ms` intentionally measures the whole streaming loader
@@ -366,12 +356,11 @@ compute or storage IOPS without per-phase timing.
 
 ## Performance findings and challenges encountered
 
-### Function ordering was the wrong abstraction
+### Streaming makes ordering explicit
 
-The initial Function-oriented model exposed synchronous/detached execution
-settings but could not make them equivalent to FIFO. Moving to a one-partition
-Stream with one explicitly assigned continuous Processor established an actual
-ordering boundary and made retry state inspectable.
+A one-partition Stream with one explicitly assigned continuous Processor
+establishes a deterministic FIFO boundary. The Stream partition and offset make
+the sequence inspectable, while durable capture makes retry state observable.
 
 ### Large-object reads and database backpressure
 

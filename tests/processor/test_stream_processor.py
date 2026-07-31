@@ -53,7 +53,7 @@ class ProcessorModeTest(unittest.TestCase):
             else:
                 os.environ["OCI_AUTH_MODE"] = previous
 
-    def test_rejects_legacy_plain_text_vault_secret(self):
+    def test_rejects_plain_text_vault_secret(self):
         encoded = base64.b64encode(b"not-json").decode()
         with self.assertRaisesRegex(ValueError, "base64 JSON"):
             parse_secret_content(encoded)

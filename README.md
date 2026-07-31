@@ -267,7 +267,7 @@ releases use this same repository:
 ```
 
 Both tag types are immutable. Event Processor includes only `processor-*` tags
-in its Container image selector, so UI and unqualified legacy images cannot be
+in its Container image selector, so UI and unqualified image tags cannot be
 deployed to OCI Container Instances.
 
 ### Image build, publication, and deployment runbook
@@ -389,7 +389,7 @@ troubleshooting, and validation commands.
   LIST partitioning by `batch_num`, and `batch_num` in every unique key.
 - The seed partition remains by design. A header-only active CSV may also own
   an empty partition; empty partitions for deleted source objects indicate
-  legacy or interrupted processing and can be reconciled against
+  interrupted or incomplete processing and can be reconciled against
   `source_object_batches`.
 - MySQL limits a non-NDB table to 8,192 partitions in total, including
   subpartitions. Because this loader retains one seed partition and assigns one

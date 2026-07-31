@@ -76,7 +76,7 @@ def _initialize(mysql, values: dict[str, str], *, replace: bool = False) -> None
                 cursor.execute(f"DROP TABLE IF EXISTS {control}.{quote_identifier(table, 'control table')}")
         for statement in _split_sql(SCHEMA_ROOT / "loader_core/sql/init_control_schema.sql", {"__CONTROL_DATABASE__": control}):
             cursor.execute(statement)
-        # MappingService owns its external mapping migrations and retired-object cleanup.
+        # MappingService owns its external mapping migrations.
         os.environ["CONTROL_DATABASE"] = values["CONTROL_DATABASE"]
         MappingService(mysql)._ensure_schema(cursor)
         durable = quote_identifier(values["STREAM_DATA_DB_NAME"], "stream data database")

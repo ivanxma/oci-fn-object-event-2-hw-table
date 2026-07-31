@@ -39,10 +39,13 @@ class PartitionLoaderCsvTest(unittest.TestCase):
         from unittest.mock import patch
 
         with patch.dict(os.environ, {"STAGING_DATABASE": "staging_db"}):
-            self.assertEqual(staging_database({"target_database": "testdb"}), "staging_db")
+            self.assertEqual(staging_database(), "staging_db")
         with patch.dict(os.environ, {"STAGING_DATABASE": "invalid-name"}):
             with self.assertRaisesRegex(ValueError, "Invalid staging database"):
-                staging_database({"target_database": "testdb"})
+                staging_database()
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "STAGING_DATABASE is required"):
+                staging_database()
 
 if __name__ == "__main__":
     unittest.main()

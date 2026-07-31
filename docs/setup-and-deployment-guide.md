@@ -501,7 +501,7 @@ recovery procedure explicitly requires their restoration.
 4. If the selected deployment has no application tables, the UI redirects to
    **Settings** and shows **Install schemas now**.
 5. Install/migrate structures. Use **Re-initialize DB structure** only for an
-   incompatible legacy schema after backup; it deletes application-owned
+   incompatible prior schema after backup; it deletes application-owned
    control and durable state but does not drop mapped target tables.
 6. Create or verify a Stream, Resource Mapping, OCI Event rule, Vault database
    secret, and Processor deployment.

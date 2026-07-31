@@ -28,6 +28,7 @@ class EventTxPaginationContractTest(unittest.TestCase):
             "logs_page_size",
         ):
             self.assertIn(value, route)
+        self.assertNotIn('request.args.get("limit")', route)
 
     def test_service_pages_recent_and_failed_captures(self):
         service = (ROOT / "myapp" / "services" / "event_tx_service.py").read_text()

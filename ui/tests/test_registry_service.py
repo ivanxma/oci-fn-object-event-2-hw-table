@@ -27,7 +27,7 @@ class RegistryServiceTest(unittest.TestCase):
         rows = [
             SimpleNamespace(id="processor", version="processor-v2", digest="processor-digest", lifecycle_state="AVAILABLE"),
             SimpleNamespace(id="ui", version="ui-v2", digest="ui-digest", lifecycle_state="AVAILABLE"),
-            SimpleNamespace(id="legacy", version="v1", digest="legacy-digest", lifecycle_state="AVAILABLE"),
+            SimpleNamespace(id="unqualified", version="v1", digest="unqualified-digest", lifecycle_state="AVAILABLE"),
         ]
         client = SimpleNamespace(list_container_images=lambda **_: SimpleNamespace(data=rows, next_page=None, has_next_page=False))
         with patch.object(service, "_client", return_value=client), patch(

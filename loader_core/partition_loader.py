@@ -1,12 +1,10 @@
-"""Generic, partition-exchange Object Storage event prototype helpers."""
+"""Partition-exchange helpers for the Object Storage Stream processor."""
 
 from __future__ import annotations
 
-import argparse
 import csv
 import fnmatch
 import hashlib
-import json
 import os
 import re
 import time
@@ -103,13 +101,11 @@ def table_name(schema: str, table: str) -> str:
     return f"{quote_identifier(schema, 'target database')}.{quote_identifier(table, 'target table')}"
 
 
-def staging_database(mapping: dict[str, Any] | None = None) -> str:
-    """Return the dedicated staging schema, falling back only for legacy secrets."""
+def staging_database() -> str:
+    """Return the required dedicated staging schema."""
     value = os.environ.get("STAGING_DATABASE", "").strip()
     if value:
         return validate_identifier(value, "staging database")
-    if mapping and mapping.get("target_database"):
-        return validate_identifier(str(mapping["target_database"]), "target database")
     raise ValueError("STAGING_DATABASE is required for processor staging.")
 
 
@@ -347,7 +343,7 @@ def ensure_partition(db: Database, mapping: dict[str, Any], batch_num: int) -> N
 def create_stage_table(db: Database, mapping: dict[str, Any], batch_num: int) -> str:
     target = table_name(mapping["target_database"], mapping["target_table"])
     stage = stage_name(mapping["target_table"])
-    stage_quoted = table_name(staging_database(mapping), stage)
+    stage_quoted = table_name(staging_database(), stage)
     with db.connection() as connection:
         cursor = connection.cursor()
         cursor.execute(f"CREATE TABLE {stage_quoted} LIKE {target}")
@@ -359,7 +355,7 @@ def drop_stage_table(db: Database, mapping: dict[str, Any], stage: str) -> None:
     """Remove a per-batch staging table after exchange or failed processing."""
     with db.connection() as connection:
         connection.cursor().execute(
-            f"DROP TABLE IF EXISTS {table_name(staging_database(mapping), stage)}"
+            f"DROP TABLE IF EXISTS {table_name(staging_database(), stage)}"
         )
 
 
@@ -414,7 +410,7 @@ def insert_batch(db: Database, mapping: dict[str, Any], stage: str, batch_num: i
     with db.connection() as connection:
         cursor = connection.cursor()
         cursor.executemany(
-            f"INSERT INTO {table_name(staging_database(mapping), stage)} ({names}) VALUES ({placeholders})",
+            f"INSERT INTO {table_name(staging_database(), stage)} ({names}) VALUES ({placeholders})",
             [(batch_num, *row) for row in rows],
         )
     return len(rows)
@@ -435,7 +431,7 @@ def load_csv_parallel(db: Database, mapping: dict[str, Any], stage: str, batch_n
 
 def validate_and_exchange(db: Database, mapping: dict[str, Any], stage: str, batch_num: int) -> None:
     target = table_name(mapping["target_database"], mapping["target_table"])
-    stage_quoted = table_name(staging_database(mapping), stage)
+    stage_quoted = table_name(staging_database(), stage)
     with db.connection() as connection:
         cursor = connection.cursor()
         cursor.execute(f"SELECT COUNT(*) FROM {stage_quoted} WHERE batch_num <> %s", (batch_num,))
@@ -458,48 +454,12 @@ def mark_error(db: Database, record_id: int) -> None:
         )
 
 
-def run_load(event_path: Path, csv_path: Path, *, create: bool, batch_rows: int, workers: int) -> dict[str, Any]:
-    event = json.loads(event_path.read_text(encoding="utf-8"))
+def delete_event(db: Database, event: dict[str, Any], source: dict[str, str] | None = None) -> dict[str, Any]:
+    """Apply one captured Object Storage delete without a temporary event file."""
     if not isinstance(event, dict):
         raise ValueError("Event JSON must be an object.")
-    db, mapping, record, stage = Database(), None, None, None
-    source, action = event_source(event), "CREATE" if create else "UPDATE"
-    try:
-        ensure_control_tables(db)
-        mapping = resolve_mapping(db, source)
-        columns = target_definition(db, mapping)
-        record = allocate_or_get_batch(db, mapping, source, create=create)
-        if record.get("already_active"):
-            return {"action": action.lower(), "batch_num": record["batch_num"], "rows": 0, "target": f"{mapping['target_database']}.{mapping['target_table']}", "idempotent": True, "processing_mode": mapping.get("processing_mode", "FIFO"), "worker_threads": mapping.get("worker_threads", 4)}
-        ensure_partition(db, mapping, record["batch_num"])
-        stage = create_stage_table(db, mapping, record["batch_num"])
-        rows = load_csv_parallel(db, mapping, stage, record["batch_num"], columns, csv_path, batch_rows, workers)
-        validate_and_exchange(db, mapping, stage, record["batch_num"])
-        mark_active(db, record["id"])
-        return {"event": action.lower(), "batch_num": record["batch_num"], "target": f"{mapping['target_database']}.{mapping['target_table']}", "rows": rows}
-    except Exception as error:
-        if record is not None:
-            try:
-                mark_error(db, record["id"])
-            except Exception:
-                pass
-        raise
-    finally:
-        if mapping is not None and stage is not None:
-            try:
-                drop_stage_table(db, mapping, stage)
-            except Exception:
-                # A cleanup failure must not hide the original load outcome;
-                # UUID stage names prevent a later event from colliding with it.
-                pass
-
-
-def run_delete(event_path: Path) -> dict[str, Any]:
-    event = json.loads(event_path.read_text(encoding="utf-8"))
-    if not isinstance(event, dict):
-        raise ValueError("Event JSON must be an object.")
-    db, mapping, record = Database(), None, None
-    source, action = event_source(event), "DELETE"
+    mapping, record = None, None
+    source = source or event_source(event)
     try:
         ensure_control_tables(db)
         mapping = resolve_mapping(db, source)
@@ -529,13 +489,3 @@ def run_delete(event_path: Path) -> dict[str, Any]:
         return {"event": "delete", "batch_num": record["batch_num"], "target": f"{record['target_database']}.{record['target_table']}", "rows": rows_affected, "exchange_duration_ms": round(exchange_duration_ms, 3)}
     except Exception:
         raise
-
-
-def load_arguments(description: str, *, csv_required: bool) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--event", type=Path, required=True, help="Object Storage CloudEvent JSON file")
-    if csv_required:
-        parser.add_argument("--csv", type=Path, required=True, help="Local CSV fixture representing the version-pinned source object")
-        parser.add_argument("--batch-rows", type=int, default=int(os.environ.get("PROTOTYPE_BATCH_ROWS", "1000")))
-        parser.add_argument("--workers", type=int, default=int(os.environ.get("PROTOTYPE_WRITER_WORKERS", "4")))
-    return parser

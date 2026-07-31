@@ -17,30 +17,21 @@ between event production and database loading; the processor can be stopped,
 replaced, or restarted without requiring Object Storage to reproduce events
 that remain within Stream retention.
 
-OCI Events supports both Streaming and Functions actions. This implementation
-deliberately uses a Streaming action and does not deploy an OCI Function:
+This implementation uses an OCI Events Streaming action because the workload
+needs a retained log, partition offsets, replay and an explicit ordering
+boundary:
 
-- Direct, independent Function invocations do not provide this application's
-  required retained log, partition offset, replay, or one-partition ordering
-  boundary. OCI Streaming provides those capabilities directly.
+- FIFO uses one Stream partition and one assigned Processor. Parallel mode uses
+  multiple partitions with disjoint Processor assignments.
 - CSV ingestion can be long-running and has variable Object Storage and MySQL
-  latency. A continuously running Container Instance has explicit CPU/memory,
-  network placement, polling, retry, and lifecycle control instead of a
-  per-invocation execution window.
-- The processor must persist the raw event before loading, maintain a cursor,
-  recover interrupted attempts, and expose retry/archive state. Keeping these
-  responsibilities in one long-running processor avoids recreating a queue and
-  checkpoint protocol around Function invocations.
-- FIFO and parallel behavior are deployment properties tied to Stream
-  partitions. They are not Function `Sync` or `Detached` invocation modes.
-  Function execution-mode fields and Function deployment are therefore absent
-  from the active UI and runtime contract.
-
-This is an architecture choice, not a statement that OCI Functions cannot
-receive OCI Events. A Function design would require an additional durable,
-ordered broker plus idempotency/checkpoint handling and would still need to
-address execution-time and concurrency behavior. That would duplicate the
-Streaming processor implemented here.
+  latency. A continuously running Container Instance provides explicit
+  CPU/memory, network placement, polling, retry and lifecycle control.
+- The Processor persists the raw event before loading, maintains a cursor,
+  recovers interrupted attempts and exposes retry/archive state.
+- Stream retention decouples event arrival from loading. Durable capture then
+  preserves application state beyond the lifetime of a polling cursor.
+- FIFO and Parallel are deployment properties tied directly to Stream
+  partitions and their Processor assignments.
 
 ## Stream Server and ordering modes
 
@@ -254,10 +245,10 @@ where documented, and executes the resulting statements.
 |---|---|
 | Control database, `object_storage_mappings`, `target_batch_sequences`, `source_object_batches` | `loader_core/sql/init_control_schema.sql` |
 | Dedicated transient staging database | `loader_core/sql/init_staging_schema.sql` |
-| Compatibility columns for an older `object_storage_mappings` table | `loader_core/sql/control_migrations/*.sql` |
+| Supported additive upgrades for `object_storage_mappings` | `loader_core/sql/control_migrations/*.sql` |
 | UI-owned mapping bootstrap | `ui/myapp/sql/init_mapping_control.sql` and `ui/myapp/sql/mapping_migrations/*.sql` |
 | `stream_message_capture`, `stream_partition_checkpoint`, `stream_event_tx_log` | `processor/sql/init_stream_capture.sql` |
-| Durable retry/processing compatibility columns | `processor/sql/migrate_stream_capture_retry.sql`, `processor/sql/migrate_stream_capture_processing.sql` |
+| Durable retry and processing upgrades | `processor/sql/migrate_stream_capture_retry.sql`, `processor/sql/migrate_stream_capture_processing.sql` |
 | `stream_message_archive_partitions` registry | `ui/myapp/sql/init_stream_message_archive.sql` |
 | Each physical year/month/week archive table | `ui/myapp/sql/init_stream_message_archive_partition.sql` |
 
@@ -377,8 +368,7 @@ remain available would allow a trim-horizon cursor recovery to replay them.
 
 ## Authoritative service references
 
-- [OCI Events: add a Streaming or Functions action](https://docs.oracle.com/en-us/iaas/Content/Events/Task/create-action-events-rule.htm)
+- [OCI Events: add a Streaming action](https://docs.oracle.com/en-us/iaas/Content/Events/Task/create-action-events-rule.htm)
 - [OCI Streaming overview, retention, replay, and ordering](https://docs.oracle.com/en-us/iaas/Content/Streaming/Concepts/streamingoverview.htm)
-- [OCI Functions invocation modes and execution timeouts](https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionsinvokingfunctions.htm)
 - [MySQL 9.7 partition exchange](https://dev.mysql.com/doc/refman/9.7/en/partitioning-management-exchange.html)
 - [MySQL 9.7 partitioning restrictions and 8,192-partition limit](https://dev.mysql.com/doc/refman/9.7/en/partitioning-limitations.html)
