@@ -340,7 +340,8 @@ class EventTransactionService:
             "stream_partition", "stream_offset", "target", "status",
             "rows_affected", "object_size_bytes", "attempts", "queue_delay_ms",
             "loader_duration_ms", "exchange_duration_ms",
-            "processing_duration_ms", "duration_ms", "processor_release",
+            "processing_duration_ms", "received_at", "completed_at",
+            "duration_ms", "processor_release",
         ]
 
     def object_event_page(self, database: str, *, page: int, page_size: int, sort_column: str | None = None, sort_direction: str = "desc") -> tuple[list[str], list[dict[str, Any]], int, str, str]:
@@ -363,6 +364,8 @@ class EventTransactionService:
                 "stream_offset": row["stream_offset"],
                 "target": row["target_label"],
                 "status": row["event_status"],
+                "received_at": row["event_received_at"],
+                "completed_at": row["event_completed_at"],
                 "duration_ms": row["event_duration_ms"],
                 "processor_release": row["processor_release_stamp"],
             })

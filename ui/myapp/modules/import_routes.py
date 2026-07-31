@@ -109,10 +109,14 @@ def load(job_id: str):
         flash("Review the generated SQL before running an import.", "warning")
         return redirect(url_for("imports.review", job_id=job_id))
     try:
-        row_count = ImportService(mysql_for_request()).load_data(Path(job["path"]), job["database"], job["table"], review["columns"], review["primary_key"], review["add_row_id"], job["delimiter"], partition_by_batch=review.get("partition_by_batch", False), create_database=job["create_database"])
+        include_data = review.get("sql_mode") == "DDL_DATA"
+        row_count = ImportService(mysql_for_request()).load_data(Path(job["path"]), job["database"], job["table"], review["columns"], review["primary_key"], review["add_row_id"], job["delimiter"], partition_by_batch=review.get("partition_by_batch", False), create_database=job["create_database"], include_data=include_data, drop_existing=review.get("drop_existing", False))
         Path(job["path"]).unlink(missing_ok=True)
         state.imports.pop(job_id, None)
-        flash(f"Loaded {row_count} row(s) into {job['database']}.{job['table']} using LOAD DATA LOCAL INFILE.", "success")
+        if include_data:
+            flash(f"Loaded {row_count} row(s) into {job['database']}.{job['table']} using LOAD DATA LOCAL INFILE.", "success")
+        else:
+            flash(f"Created {job['database']}.{job['table']} from the reviewed DDL. No CSV data was loaded.", "success")
     except ImportExecutionError as error:
         current_app.logger.exception("CSV LOAD DATA import failed")
         flash(str(error), "error")

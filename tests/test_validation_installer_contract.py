@@ -87,6 +87,10 @@ class ValidationInstallerContractTest(unittest.TestCase):
             'PROCESSOR_IMAGE_TAG="${PROCESSOR_IMAGE_TAG_OVERRIDE:-${PROCESSOR_IMAGE_TAG:-}}"',
             processor,
         )
+        self.assertIn(
+            '-m pip install -r "$ROOT_DIR/ui/requirements.txt"',
+            installer,
+        )
 
 
 if __name__ == "__main__":

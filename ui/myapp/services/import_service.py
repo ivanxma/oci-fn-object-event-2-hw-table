@@ -70,15 +70,22 @@ class ImportService:
             statements.append(statement.replace("%s", "'__LOCAL_CSV_PATH__'") + ";")
         return "\n\n".join(statements) + "\n"
 
-    def load_data(self, path: Path, database: str, table: str, columns: list[dict], primary_key: list[str], add_row_id: bool, delimiter: str, *, partition_by_batch: bool = False, create_database: bool = False) -> int:
-        self._validate_primary_key_values(path, columns, primary_key, add_row_id)
+    def load_data(self, path: Path, database: str, table: str, columns: list[dict], primary_key: list[str], add_row_id: bool, delimiter: str, *, partition_by_batch: bool = False, create_database: bool = False, include_data: bool = True, drop_existing: bool = False) -> int:
+        if include_data:
+            self._validate_primary_key_values(path, columns, primary_key, add_row_id)
         statement = self.load_data_statement(database, table, columns, delimiter, partition_by_batch)
         try:
             if create_database:
                 self.mysql.create_database(database)
             with self.mysql.connection() as conn:
                 cursor = conn.cursor()
+                if drop_existing:
+                    cursor.execute(
+                        f"DROP TABLE IF EXISTS {quote_identifier(database, 'database name')}.{quote_identifier(table, 'table name')}"
+                    )
                 cursor.execute(self.ddl(database, table, columns, primary_key, add_row_id, partition_by_batch))
+                if not include_data:
+                    return 0
                 cursor.execute(statement, (str(path),))
                 return cursor.rowcount
         except mysql.connector.Error as error:

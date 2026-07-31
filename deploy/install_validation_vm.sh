@@ -106,7 +106,7 @@ ol9_dnf_install python3.12 python3.12-pip
 VERIFY_PYTHON="$ROOT_DIR/.venv-verification-py312/bin/python"
 python3.12 -m venv "$ROOT_DIR/.venv-verification-py312"
 "$VERIFY_PYTHON" -m pip install --upgrade pip >/dev/null
-"$VERIFY_PYTHON" -m pip install "mysql-connector-python==9.7.0" "oci==2.183.0" >/dev/null
+"$VERIFY_PYTHON" -m pip install -r "$ROOT_DIR/ui/requirements.txt" >/dev/null
 
 OCI_AUTH_MODE=instance_principal "$VERIFY_PYTHON" "$ROOT_DIR/deploy/initialize_databases.py"
 "$ROOT_DIR/tests/integration/verify_durable_capture.sh"
