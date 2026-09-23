@@ -7,8 +7,30 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
+import sys
 import time
 from typing import Any
+
+
+def _safe_error_message(error: Exception) -> str:
+    """Return a one-line diagnostic without ever emitting a database secret."""
+    message = " ".join(str(error).split())
+    # Connector and SDK exceptions normally do not include credentials, but
+    # redact their common spellings defensively before writing to container
+    # stdout/stderr, which operators can retrieve from OCI.
+    message = re.sub(r"(?i)(password|credential|token)=[^\s,;]+", r"\1=<redacted>", message)
+    return message[:1000] or "No diagnostic text was returned."
+
+
+def _log_fatal_error(stage: str, error: Exception) -> None:
+    """Emit an operator-readable failure record to the OCI container log."""
+    print(
+        f"processor-failed stage={stage} error_type={type(error).__name__} "
+        f"message={_safe_error_message(error)}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 def validate_mode(mode: str, partitions: int, replicas: int) -> None:
     mode = mode.upper()
@@ -120,31 +142,39 @@ def main() -> None:
     from stream_client import client_for_stream
     from loader import process_event
     from release import release_metadata
-    mode = os.environ.get("PROCESSING_MODE", "").upper()
-    stream_id = os.environ.get("OCI_STREAM_ID", "")
-    if not stream_id.startswith("ocid1.stream."):
-        raise ValueError("OCI_STREAM_ID is required.")
-    validate_mode(mode, int(os.environ.get("EXPECTED_PARTITION_COUNT", "0")), int(os.environ.get("PROCESSOR_REPLICA_COUNT", "0")))
-    partitions = assigned_partitions(mode, int(os.environ["EXPECTED_PARTITION_COUNT"]), os.environ.get("PROCESSOR_PARTITIONS", ""))
-    database_config = load_database_config()
-    # The event loader resolves each mapped target database from control state;
-    # the Vault bundle's base database is only a connection fallback. Keep the
-    # inherited loader pointed at the configured control database.
-    apply_database_environment(database_config)
-    connection = connect(stream_data_database_config(database_config))
+    stage = "startup"
+    connection = None
     try:
+        mode = os.environ.get("PROCESSING_MODE", "").upper()
+        stream_id = os.environ.get("OCI_STREAM_ID", "")
+        if not stream_id.startswith("ocid1.stream."):
+            raise ValueError("OCI_STREAM_ID is required.")
+        validate_mode(mode, int(os.environ.get("EXPECTED_PARTITION_COUNT", "0")), int(os.environ.get("PROCESSOR_REPLICA_COUNT", "0")))
+        partitions = assigned_partitions(mode, int(os.environ["EXPECTED_PARTITION_COUNT"]), os.environ.get("PROCESSOR_PARTITIONS", ""))
+        database_config = load_database_config()
+        # The event loader resolves each mapped target database from control state;
+        # the Vault bundle's base database is only a connection fallback. Keep the
+        # inherited loader pointed at the configured control database.
+        apply_database_environment(database_config)
+        stage = "database-connect"
+        connection = connect(stream_data_database_config(database_config))
         ensure_schema(connection)
         connection.commit()
         oci, client = client_for_stream(stream_id, os.environ.get("OCI_REGION", ""))
         print(f"processor-ready mode={mode} stream={stream_id} partitions={','.join(partitions)} release={release_metadata()['release_version']} sha={release_metadata()['git_sha']}", flush=True)
+        stage = "polling"
         while True:
             read_count = 0
             for partition in partitions:
                 read_count += run_partition_once(connection, oci=oci, client=client, stream_id=stream_id, partition=partition, processor=process_event)
             if not read_count:
                 time.sleep(float(os.environ.get("PROCESSOR_POLL_SECONDS", "1")))
+    except Exception as error:
+        _log_fatal_error(stage, error)
+        raise
     finally:
-        connection.close()
+        if connection is not None:
+            connection.close()
 
 if __name__ == "__main__":
     main()

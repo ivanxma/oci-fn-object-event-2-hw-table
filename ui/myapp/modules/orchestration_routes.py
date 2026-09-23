@@ -143,6 +143,19 @@ def create_database_secret():
     return redirect(url_for("orchestration.index", tab="database-secret"))
 
 
+@orchestration_bp.get("/database-secret/<secret_id>/metadata")
+@login_required
+def database_secret_metadata(secret_id: str):
+    """Populate the update form without returning the Vault credential."""
+    try:
+        values = VaultSecretService(
+            compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"]
+        ).database_connection_metadata(secret_id)
+        return {"values": values}
+    except (ValueError, VaultSecretError) as error:
+        return {"error": str(error)}, 400
+
+
 @orchestration_bp.get("/deployments/<deployment_id>")
 @login_required
 def deployment_detail(deployment_id: str):

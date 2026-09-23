@@ -33,7 +33,7 @@ class VaultSecretServiceTest(unittest.TestCase):
                 service.list_active_secrets()
         self.assertNotIn("opc-request-id", str(raised.exception))
 
-    def test_database_connection_metadata_returns_only_host_and_port(self):
+    def test_database_connection_metadata_returns_all_browser_safe_update_fields(self):
         service = VaultSecretService(compartment_id="ocid1.compartment.test", region="uk-london-1")
         payload = base64.b64encode(json.dumps({
             "host": "10.0.0.8",
@@ -41,6 +41,9 @@ class VaultSecretServiceTest(unittest.TestCase):
             "user": "streamuser",
             "credential": "must-not-be-returned",
             "database": "target_db",
+            "control_database": "stream_db",
+            "stream_data_database": "stream_data",
+            "staging_database": "stream_staging",
         }).encode()).decode()
         client = SimpleNamespace(
             get_secret_bundle=lambda *_args, **_kwargs: SimpleNamespace(
@@ -59,7 +62,11 @@ class VaultSecretServiceTest(unittest.TestCase):
         )
         with patch.dict("sys.modules", {"oci": oci}):
             metadata = service.database_connection_metadata("ocid1.vaultsecret.test")
-        self.assertEqual(metadata, {"host": "10.0.0.8", "port": "3306"})
+        self.assertEqual(metadata, {
+            "host": "10.0.0.8", "port": "3306", "user": "streamuser",
+            "database": "target_db", "control_database": "stream_db",
+            "stream_data_database": "stream_data", "staging_database": "stream_staging",
+        })
         self.assertNotIn("credential", metadata)
 
     def test_key_choices_include_only_enabled_symmetric_keys(self):

@@ -93,7 +93,12 @@ class VaultSecretService:
             ) from error
 
     def database_connection_metadata(self, secret_id: str) -> dict[str, str]:
-        """Return only non-sensitive endpoint fields from a database JSON secret."""
+        """Return every browser-safe field from a database JSON secret.
+
+        The credential is deliberately excluded.  An update with an empty
+        credential retains the existing Vault credential server-side, so an
+        operator can correct a host or port without ever exposing a password.
+        """
         if not secret_id.startswith("ocid1.vaultsecret."):
             raise ValueError("Database secret identifier is invalid.")
         try:
@@ -103,11 +108,20 @@ class VaultSecretService:
             bundle = client.get_secret_bundle(secret_id, stage="CURRENT").data
             encoded = str(bundle.secret_bundle_content.content or "")
             payload = json.loads(base64.b64decode(encoded, validate=True))
-            host = str(payload.get("host") or "").strip()
-            port = str(payload.get("port") or "").strip()
-            if not host or not port.isdigit() or not 1 <= int(port) <= 65535:
+            values = {
+                "host": str(payload.get("host") or "").strip(),
+                "port": str(payload.get("port") or "").strip(),
+                "user": str(payload.get("user") or "").strip(),
+                "database": str(payload.get("database") or "").strip(),
+                "control_database": str(payload.get("control_database") or "").strip(),
+                "stream_data_database": str(payload.get("stream_data_database") or "").strip(),
+                "staging_database": str(payload.get("staging_database") or "").strip(),
+            }
+            if not values["host"] or not values["port"].isdigit() or not 1 <= int(values["port"]) <= 65535:
                 raise ValueError("Database secret does not contain a valid host and port.")
-            return {"host": host, "port": port}
+            if not all(values[key] for key in ("user", "database", "control_database", "stream_data_database", "staging_database")):
+                raise ValueError("Database secret is missing one or more required database settings.")
+            return values
         except ValueError:
             raise
         except Exception as error:
@@ -181,11 +195,18 @@ class VaultSecretService:
     def update_database_secret(self, *, secret_id: str, host: str, port: str, user: str, credential: str, database: str, control_database: str, stream_data_database: str, staging_database: str) -> None:
         if not secret_id.startswith("ocid1.vaultsecret."):
             raise ValueError("Choose an existing OCI Vault secret to update.")
-        if not all((host.strip(), port.strip(), user.strip(), credential, database.strip(), control_database.strip(), stream_data_database.strip(), staging_database.strip())) or not port.strip().isdigit():
+        if not all((host.strip(), port.strip(), user.strip(), database.strip(), control_database.strip(), stream_data_database.strip(), staging_database.strip())) or not port.strip().isdigit() or not 1 <= int(port.strip()) <= 65535:
             raise ValueError("Complete all database connectivity fields before updating the secret.")
-        payload = json.dumps({"host": host.strip(), "port": int(port), "user": user.strip(), "credential": credential, "database": database.strip(), "control_database": control_database.strip(), "stream_data_database": stream_data_database.strip(), "staging_database": staging_database.strip()}, separators=(",", ":")).encode("utf-8")
         try:
             oci, client = self._client()
+            if not credential:
+                signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+                bundle = oci.secrets.SecretsClient({"region": self.region}, signer=signer).get_secret_bundle(secret_id, stage="CURRENT").data
+                existing = json.loads(base64.b64decode(str(bundle.secret_bundle_content.content or ""), validate=True))
+                credential = str(existing.get("credential") or "")
+            if not credential:
+                raise ValueError("Enter a database credential; the selected secret has no credential to retain.")
+            payload = json.dumps({"host": host.strip(), "port": int(port), "user": user.strip(), "credential": credential, "database": database.strip(), "control_database": control_database.strip(), "stream_data_database": stream_data_database.strip(), "staging_database": staging_database.strip()}, separators=(",", ":")).encode("utf-8")
             content = oci.vault.models.Base64SecretContentDetails(name="processor-db-config", stage="CURRENT", content=base64.b64encode(payload).decode("ascii"))
             client.update_secret(secret_id, oci.vault.models.UpdateSecretDetails(secret_content=content))
         except (ValueError, VaultSecretError):
