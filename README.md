@@ -14,6 +14,24 @@ Messages page for capture, retry, archive, and retention operations.
 
 ## Application components
 
+![CSV files flow through Object Storage events, OCI Streaming and a Container Instance Processor into MySQL HeatWave.](docs/images/oci-streaming-heatwave-architecture.png)
+
+*Left to right: CSV file → Object Storage → OCI Events rule → OCI Streaming →
+Container Instance Processor → MySQL HeatWave.*
+
+Object Storage provides a landing point for CSV exports without requiring
+producers to connect to MySQL. The application turns those files into typed,
+queryable tables for SQL joins, reporting and applications. The challenge is
+keeping the table correct when files change, events repeat, or a load fails.
+
+The picture shows the logical ingestion flow, not a single data connection:
+Stream messages carry event metadata, **not CSV bytes**. The Processor polls
+the Stream and reads the CSV directly from Object Storage, then stages and
+publishes its rows into the target.
+
+<details>
+<summary>Detailed component connections</summary>
+
 ```mermaid
 flowchart LR
     Operator[Operator] --> UI[Flask operations UI]
@@ -31,6 +49,56 @@ flowchart LR
     Stage -->|Atomic partition exchange| Target
     Loader --> Control
 ```
+
+</details>
+
+### UI and service management
+
+![A browser connects through HTTPS to nginx and the UI on a Compute VM, which manages OCI services.](docs/images/oci-ui-control-plane.png)
+
+*Left to right: user browser → HTTPS → Compute VM with host nginx and a
+Podman UI container. The service symbols on the right represent Streaming,
+Container Instances, Vault and OCIR, from top to bottom.*
+
+The UI manages Streams, mappings, Events rules and Processor deployments
+through OCI APIs. OCIR supplies separate `ui-*` and `processor-*` images.
+The UI is not on the automated CSV loading path: Processors run independently
+in OCI Container Instances, using their resource principals and Vault database
+secrets. UI sign-in uses a separate Connection Profile and MySQL credentials.
+
+### Durable capture and retry
+
+![Stream events enter a durable store, with a retry loop before successful staging and database publication.](docs/images/oci-durable-processing.png)
+
+*Incoming event → durable capture → staged processing → target publication;
+the clock loop represents deferred retry after a failed attempt.*
+
+The Processor commits the captured event and Event TX record before advancing
+its saved Stream cursor. Failed work remains in the durable store for retry;
+duplicate delivery of the same Stream partition/offset is deduplicated at
+capture. Reading a Stream message does not delete it from the retained log.
+This is not a global exactly-once guarantee, and a later eligible record can
+pass a failed record whose retry is delayed.
+
+### Publish a complete file with partition exchange
+
+![A staging table exchanges its completed row set with one file-owned partition in the target table.](docs/images/oci-partition-exchange.png)
+
+*Left: a fully loaded staging table. Right: the target table with one
+object-owned partition selected for exchange. The rings are conceptual,
+not a physical storage layout.*
+
+Each active source object owns a stable `batch_num` and target partition.
+CREATE and UPDATE load a compatible staging table, validate its batch value,
+then exchange that stage with the object's target partition. UPDATE reuses
+the same batch number; the old contents move to the stage and are dropped.
+DELETE drops the owned partition without reading the CSV. The exchange itself
+is atomic, but the complete loading and bookkeeping workflow spans multiple
+commits.
+
+These conceptual illustrations are reused from the architecture deep-dive
+presentation. See the [technical architecture guide](docs/technical-architecture.md)
+for implementation and scaling details.
 
 ## What it does
 
@@ -59,9 +127,11 @@ or IAM provisioning tool.
 1. [Prepare infrastructure, database, IAM, registry and Vault](#prerequisites).
 2. [Clone main and prepare the deployment host](#prepare-the-deployment-host).
 3. [Choose interactive or unattended setup](#configure-and-install).
-4. [Publish the release and activate the UI](#publish-the-release-and-activate-the-ui).
-5. [Verify and configure the application before production processing](#verify-and-configure-the-application).
-6. [Deploy or replace Processors](#deploy-or-replace-processors).
+4. [Verify and configure the application before production processing](#verify-and-configure-the-application).
+5. [Deploy or replace Processors](#deploy-or-replace-processors).
+
+Both installation paths publish the initial images and activate the UI.
+For later updates, use [publish the release and activate the UI](#publish-the-release-and-activate-the-ui).
 
 For the complete installation, upgrade, rollback and database migration
 procedures, see the [setup and deployment guide](docs/setup-and-deployment-guide.md).
@@ -203,7 +273,7 @@ cd oci-fn-object-event-2-hw-table
 All following commands run from this repository root. The application runtime
 is Python 3.13 or later; the images provide that runtime. Manual deployment
 migrations and verification on OL9 use the separate Python 3.12 environment
-created below. The UI uses Flask and MySQL Connector/Python `>=9.7,<10`.
+managed by the installer. The UI uses Flask and MySQL Connector/Python `>=9.7,<10`.
 
 ## Configure and install
 
@@ -211,7 +281,7 @@ Choose **one** initial-install path. Both require all prerequisites above.
 
 ### Option A: Interactive setup
 
-Bootstrap the host tools before running the resource-selection prompts:
+First bootstrap the host tools and select the deployment resources:
 
 ```sh
 ./deploy/bootstrap_streaming.sh
@@ -238,18 +308,22 @@ be mode `0600`; after Vault creation/update, setup atomically writes the
 resulting OCID to `env.sh` and removes that input file. Passwords are never
 written to `env.sh`.
 
-Create the host Python environment **before the first manual release**;
-`publish_release.sh` needs it to apply database migrations:
+Then finish installation using that generated file:
 
 ```sh
-sudo dnf install -y python3.12 python3.12-pip
-python3.12 -m venv .venv-verification-py312
-./.venv-verification-py312/bin/python -m pip install --upgrade pip
-./.venv-verification-py312/bin/python -m pip install -r ui/requirements.txt
+./deploy/install_validation_vm.sh --config ./deploy/env.sh
 ```
 
-Alternatively, set `DEPLOYMENT_PYTHON_BIN` to an executable Python environment
-that can import both `mysql.connector` and `oci`. Continue to publication below.
+The installer recognizes the generated `deploy/env.sh`, reuses its Vault secret
+and selected image version, and **does not rerun setup or rewrite the file**.
+It reruns the host dependency bootstrap, creates/updates the Python 3.12
+environment, initializes database structures, runs preflight/durable checks,
+publishes both images and activates the HTTPS UI. No separate Python setup or
+manual `publish_release.sh` command is needed for this initial installation.
+
+After success, continue to [application verification](#verify-and-configure-the-application).
+Do not run Option B as well. If publication stopped partway through, follow the
+same-version `--resume` procedure below instead of republishing an existing tag.
 
 ### Option B: Unattended validation-VM installation
 
@@ -297,11 +371,14 @@ release after a successful installation; continue to application verification.
 
 ## Publish the release and activate the UI
 
-Run release commands on the UI/deployment VM after the interactive path has generated
-`deploy/env.sh` and installed the release Python environment. The unattended
-installer already performs the initial publication; use this section for later
-releases on that path. The VM instance principal supplies OCIR authentication; do not
-use a registry username or authentication token.
+Both installation paths above already publish the initial release and install
+the required Python environment. Use this section for subsequent releases, not
+as an additional initial-install step. The VM instance principal supplies OCIR
+authentication; do not use a registry username or authentication token.
+
+If maintaining an older deployment without the host Python environment, follow
+[Python environment for manual releases](docs/setup-and-deployment-guide.md#python-environment-for-manual-releases)
+before invoking the release script.
 
 Publish both components and activate the UI with one version:
 
@@ -319,9 +396,18 @@ configured repository, switches the systemd UI service to the exact UI tag, and
 records its secret-free release history.
 
 If the process stopped only after publishing the Processor tag, continue the
-same version without overwriting that immutable tag:
+same source and version without overwriting that immutable tag:
 
 ```sh
+./deploy/publish_release.sh --version "$VERSION" --resume
+```
+
+For a stopped **initial installation**, recover its version from the generated
+configuration instead:
+
+```sh
+source ./deploy/env.sh
+VERSION="$PROCESSOR_IMAGE_TAG"
 ./deploy/publish_release.sh --version "$VERSION" --resume
 ```
 

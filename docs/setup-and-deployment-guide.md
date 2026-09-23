@@ -145,9 +145,9 @@ cd oci-fn-object-event-2-hw-table
 ```
 
 `bootstrap_streaming.sh` installs the OCI CLI, container tools, base Python
-packages, and instance-principal OCIR credential helper. It does not create the
-Python environment used for release migrations; complete the Python environment
-step below before a manual release. Generated runtime files, credentials,
+packages, and instance-principal OCIR credential helper. The installer used by
+either setup path below creates the Python environment for release migrations.
+Generated runtime files, credentials,
 TLS keys, reports, profiles, and caches are ignored by Git.
 
 ## What setup discovers, creates, and preserves
@@ -274,12 +274,30 @@ collect the database endpoint, user, schema names, Object Storage bucket, image
 version and UI server name. Review the generated `deploy/env.sh`; do not add a
 password or registry token.
 
+Finish installation with the generated configuration:
+
+```sh
+./deploy/install_validation_vm.sh --config ./deploy/env.sh
+```
+
+When the config is the repository's generated `deploy/env.sh`, the installer
+skips `setup_env.sh` and preserves that file, its Vault reference and selected
+image version. It reruns dependency bootstrap, creates/updates the Python 3.12
+environment, initializes database structures, runs preflight/durable checks,
+publishes both images and activates the HTTPS UI. Do not separately create the
+Python environment or publish another initial release. Continue to first UI
+sign-in and the verification checklist, then deploy the intended Processors.
+
+For a partial publication failure, use `publish_release.sh --resume` with the
+same source and `PROCESSOR_IMAGE_TAG` saved in `deploy/env.sh`. For subsequent
+upgrades, publish a new version rather than rerunning the initial installer.
+
 ## Python environment for manual releases
 
 `publish_release.sh` applies database migrations before it builds images. On a
-VM created by `install_validation_vm.sh`, the required environment already
-exists. For an interactive setup or any deployment VM that does not yet have
-`.venv-verification-py312`, create it once before the first manual release:
+VM installed through either path in this guide, the required environment already
+exists. This section is only for an older deployment or a manual release host
+that does not yet have `.venv-verification-py312`:
 
 ```sh
 cd /home/opc/oci-fn-object-event-2-hw-table
@@ -293,6 +311,11 @@ Alternatively, set `DEPLOYMENT_PYTHON_BIN` to an executable Python environment
 that can import both `mysql.connector` and `oci`.
 
 ## Straight-through unattended installation
+
+This is an alternative to interactive setup, not a step to run after it.
+Use a separate installer input file; reserve `deploy/env.sh` for the generated
+configuration. Both paths require the infrastructure, database and IAM
+prerequisites above.
 
 Create a password file containing only the database password and a separate
 installer configuration. Both files must be mode `0600`.
@@ -339,7 +362,8 @@ the HTTPS UI.
 
 ## Publish and deploy a release
 
-Use one version for both components:
+Both initial-install paths publish and activate the first UI release. Use this
+section for later releases, with one new version for both components:
 
 ```sh
 cd /home/opc/oci-fn-object-event-2-hw-table

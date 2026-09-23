@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command, non-interactive installation for a fresh Oracle Linux validation VM.
+# Complete an interactive setup or install a fresh Oracle Linux validation VM.
 set -euo pipefail
 umask 077
 
@@ -12,7 +12,14 @@ usage() {
   cat <<'EOF'
 Usage: ./deploy/install_validation_vm.sh --config PATH
 
-The config is a mode-0600 shell file containing at least:
+After interactive setup:
+  ./deploy/install_validation_vm.sh --config ./deploy/env.sh
+
+The generated deploy/env.sh is reused without running setup_env.sh again or
+rewriting the file. The installer handles host dependencies, Python, database
+initialization, verification and initial image publication/UI deployment.
+
+For a fresh unattended installation, use a separate mode-0600 shell file:
   export OBJECT_STORAGE_BUCKET_NAME='existing-bucket'
   export OCI_REGISTRY_REPOSITORY_ID='ocid1.containerrepo...'
   export DB_HOST='mysql-private-host'
@@ -32,6 +39,9 @@ stream_staging), PROCESSOR_IMAGE_TAG,
 GENERATE_SELF_SIGNED_CERT, UI_SERVER_NAME, and INSTALL_UI.
 Runtime database access uses only the generated Vault secret OCID, and OCIR
 uses the instance principal.
+Run this installer for initial installation. For subsequent releases use
+publish_release.sh with a new version; use its --resume option only to finish
+the same source/version after a partially published release.
 EOF
 }
 
@@ -55,8 +65,14 @@ while (($#)); do
 done
 
 [[ -n "$CONFIG_FILE" && -r "$CONFIG_FILE" ]] || { echo "A readable --config file is required." >&2; exit 1; }
+# Make sourcing independent of Bash's PATH search for a bare filename.
+CONFIG_FILE="$(cd "$(dirname "$CONFIG_FILE")" && pwd)/$(basename "$CONFIG_FILE")"
 mode=$(stat -c '%a' "$CONFIG_FILE" 2>/dev/null || stat -f '%Lp' "$CONFIG_FILE")
 [[ "$mode" == 600 ]] || { echo "Validation config must be mode 0600." >&2; exit 1; }
+REUSE_CONFIG=false
+if [[ "$CONFIG_FILE" -ef "$ROOT_DIR/deploy/env.sh" ]]; then
+  REUSE_CONFIG=true
+fi
 
 set -a
 # shellcheck disable=SC1090
@@ -66,6 +82,11 @@ set +a
 for value in OBJECT_STORAGE_BUCKET_NAME OCI_REGISTRY_REPOSITORY_ID; do
   [[ -n "${!value:-}" ]] || { echo "$value is required in $CONFIG_FILE." >&2; exit 1; }
 done
+if [[ "$REUSE_CONFIG" == true ]]; then
+  for value in DB_SECRET_OCID PROCESSOR_IMAGE_TAG; do
+    [[ -n "${!value:-}" ]] || { echo "$value is required in generated deploy/env.sh; complete setup_env.sh first." >&2; exit 1; }
+  done
+fi
 if [[ -n "${DB_SECRET_OCID:-}" ]]; then
   [[ "$DB_SECRET_OCID" == ocid1.vaultsecret.* ]] || { echo "DB_SECRET_OCID is invalid." >&2; exit 1; }
 else
@@ -85,10 +106,14 @@ export STAGING_DATABASE="${STAGING_DATABASE:-stream_staging}"
 "$ROOT_DIR/deploy/bootstrap_streaming.sh"
 export PROCESSOR_IMAGE_TAG="${PROCESSOR_IMAGE_TAG:-validation-$(date -u +%Y%m%d%H%M%S)}"
 export GENERATE_SELF_SIGNED_CERT="${GENERATE_SELF_SIGNED_CERT:-true}"
-"$ROOT_DIR/deploy/setup_env.sh" --non-interactive --force
-if [[ -n "${DB_PASSWORD_FILE:-}" && -e "$DB_PASSWORD_FILE" ]]; then
-  echo "Password file was not removed after Vault secret creation." >&2
-  exit 1
+if [[ "$REUSE_CONFIG" == true ]]; then
+  echo 'Reusing deploy/env.sh and its Vault secret; skipping configuration generation.'
+else
+  "$ROOT_DIR/deploy/setup_env.sh" --non-interactive --force
+  if [[ -n "${DB_PASSWORD_FILE:-}" && -e "$DB_PASSWORD_FILE" ]]; then
+    echo "Password file was not removed after Vault secret creation." >&2
+    exit 1
+  fi
 fi
 unset DB_PASSWORD_FILE
 set -a
@@ -118,3 +143,4 @@ else
 fi
 
 echo "PASS: non-interactive validation VM installation completed."
+echo 'Next: configure the UI target, Stream, mapping and rule; complete end-to-end verification, then deploy the Processor.'
