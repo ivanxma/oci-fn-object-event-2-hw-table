@@ -74,6 +74,11 @@ class UIConsistencySourceTest(unittest.TestCase):
         self.assertIn("delete_image", source)
         self.assertIn(".primary-button:disabled", STYLESHEET.read_text(encoding="utf-8"))
 
+    def test_replacement_uses_the_latest_processor_image(self) -> None:
+        source = (TEMPLATES / "orchestration_detail.html").read_text(encoding="utf-8")
+        self.assertIn("Create replacement with latest image", source)
+        self.assertNotIn("image_url=deployment.replacement.image_url", source)
+
     def test_processor_repository_is_read_only_in_settings(self) -> None:
         source = (TEMPLATES / "settings.html").read_text(encoding="utf-8")
         self.assertIn('value="{{ settings.OCI_REGISTRY_REPOSITORY }}" readonly', source)
