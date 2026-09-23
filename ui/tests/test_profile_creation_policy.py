@@ -99,6 +99,16 @@ class ProfileCreationPolicyTest(unittest.TestCase):
         self.assertIn(b"Connection established successfully", prompt.data)
         self.assertIn(b"Disable profile creation", prompt.data)
 
+    def test_successful_login_lands_on_flow_dashboard(self) -> None:
+        self.app.extensions["profile_store"].set_profile_creation_enabled(False)
+        with patch("myapp.modules.auth_routes.MySQLService.health_check", return_value=None):
+            response = self.client.post(
+                "/login",
+                data={"profile": "Local MySQL", "username": "admin", "credential": "not-rendered"},
+            )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.headers["Location"].endswith("/flow/"))
+
     def test_login_routes_missing_application_schema_to_one_click_setup(self) -> None:
         self.app.config.update(
             CONTROL_DATABASE="stream_db",

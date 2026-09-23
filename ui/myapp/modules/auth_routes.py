@@ -61,7 +61,7 @@ def login():
                         return redirect(url_for("settings.manage", setup="required"))
                 if store.profile_creation_enabled():
                     return redirect(url_for("profiles.creation_policy"))
-                return redirect(url_for("imports.home"))
+                return redirect(url_for("flow.index"))
             except Exception:
                 if tunnel:
                     tunnel.stop()
@@ -84,4 +84,4 @@ def logout():
 
 @auth_bp.get("/")
 def root():
-    return redirect(url_for("imports.home") if connection_state() else url_for("auth.login"))
+    return redirect(url_for("flow.index") if connection_state() else url_for("auth.login"))

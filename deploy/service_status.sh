@@ -13,7 +13,8 @@ Usage: ./deploy/service_status.sh [--log-lines NUMBER] [--no-logs]
 
 Run this command on the UI/deployment VM. It reports:
   - current checkout and deployed UI release metadata;
-  - systemd, Podman, and local HTTPS status for the Flask UI;
+  - systemd status for the Flask UI and nginx;
+  - UI container ID, state, image, ports, and network mode;
   - live OCI Container Instance Processor state, image, and release tag; and
   - recent UI service logs (unless --no-logs is supplied).
 
@@ -48,7 +49,7 @@ done
 
 [[ "$LOG_LINES" =~ ^[1-9][0-9]*$ ]] || { echo "--log-lines must be a positive integer." >&2; exit 2; }
 [[ -r "$ENV_FILE" ]] || { echo "Missing deployment environment: $ENV_FILE" >&2; exit 1; }
-for command in curl git jq oci podman sudo systemctl; do
+for command in curl git jq oci podman ss sudo systemctl; do
   command -v "$command" >/dev/null || { echo "Missing required command: $command" >&2; exit 1; }
 done
 
@@ -62,6 +63,7 @@ oci_context_resolve
 
 UI_SERVICE_NAME="${UI_SERVICE_NAME:-object-storage-heatwave-ui}"
 UI_CONTAINER_NAME="${UI_CONTAINER_NAME:-$UI_SERVICE_NAME}"
+NGINX_SERVICE_NAME="${NGINX_SERVICE_NAME:-nginx}"
 PROCESSOR_CONTAINER_NAME_PREFIX="${PROCESSOR_CONTAINER_NAME_PREFIX:-object-storage-stream-processor}"
 RUNTIME_ENV="$ROOT_DIR/ui/.ui-runtime.env"
 
@@ -87,10 +89,21 @@ heading "UI"
 ui_state=$(sudo systemctl is-active "$UI_SERVICE_NAME" 2>/dev/null || true)
 printf 'Service: %s\n' "${ui_state:-unknown}"
 sudo systemctl show "$UI_SERVICE_NAME" --no-pager --property=ActiveState,SubState,MainPID 2>/dev/null || true
-printf 'Container: '
-sudo podman ps --filter "name=^${UI_CONTAINER_NAME}$" --format '{{.Names}} {{.Status}} {{.Image}}' || true
 printf 'HTTPS localhost: '
 curl -kfsS -o /dev/null -w '%{http_code}\n' https://127.0.0.1/ || echo 'unavailable'
+
+heading "UI container"
+sudo podman ps -a --filter "name=^${UI_CONTAINER_NAME}$" --format 'Name: {{.Names}}\nState: {{.State}}\nStatus: {{.Status}}\nImage: {{.Image}}\nPorts: {{.Ports}}' || true
+sudo podman inspect "$UI_CONTAINER_NAME" --format 'ID: {{.Id}}\nCreated: {{.Created}}\nNetwork mode: {{.HostConfig.NetworkMode}}' 2>/dev/null || true
+
+heading "nginx"
+nginx_state=$(sudo systemctl is-active "$NGINX_SERVICE_NAME" 2>/dev/null || true)
+printf 'Service: %s\n' "${nginx_state:-unknown}"
+sudo systemctl show "$NGINX_SERVICE_NAME" --no-pager --property=ActiveState,SubState,MainPID 2>/dev/null || true
+printf 'Configuration: '
+sudo nginx -t 2>&1 | tail -n 1 || true
+printf 'HTTPS listener:\n'
+sudo ss -ltnp | grep -E '[:.]443\b' || echo 'unavailable'
 
 heading "Processor instances"
 processor_ids=$(

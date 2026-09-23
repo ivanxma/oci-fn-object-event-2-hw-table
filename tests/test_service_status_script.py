@@ -10,6 +10,12 @@ def test_service_status_reports_ui_processor_release_and_logs():
     assert 'container-instances container-instance list' in source
     assert 'container-instances container-instance get' in source
     assert '"release-version"' in source
+    assert 'heading "UI container"' in source
+    assert 'sudo podman inspect "$UI_CONTAINER_NAME"' in source
+    assert 'heading "nginx"' in source
+    assert 'NGINX_SERVICE_NAME="${NGINX_SERVICE_NAME:-nginx}"' in source
+    assert 'sudo nginx -t' in source
+    assert "HTTPS listener:" in source
     assert 'journalctl --no-pager -u "$UI_SERVICE_NAME"' in source
     assert 'Processor logs: not exported to this VM.' in source
 

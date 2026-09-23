@@ -36,6 +36,11 @@ class UIConsistencySourceTest(unittest.TestCase):
         self.assertIn(">OCI Rules{% if active_tab == 'rules' %}", source)
         self.assertNotIn("else 'OCI'", source)
 
+    def test_flow_dashboard_is_the_first_navigation_item(self) -> None:
+        source = (TEMPLATES / "base.html").read_text(encoding="utf-8")
+        self.assertIn('href="{{ url_for(\'flow.index\') }}">Flow Dashboard</a>', source)
+        self.assertLess(source.index(">Flow Dashboard</a>"), source.index(">Data Import</a>"))
+
     def test_mapping_values_use_the_shared_full_value_dialog(self) -> None:
         source = (TEMPLATES / "mappings.html").read_text(encoding="utf-8")
         base = (TEMPLATES / "base.html").read_text(encoding="utf-8")
@@ -44,6 +49,8 @@ class UIConsistencySourceTest(unittest.TestCase):
         self.assertIn('data-column="Target table"', source)
         self.assertIn("showValue(cell.dataset.value ?? cell.innerText", base)
         self.assertIn("cell.classList.add('table-value-cell')", base)
+        self.assertIn("event.target.closest('a,button,input,select,textarea,label'))", base)
+        self.assertNotIn("event.target.closest('a,button,input,select,textarea,label,form')", base)
 
     def test_settings_actions_align_with_their_fields(self) -> None:
         source = (TEMPLATES / "settings.html").read_text(encoding="utf-8")
