@@ -33,6 +33,13 @@ class ImportExecutionContractTest(unittest.TestCase):
         self.assertLess(generate_heading, partition_option)
         self.assertLess(generate_heading, row_id_option)
 
+    def test_column_options_are_grouped_together(self):
+        review = (ROOT / "myapp" / "templates" / "import_review.html").read_text()
+        self.assertIn("<th>Options</th>", review)
+        self.assertIn('class="definition-options"', review)
+        self.assertNotIn("<th>Allow NULL</th>", review)
+        self.assertNotIn("<th>Primary key</th>", review)
+
     def test_sql_preview_hides_load_panel_for_ddl_only(self):
         preview = (ROOT / "myapp" / "templates" / "sql_preview.html").read_text()
         self.assertGreaterEqual(preview.count("{% if sql_mode == 'DDL_DATA' %}"), 2)
