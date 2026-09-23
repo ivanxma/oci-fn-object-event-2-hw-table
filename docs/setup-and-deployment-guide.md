@@ -134,12 +134,12 @@ change.
 
 ### Deployment host and repository
 
-Clone the `main-with-stream` branch on the OL9 VM. A new image needs Git before
+Clone the `main` branch on the OL9 VM. A new image needs Git before
 the repository bootstrap can install the remaining packages:
 
 ```sh
 sudo dnf install -y git
-git clone --branch main-with-stream <repository-url> oci-object-event-2-table
+git clone --branch main <repository-url> oci-fn-object-event-2-hw-table
 cd oci-object-event-2-table
 ./deploy/bootstrap_streaming.sh
 ```
@@ -272,6 +272,24 @@ collect the database endpoint, user, schema names, Object Storage bucket, image
 version and UI server name. Review the generated `deploy/env.sh`; do not add a
 password or registry token.
 
+## Python environment for manual releases
+
+`publish_release.sh` applies database migrations before it builds images. On a
+VM created by `install_validation_vm.sh`, the required environment already
+exists. For an interactive setup or any deployment VM that does not yet have
+`.venv-verification-py312`, create it once before the first manual release:
+
+```sh
+cd /home/opc/oci-fn-object-event-2-hw-table
+sudo dnf install -y python3.12 python3.12-pip
+python3.12 -m venv .venv-verification-py312
+./.venv-verification-py312/bin/python -m pip install --upgrade pip
+./.venv-verification-py312/bin/python -m pip install -r ui/requirements.txt
+```
+
+Alternatively, set `DEPLOYMENT_PYTHON_BIN` to an executable Python environment
+that can import both `mysql.connector` and `oci`.
+
 ## Straight-through unattended installation
 
 Create a password file containing only the database password and a separate
@@ -322,8 +340,9 @@ the HTTPS UI.
 Use one version for both components:
 
 ```sh
-cd /home/opc/oci-object-event-2-table
-git pull --ff-only origin main-with-stream
+cd /home/opc/oci-fn-object-event-2-hw-table
+git switch main
+git pull --ff-only origin main
 VERSION="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
 ./deploy/publish_release.sh --version "$VERSION"
 ```
@@ -398,10 +417,10 @@ The normal upgrade is a forward, immutable, replacement deployment.
 ### 2. Publish and activate the UI
 
 ```sh
-cd /home/opc/oci-object-event-2-table
+cd /home/opc/oci-fn-object-event-2-hw-table
 git fetch origin
-git switch main-with-stream
-git pull --ff-only origin main-with-stream
+git switch main
+git pull --ff-only origin main
 
 VERSION="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
 ./deploy/publish_release.sh --version "$VERSION"

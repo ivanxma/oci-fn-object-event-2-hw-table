@@ -64,6 +64,12 @@ run production deployment scripts from `deploy/` and validation harnesses from
 # AD, VCN, subnet, Vault, enabled AES key, and database secret interactively.
 ./deploy/setup_env.sh
 # Or copy env.sh.example and fill only its mandatory settings.
+# Required once per deployment VM before the first manual release. This Python
+# environment applies release migrations and records deployment history.
+sudo dnf install -y python3.12 python3.12-pip
+python3.12 -m venv .venv-verification-py312
+./.venv-verification-py312/bin/python -m pip install --upgrade pip
+./.venv-verification-py312/bin/python -m pip install -r ui/requirements.txt
 # Default release names are sortable UTC timestamps plus the source SHA, e.g.
 # processor-20260923T093000Z-a1b2c3d and ui-20260923T093000Z-a1b2c3d.
 VERSION="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
@@ -282,8 +288,9 @@ use a registry username or authentication token.
 Publish both components and activate the UI with one version:
 
 ```sh
-cd /home/opc/oci-object-event-2-table
-git pull --ff-only origin main-with-stream
+cd /home/opc/oci-fn-object-event-2-hw-table
+git switch main
+git pull --ff-only origin main
 VERSION="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
 ./deploy/publish_release.sh --version "$VERSION"
 ```
