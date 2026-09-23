@@ -329,6 +329,8 @@ creates the Container Instance.
 Verify the activated release:
 
 ```sh
+./deploy/service_status.sh
+# Add --no-logs for a compact status-only report, or --log-lines 100 for more UI log history.
 sudo systemctl is-active object-storage-heatwave-ui
 sudo podman ps --format '{{.Names}} {{.Image}}'
 curl -kI https://127.0.0.1/
