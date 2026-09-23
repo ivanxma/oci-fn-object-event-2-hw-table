@@ -64,9 +64,10 @@ run production deployment scripts from `deploy/` and validation harnesses from
 # AD, VCN, subnet, Vault, enabled AES key, and database secret interactively.
 ./deploy/setup_env.sh
 # Or copy env.sh.example and fill only its mandatory settings.
-# One version publishes processor-<version> and ui-<version> to the same
-# repository, then activates the UI release.
-./deploy/publish_release.sh --version "$(git rev-parse --short HEAD)"
+# Default release names are sortable UTC timestamps plus the source SHA, e.g.
+# processor-20260923T093000Z-a1b2c3d and ui-20260923T093000Z-a1b2c3d.
+VERSION="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
+./deploy/publish_release.sh --version "$VERSION"
 ./tests/integration/verify_streaming_deployment.sh
 # Optional bounded integration check against the configured durable database.
 # On OL9 it uses the project-local Python 3.12 verifier environment.
@@ -90,8 +91,10 @@ mandatory `OCI_REGISTRY_REPOSITORY_ID`, resolve `OCI_REGISTRY_REPOSITORY` from
 OCI, persist both in the generated `env.sh`, and use that same repository for image
 build and the Event Processor image-tag dropdown. The repository is
 deployment-owned and read-only in Settings; releases vary only by immutable
-tag. Increase `PROCESSOR_IMAGE_TAG` for every Processor image release; the
-build refuses to overwrite a tag already present in that repository.
+tag. The default Processor release tag is a sortable UTC timestamp followed by
+the Git short SHA (for example `20260923T093000Z-a1b2c3d`); retain that format
+so the latest tag is immediately visible in OCI Registry. The build refuses to
+overwrite a tag already present in that repository.
 `deploy_processor.sh` creates
 one Container Instance for one explicit partition assignment. It resolves the
 same authoritative repository OCID used by the build, normalizes the selected
@@ -281,14 +284,14 @@ Publish both components and activate the UI with one version:
 ```sh
 cd /home/opc/oci-object-event-2-table
 git pull --ff-only origin main-with-stream
-VERSION="$(git rev-parse --short HEAD)"
+VERSION="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
 ./deploy/publish_release.sh --version "$VERSION"
 ```
 
 The command loads `env.sh`, applies the external database migrations, publishes
-`processor-<version>` and `ui-<version>` in the configured repository, switches
-the systemd UI service to the exact UI tag, and records its secret-free release
-history.
+sortable timestamp-and-SHA `processor-<version>` and `ui-<version>` tags in the
+configured repository, switches the systemd UI service to the exact UI tag, and
+records its secret-free release history.
 
 If the process stopped only after publishing the Processor tag, continue the
 same version without overwriting that immutable tag:

@@ -324,14 +324,17 @@ Use one version for both components:
 ```sh
 cd /home/opc/oci-object-event-2-table
 git pull --ff-only origin main-with-stream
-VERSION="$(git rev-parse --short HEAD)"
+VERSION="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
 ./deploy/publish_release.sh --version "$VERSION"
 ```
 
 This applies database migrations, publishes `processor-$VERSION` and
 `ui-$VERSION`, deploys the UI image, and records secret-free release history.
-Use `--resume` only to continue the same version after a stopped partial
-release. Tags are immutable and normal releases must use an increased version.
+The default naming format is a lexically sortable UTC timestamp plus Git short
+SHA (for example `20260923T093000Z-a1b2c3d`), so the latest Processor tag is
+easy to identify. Use `--resume` only to continue the same version after a
+stopped partial release. Tags are immutable and normal releases must use a new
+version.
 
 Publishing an image does not replace a running Processor. In **Event Processor
 → Deployment**, select the mapping, the new `processor-*` image tag, the current
@@ -351,10 +354,11 @@ repository:
 <repository>:ui-<version>
 ```
 
-Use a Git short SHA for exact source traceability or a controlled release value
-such as `1.4.0`. The accepted value contains letters, digits, dots, underscores
-and hyphens. Do not include the `processor-` or `ui-` prefix when invoking
-`publish_release.sh`; the script adds the component prefixes.
+Use the default UTC timestamp plus Git short SHA for exact source traceability
+and chronological Registry ordering (for example `20260923T093000Z-a1b2c3d`).
+The accepted value contains letters, digits, dots, underscores and hyphens. Do
+not include the `processor-` or `ui-` prefix when invoking `publish_release.sh`;
+the script adds the component prefixes.
 
 Published tags are immutable. `build_processor_image.sh` refuses to overwrite
 an existing Processor tag. `--resume` is the only supported reuse path and is
@@ -399,7 +403,7 @@ git fetch origin
 git switch main-with-stream
 git pull --ff-only origin main-with-stream
 
-VERSION="$(git rev-parse --short HEAD)"
+VERSION="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
 ./deploy/publish_release.sh --version "$VERSION"
 ```
 

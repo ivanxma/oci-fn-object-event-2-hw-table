@@ -53,7 +53,10 @@ while (($#)); do
   esac
 done
 
-VERSION="${VERSION:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}"
+GIT_SHORT_SHA="$(git -C "$ROOT_DIR" rev-parse --short HEAD)"
+# The sortable UTC prefix makes the latest OCI Registry processor tag obvious;
+# the source revision remains part of every immutable release identifier.
+VERSION="${VERSION:-$(date -u +%Y%m%dT%H%M%SZ)-$GIT_SHORT_SHA}"
 VERSION="${VERSION#processor-}"
 VERSION="${VERSION#ui-}"
 [[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,126}$ ]] || {

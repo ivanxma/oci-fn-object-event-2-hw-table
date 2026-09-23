@@ -311,7 +311,7 @@ if [[ -n "$PROVIDED_DB_SECRET_OCID" ]]; then
   unset SECRET_FIELDS
 fi
 
-prompt_required PROCESSOR_IMAGE_TAG "Immutable processor image tag" "$(date -u +%Y%m%d%H%M%S)"
+prompt_required PROCESSOR_IMAGE_TAG "Immutable processor image tag" "$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "$ROOT_DIR" rev-parse --short HEAD)"
 case "$PROCESSOR_IMAGE_TAG" in
   processor-*) PROCESSOR_REGISTRY_IMAGE_TAG="$PROCESSOR_IMAGE_TAG" ;;
   *) PROCESSOR_REGISTRY_IMAGE_TAG="processor-$PROCESSOR_IMAGE_TAG" ;;
