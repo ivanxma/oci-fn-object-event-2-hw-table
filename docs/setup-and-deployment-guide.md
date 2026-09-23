@@ -140,12 +140,14 @@ the repository bootstrap can install the remaining packages:
 ```sh
 sudo dnf install -y git
 git clone --branch main <repository-url> oci-fn-object-event-2-hw-table
-cd oci-object-event-2-table
+cd oci-fn-object-event-2-hw-table
 ./deploy/bootstrap_streaming.sh
 ```
 
-`bootstrap_streaming.sh` installs the supported OCI, container, Python, MySQL
-Connector, and deployment dependencies. Generated runtime files, credentials,
+`bootstrap_streaming.sh` installs the OCI CLI, container tools, base Python
+packages, and instance-principal OCIR credential helper. It does not create the
+Python environment used for release migrations; complete the Python environment
+step below before a manual release. Generated runtime files, credentials,
 TLS keys, reports, profiles, and caches are ignored by Git.
 
 ## What setup discovers, creates, and preserves
@@ -262,7 +264,7 @@ secret OCID is written successfully.
 Use this path on the UI/deployment VM when an operator can choose resources:
 
 ```sh
-cd /home/opc/oci-object-event-2-table
+cd /home/opc/oci-fn-object-event-2-hw-table
 ./deploy/bootstrap_streaming.sh
 ./deploy/setup_env.sh
 ```

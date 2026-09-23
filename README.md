@@ -51,84 +51,42 @@ flowchart LR
 
 ## Deployment and configuration
 
-The supported runtime is Python 3.13 or later. The UI uses Flask and Oracle
-MySQL Connector/Python `>=9.7,<10`.
+Follow this order for a new deployment. Do not run setup until the OCI resources,
+database schemas/account, and IAM permissions in the prerequisites are ready.
+Setup discovers and configures existing infrastructure; it is not a DB System
+or IAM provisioning tool.
 
-On an Oracle Linux deployment host configured with an OCI instance principal,
-run production deployment scripts from `deploy/` and validation harnesses from
-`tests/integration/`:
+1. [Prepare infrastructure, database, IAM, registry and Vault](#prerequisites).
+2. [Clone main and prepare the deployment host](#prepare-the-deployment-host).
+3. [Choose interactive or unattended setup](#configure-and-install).
+4. [Publish the release and activate the UI](#publish-the-release-and-activate-the-ui).
+5. [Verify and configure the application before production processing](#verify-and-configure-the-application).
+6. [Deploy or replace Processors](#deploy-or-replace-processors).
 
-```sh
-./deploy/bootstrap_streaming.sh
-# Recommended on the UI/deployment VM: discover compartment/region and choose
-# AD, VCN, subnet, Vault, enabled AES key, and database secret interactively.
-./deploy/setup_env.sh
-# Or copy env.sh.example and fill only its mandatory settings.
-# Required once per deployment VM before the first manual release. This Python
-# environment applies release migrations and records deployment history.
-sudo dnf install -y python3.12 python3.12-pip
-python3.12 -m venv .venv-verification-py312
-./.venv-verification-py312/bin/python -m pip install --upgrade pip
-./.venv-verification-py312/bin/python -m pip install -r ui/requirements.txt
-# Default release names are sortable UTC timestamps plus the source SHA, e.g.
-# processor-20260923T093000Z-a1b2c3d and ui-20260923T093000Z-a1b2c3d.
-VERSION="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
-./deploy/publish_release.sh --version "$VERSION"
-./tests/integration/verify_streaming_deployment.sh
-# Optional bounded integration check against the configured durable database.
-# On OL9 it uses the project-local Python 3.12 verifier environment.
-./tests/integration/verify_durable_capture.sh
-# Disposable create/delete verification. Set FLOW_MANAGED_STREAM=true in the
-# validation overlay so each run creates and deletes a fresh Stream as well as
-# its uniquely named OCI/DB resources.
-./tests/integration/verify_fifo_flow.sh
-./tests/integration/verify_parallel_flow.sh
-# Only after the documented full verification gate:
-./deploy/deploy_processor.sh
-```
+For the complete installation, upgrade, rollback and database migration
+procedures, see the [setup and deployment guide](docs/setup-and-deployment-guide.md).
 
-`publish_release.sh` is the supported scripted release entry point. One
-`--version` value produces immutable `processor-<version>` and `ui-<version>`
-tags in the same configured repository, then activates the UI release.
-`build_processor_image.sh` builds and pushes the non-root processor image using
-the deployment host's instance-principal OCIR credential helper; it never uses
-a static registry credential. Interactive and silent setup validate the
-mandatory `OCI_REGISTRY_REPOSITORY_ID`, resolve `OCI_REGISTRY_REPOSITORY` from
-OCI, persist both in the generated `env.sh`, and use that same repository for image
-build and the Event Processor image-tag dropdown. The repository is
-deployment-owned and read-only in Settings; releases vary only by immutable
-tag. The default Processor release tag is a sortable UTC timestamp followed by
-the Git short SHA (for example `20260923T093000Z-a1b2c3d`); retain that format
-so the latest tag is immediately visible in OCI Registry. The build refuses to
-overwrite a tag already present in that repository.
-`deploy_processor.sh` creates
-one Container Instance for one explicit partition assignment. It resolves the
-same authoritative repository OCID used by the build, normalizes the selected
-version to `processor-<version>`, and refuses deployment unless that immutable
-tag is already published. Set
-`PROCESSOR_DB_SECRET_OCID` for a mapping-specific replacement that must use a
-different Vault database bundle without changing the deployment host's default
-`DB_SECRET_OCID`. `deploy_ui.sh`
-deploys the Flask container behind nginx HTTPS. Keep `deploy/env.sh`, database
-credentials, Vault values, TLS private keys, and Flask secrets out of Git.
-The selected Vault secret must be a JSON object containing `host`, `port`,
-`user`, `credential`, `database`, `control_database`, `stream_data_database`,
-and `staging_database`. The staging database is dedicated to transient loader
-tables and must not be used as a Resource Mapping target.
-Plain-text password-only Vault secrets are not accepted.
-The selected Vault and key become the default choices in the Database Secret
-tab; they are OCIDs, not secret material.
-All `stream_db` and `stream_data` initialization DDL is stored under
-`loader_core/sql/`, `processor/sql/`, or `ui/myapp/sql/`; see the external
-database schema inventory in `docs/technical-details.md`.
-The dedicated staging schema is created from
-`loader_core/sql/init_staging_schema.sql`. The Vault database user must either
-be allowed to create that schema or the DBA must pre-create it and grant the
-user all required DDL/DML privileges on it.
-Unit tests, integration harnesses, and disposable SQL fixtures live under
-`tests/`; production processor images do not copy them.
+## Prerequisites
 
-### Database deployment prerequisite
+### 1. Provision OCI infrastructure and connectivity
+
+- An Oracle Linux 9 UI/deployment VM with an instance principal and sudo access.
+- A VCN with a private Processor subnet that prohibits public IP assignment.
+  The UI VM and Processor subnet must be in the same VCN; do not reuse a public
+  UI subnet for Processor Container Instances.
+- A provisioned MySQL/HeatWave DB System reachable from the UI VM and Processor
+  subnet. Confirm routing, DNS, TCP/3306 and account host restrictions.
+- Network access to the required OCI APIs, Streaming, Object Storage, Vault and
+  OCIR, plus package/source endpoints used by bootstrap and image builds.
+- An Object Storage bucket with object-event emission enabled.
+- An existing OCIR repository, active Vault and enabled symmetric AES key.
+- Dynamic-group membership for the UI/deployment VM and Processor resource
+  principals, with the permissions in step 3.
+- Inbound HTTPS access to the UI through the NSG/security list and host firewall.
+  Use a trusted TLS certificate for production; self-signed certificates are
+  for approved validation environments only.
+
+### 2. Prepare MySQL schemas and the streaming account
 
 Before running setup or deployment, a DBA must create the streaming database
 user and the four schemas it will access. The first three are application
@@ -154,16 +112,156 @@ more than one user-data schema, grant the required privileges on each approved
 target schema. Store this connection in OCI Vault as the processor JSON secret;
 do not put its password in `env.sh`.
 
-For a fresh OL9 validation VM, create a mode-`0600` password file containing
-only the database password and a separate mode-`0600` installer config with
-the bucket, database host/user, and absolute password-file path:
+### 3. Configure IAM before setup
+
+Replace the placeholders with deployment-specific names and scope each policy
+to the appropriate compartment:
+
+```text
+Allow dynamic-group <ui-deployment-dynamic-group> to manage compute-container-family in compartment <compartment>
+Allow dynamic-group <ui-deployment-dynamic-group> to use virtual-network-family in compartment <compartment>
+Allow dynamic-group <ui-deployment-dynamic-group> to manage streams in compartment <compartment>
+Allow dynamic-group <ui-deployment-dynamic-group> to manage cloudevents-rules in compartment <compartment>
+Allow dynamic-group <ui-deployment-dynamic-group> to manage repos in compartment <compartment>
+Allow dynamic-group <ui-deployment-dynamic-group> to read vaults in compartment <compartment>
+Allow dynamic-group <ui-deployment-dynamic-group> to read keys in compartment <compartment>
+Allow dynamic-group <ui-deployment-dynamic-group> to use keys in compartment <compartment>
+Allow dynamic-group <ui-deployment-dynamic-group> to manage secrets in compartment <compartment>
+Allow dynamic-group <ui-deployment-dynamic-group> to use secret-family in compartment <compartment>
+Allow dynamic-group <ui-deployment-dynamic-group> to read secret-bundles in compartment <compartment>
+Allow dynamic-group <ui-deployment-dynamic-group> to read objectstorage-namespaces in compartment <compartment>
+Allow dynamic-group <ui-deployment-dynamic-group> to manage objects-family in compartment <compartment>
+```
+
+The Container Instance family name is `compute-container-family`. If defined
+tags are applied, add `use tag-namespaces` for the approved namespace at the
+required scope.
+
+Processor resource principals need the smaller runtime subset: consume the
+assigned Stream, read the selected secret bundle, read source objects, and use
+the configured network. Do not configure registry usernames or authentication
+tokens; image build and push use the deployment VM instance principal.
+
+The Vault/key permissions above are needed before interactive or unattended
+setup creates the database secret, not only when using the UI Database Secret
+tab later. The Processor should receive only its runtime permissions, not the
+UI/deployment principal's management permissions. Apply the policy bundle in
+the compartments that actually contain the resources.
+
+### 4. Confirm the registry and Vault inputs
+
+The deployment requires one deployment-owned OCIR repository in the UI VM's
+compartment. Create this repository before setup and provide its OCID as the
+mandatory `OCI_REGISTRY_REPOSITORY_ID`. The instance principal must have
+`manage repos` permission in that compartment and `docker-credential-ocir`
+must be installed before image publication (the bootstrap step below installs
+it). Setup validates the repository OCID, lifecycle, and
+compartment, resolves its name, and persists both values. All Processor and UI
+releases use this same repository:
+
+```text
+<region-key>.ocir.io/<namespace>/<repository>:processor-<processor-version>
+<region-key>.ocir.io/<namespace>/<repository>:ui-<ui-version>
+```
+
+Both tag types are immutable. Event Processor includes only `processor-*` tags
+in its Container image selector, so UI and unqualified image tags cannot be
+deployed to OCI Container Instances.
+
+The selected Vault must be active and its symmetric AES key enabled. Setup can
+create or update the database secret, but it does not create the Vault, key,
+DB System, streaming account, or its grants. The selected secret must contain:
+
+```json
+{
+  "host": "mysql-private-host",
+  "port": 3306,
+  "user": "stream_user",
+  "credential": "<database-password>",
+  "database": "testdb",
+  "control_database": "stream_db",
+  "stream_data_database": "stream_data",
+  "staging_database": "stream_staging"
+}
+```
+
+Plain-text password-only secrets are not accepted. Match the bundle to the
+schemas and grants prepared above. The staging schema is dedicated to transient
+loader tables and must never be a Resource Mapping target. Keep credentials,
+Vault values, TLS private keys, Flask secrets, and `deploy/env.sh` out of Git.
+
+## Prepare the deployment host
+
+Clone the default `main` branch on the OL9 VM:
 
 ```sh
-# A brand-new OL9 image does not include Git; this is the only prerequisite
-# needed before cloning the repository and invoking its installer.
 sudo dnf install -y git
+git clone --branch main https://github.com/ivanxma/oci-fn-object-event-2-hw-table.git
+cd oci-fn-object-event-2-hw-table
+```
 
+All following commands run from this repository root. The application runtime
+is Python 3.13 or later; the images provide that runtime. Manual deployment
+migrations and verification on OL9 use the separate Python 3.12 environment
+created below. The UI uses Flask and MySQL Connector/Python `>=9.7,<10`.
+
+## Configure and install
+
+Choose **one** initial-install path. Both require all prerequisites above.
+
+### Option A: Interactive setup
+
+Bootstrap the host tools before running the resource-selection prompts:
+
+```sh
+./deploy/bootstrap_streaming.sh
+./deploy/setup_env.sh
+```
+
+Bootstrap installs the OCI CLI, container tools and instance-principal OCIR
+credential helper. Setup discovers deployment context and selects the private
+subnet, repository, Vault, AES key and database connection. Review the generated
+configuration before publishing images.
+
+`deploy/env.sh` is a mode-`0600`, minimal input file. It stores the default
+Object Storage bucket, database schema names, the processor Vault secret OCID,
+and immutable UI/processor image tags. The deployment VM derives compartment,
+region, availability domain, VCN, private Processor subnet, and Object Storage
+namespace through its instance principal; these values are not required in
+`env.sh`.
+
+Run `./deploy/setup_env.sh` interactively to select an existing Vault and AES
+key, provide database connectivity, and create or update the default processor
+secret named `stream_hw_secret_key`. For unattended setup use either an
+existing `DB_SECRET_OCID` or `--db-password-file PATH`. The password file must
+be mode `0600`; after Vault creation/update, setup atomically writes the
+resulting OCID to `env.sh` and removes that input file. Passwords are never
+written to `env.sh`.
+
+Create the host Python environment **before the first manual release**;
+`publish_release.sh` needs it to apply database migrations:
+
+```sh
+sudo dnf install -y python3.12 python3.12-pip
+python3.12 -m venv .venv-verification-py312
+./.venv-verification-py312/bin/python -m pip install --upgrade pip
+./.venv-verification-py312/bin/python -m pip install -r ui/requirements.txt
+```
+
+Alternatively, set `DEPLOYMENT_PYTHON_BIN` to an executable Python environment
+that can import both `mysql.connector` and `oci`. Continue to publication below.
+
+### Option B: Unattended validation-VM installation
+
+After completing the prerequisites and cloning the repository, create a
+mode-`0600` password file containing only the database password and a separate
+mode-`0600` installer config with the bucket, repository OCID, database
+host/user, and absolute password-file path:
+
+```sh
+# Save these exports in the mode-0600 installer config, not just the shell.
 export OBJECT_STORAGE_BUCKET_NAME='existing-bucket'
+export OCI_REGISTRY_REPOSITORY_ID='ocid1.containerrepo...'
 export DB_HOST='mysql-private-host'
 export DB_PORT='3306'
 export DB_USER='stream_user'
@@ -186,103 +284,23 @@ file. Supplying an existing `DB_SECRET_OCID` is supported for reuse or
 migration, but is not the clean-install verification path.
 
 The default target, control, durable, and staging database names are `testdb`,
-`stream_db`, `stream_data`, and `stream_staging`; override them in the config only when the
-selected Vault secret uses isolated validation schemas. This non-interactive
-path bootstraps packages, derives instance/region/AD/VCN
-and Vault/key metadata, selects a private Processor subnet in the UI VM's VCN,
-generates ignored `env.sh`, builds and pushes the
-processor with instance-principal authentication, initializes the external SQL
-schemas, runs preflight/durable verification, and deploys the HTTPS UI.
+`stream_db`, `stream_data`, and `stream_staging`; override them to match the
+schemas prepared for this deployment. The installer discovers OCI context,
+selects a private Processor subnet in the UI VM's VCN, generates ignored
+`env.sh`, initializes the external SQL structures, runs preflight/durable
+verification, publishes images with instance-principal authentication, and
+deploys the HTTPS UI.
 
-Before use, confirm:
+This installer includes bootstrap, setup, the host Python environment and the
+initial release publication. Do not run Option A or immediately publish another
+release after a successful installation; continue to application verification.
 
-- Object events are enabled on each source bucket.
-- The Events rule covers create, update, and delete and its bucket/object filter
-  matches exactly one mapping.
-- The processor resource principal can read source objects, consume the Stream,
-  and read the DB secret from Vault.
-- The deployment/UI instance principal has scoped Streaming, Events,
-  Container Instance, repository, and test-object permissions.
-- The processor subnet can reach MySQL and the database account can use the
-  control schema plus approved target/staging objects.
-- The UI VM may use a public subnet for HTTPS access. Processor Container
-  Instances use a subnet in the same VCN with public IP assignment prohibited;
-  a public UI subnet is never reused as the Processor subnet.
+## Publish the release and activate the UI
 
-### IAM policy baseline
-
-Use the dynamic group that contains the UI/deployment VM instance principal.
-The Container Instance policy resource family is `compute-container-family`
-(not `container-instances` or `container-instances-family`). Replace
-`<dynamic-group>`, `<compartment>`, and `<tag-namespace>` below with your own
-OCI names. A deployment requires a policy bundle; it is not sufficient to
-grant only Container Instance access:
-
-```text
-Allow dynamic-group <dynamic-group> to manage compute-container-family in compartment <compartment>
-Allow dynamic-group <dynamic-group> to use virtual-network-family in compartment <compartment>
-Allow dynamic-group <dynamic-group> to manage streams in compartment <compartment>
-Allow dynamic-group <dynamic-group> to read secrets in compartment <compartment>
-Allow dynamic-group <dynamic-group> to read secret-bundles in compartment <compartment>
-Allow dynamic-group <dynamic-group> to manage repos in compartment <compartment>
-```
-
-`compute-container-family` permits Event Processor list/create/manage
-operations. `virtual-network-family` permits VNIC/subnet attachment. Streams
-cover the UI Stream Server/Content operations and processor assignment. `read
-secrets` lists metadata for the UI selector; `read secret-bundles` retrieves
-the selected value at runtime. Repositories permit the approved OCIR image
-workflow through the instance principal.
-
-## Straight-through setup and release stamps
-
-`deploy/env.sh` is a mode-`0600`, minimal input file. It stores the default
-Object Storage bucket, database schema names, the processor Vault secret OCID,
-and immutable UI/processor image tags. The deployment VM derives compartment,
-region, availability domain, VCN, private Processor subnet, and Object Storage
-namespace through its instance principal; these values are not required in
-`env.sh`.
-
-Run `./deploy/setup_env.sh` interactively to select an existing Vault and AES
-key, provide database connectivity, and create or update the default processor
-secret named `stream_hw_secret_key`. For unattended setup use either an
-existing `DB_SECRET_OCID` or `--db-password-file PATH`. The password file must
-be mode `0600`; after Vault creation/update, setup atomically writes the
-resulting OCID to `env.sh` and removes that input file. Passwords are never
-written to `env.sh`.
-
-Both images carry a secret-free release stamp: version/tag, Git revision,
-source branch, build UTC, and configuration schema version. Settings displays
-the UI release and deployment history; durable captures and transaction logs
-retain the processor release stamp that processed each message.
-Successful `deploy_ui.sh`, direct `deploy_processor.sh`, and UI-orchestrated
-Processor deployments append a secret-free row to the control database
-`deployment_history` table. Recording uses the Vault bundle in memory and
-never writes database credentials into the history record or deployment log.
-
-### OCI Container Registry prerequisite
-
-The deployment requires one deployment-owned OCIR repository in the UI VM's
-compartment. Create this repository before setup and provide its OCID as the
-mandatory `OCI_REGISTRY_REPOSITORY_ID`. The instance principal must have
-`manage repos` permission in that compartment and `docker-credential-ocir`
-must be installed. Setup validates the repository OCID, lifecycle, and
-compartment, resolves its name, and persists both values. All Processor and UI
-releases use this same repository:
-
-```text
-<region-key>.ocir.io/<namespace>/<repository>:processor-<processor-version>
-<region-key>.ocir.io/<namespace>/<repository>:ui-<ui-version>
-```
-
-Both tag types are immutable. Event Processor includes only `processor-*` tags
-in its Container image selector, so UI and unqualified image tags cannot be
-deployed to OCI Container Instances.
-
-### Image build, publication, and deployment runbook
-
-Run release commands on the UI/deployment VM after `setup_env.sh` has generated
-`deploy/env.sh`. The VM instance principal supplies OCIR authentication; do not
+Run release commands on the UI/deployment VM after the interactive path has generated
+`deploy/env.sh` and installed the release Python environment. The unattended
+installer already performs the initial publication; use this section for later
+releases on that path. The VM instance principal supplies OCIR authentication; do not
 use a registry username or authentication token.
 
 Publish both components and activate the UI with one version:
@@ -324,14 +342,16 @@ Prefer `publish_release.sh` for normal releases because it applies migrations
 before UI activation and guarantees matching component versions. Direct
 Processor builds reject an existing tag.
 
-Publishing the Processor image does not replace a running OCI Container
-Instance. In **Event Processor → Deployment**, select the new immutable
-`processor-<version>` tag and current Vault database secret, create the
-replacement, verify it is ACTIVE and consuming, then delete the retired
-instance. For a direct mapping-specific deployment, export its stream,
-mapping, mode, partition assignment, and replica values, then run
-`./deploy/deploy_processor.sh`; the script verifies the image tag before it
-creates the Container Instance.
+Both images carry a secret-free release stamp: version/tag, Git revision,
+source branch, build UTC, and configuration schema version. Settings displays
+the UI release and deployment history; durable captures and transaction logs
+retain the processor release stamp that processed each message.
+Successful `deploy_ui.sh`, direct `deploy_processor.sh`, and UI-orchestrated
+Processor deployments append a secret-free row to the control database
+`deployment_history` table. Recording uses the Vault bundle in memory and
+never writes database credentials into the history record or deployment log.
+
+## Verify and configure the application
 
 Verify the activated release:
 
@@ -352,41 +372,75 @@ oci --auth instance_principal --region "$REGION" \
   --query 'data.items[].{repository:"repository-name",tag:version,state:"lifecycle-state"}'
 ```
 
-To enable the Event Processor **Database Secret** tab to create a new JSON
-database-connectivity secret, grant the UI/deployment principal the following
-additional least-privilege permissions in the compartment containing the
-selected Vault and key:
+Run the deployment preflight and bounded durable-store verification:
 
-```
-Allow dynamic-group <dynamic-group> to manage secrets in compartment <compartment>
-Allow dynamic-group <dynamic-group> to use secret-family in compartment <compartment>
-Allow dynamic-group <dynamic-group> to read vaults in compartment <compartment>
-Allow dynamic-group <dynamic-group> to read keys in compartment <compartment>
-Allow dynamic-group <dynamic-group> to use keys in compartment <compartment>
+```sh
+./tests/integration/verify_streaming_deployment.sh
+./tests/integration/verify_durable_capture.sh
 ```
 
-The create form requires an existing Vault OCID and a symmetric encryption-key
-OCID from that Vault. It sends the submitted connection JSON directly to OCI
-Vault and returns only the resulting secret OCID; it does not store or display
-the credential. `use secret-family` is required for the `CreateSecret`
-operation in addition to `manage secrets`. The processor resource principal still needs only `read
-secret-bundles` to resolve that OCID at runtime.
+Then configure the flow in the UI:
 
-If the deployment applies **defined tags** (freeform tags do not need this),
-also grant use of the approved tag namespace at tenancy scope:
+1. Open `https://<ui-host>/`, select or create a Connection Profile, and sign in
+   with a MySQL account authorized on the prepared schemas. UI profiles and the
+   Processor Vault secret are separate connection configurations.
+2. Check Settings and schema initialization. Releases apply external migrations;
+   use the documented initialization workflow if application objects are missing.
+   Do not use destructive reinitialization on an existing deployment without backup.
+3. Create or verify the target table in Data Import with the OCI event-ready
+   layout: invisible `batch_num`, LIST partitioning, and `batch_num` in every
+   unique key.
+4. Create or select the Stream. FIFO requires one partition; parallel processing
+   requires multiple partitions with explicit, disjoint Processor assignments.
+5. Create the Resource Mapping for the compartment, bucket, object pattern,
+   target and Stream. Configure its OCI Events rule for create/update/delete,
+   ensuring the rule's Stream OCID and filters match the intended mapping.
 
-```text
-Allow dynamic-group <dynamic-group> to use tag-namespaces in tenancy
+Before production Processor deployment, complete the
+[full verification gate](docs/technical-details.md#verification-gates), including
+the processor, loader and UI tests and isolated end-to-end harnesses:
+
+```sh
+# Configure isolated validation resources first. Set FLOW_MANAGED_STREAM=true
+# in the validation overlay to create a fresh disposable Stream for each run.
+./tests/integration/verify_fifo_flow.sh
+./tests/integration/verify_parallel_flow.sh
 ```
 
-Apply least privilege to the actual processor resource-principal dynamic group
-as well. It must be able to consume the assigned Stream, read the Vault bundle,
-read source Object Storage objects, and reach MySQL. Verify each permission
-with read-only preflight checks before enabling Container Instance creation.
+These harnesses create and delete OCI and database test resources; do not point
+them at production mappings or objects. See [tests/README.md](tests/README.md)
+for test setup and scope.
 
-See [Deployment, configuration, IAM, and implementation details](docs/technical-details.md)
-for environment variables, policies, runtime flow, UI behavior, logging,
-troubleshooting, and validation commands.
+## Deploy or replace Processors
+
+Publishing the Processor image does not create or replace a running OCI
+Container Instance. After the verification gate, use **Event Processor →
+Deployment** to select the mapping, immutable `processor-<version>` image,
+current Vault database secret, mode, partition assignment and worker count.
+
+For a replacement, coordinate the handover so old and new instances do not
+consume the same partition concurrently. Follow the
+[Processor replacement procedure](docs/setup-and-deployment-guide.md#3-replace-processor-deployments)
+and verify checkpoints, durable captures, Event TX and target rows before
+resuming normal input. Retire the old instance as part of that handover.
+
+For a direct mapping-specific deployment, export the required Stream, mapping,
+mode, partition assignment and replica values from the
+[deployment contract](docs/technical-details.md#processor-deployment-contract), then run:
+
+```sh
+./deploy/deploy_processor.sh
+```
+
+The script resolves the authoritative repository OCID and verifies that the
+selected immutable Processor tag exists before creating the instance. Use
+`PROCESSOR_DB_SECRET_OCID` for a mapping-specific database bundle without
+changing the deployment host's default `DB_SECRET_OCID`.
+
+Confirm that the intended instance is ACTIVE and processes a controlled
+create/update/delete lifecycle, with exact target rows/partitions and no
+unexpected staging tables. Use `./deploy/service_status.sh` for subsequent
+UI container, nginx, Processor status and log checks.
 
 ## Assumptions and limitations
 
