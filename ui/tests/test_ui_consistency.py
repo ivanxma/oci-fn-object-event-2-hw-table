@@ -69,6 +69,9 @@ class UIConsistencySourceTest(unittest.TestCase):
         self.assertIn("No deployment-owned Processor repository is configured.", source)
         self.assertIn("No available tagged image was found", source)
         self.assertIn("{% if not container_images %}disabled{% endif %}", source)
+        self.assertIn("Newest available Processor release is selected by default.", source)
+        self.assertIn("Container images", source)
+        self.assertIn("delete_image", source)
         self.assertIn(".primary-button:disabled", STYLESHEET.read_text(encoding="utf-8"))
 
     def test_processor_repository_is_read_only_in_settings(self) -> None:

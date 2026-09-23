@@ -37,6 +37,26 @@ class RegistryServiceTest(unittest.TestCase):
             images = service.list_images("repo")
         self.assertEqual([image["version"] for image in images], ["processor-v2"])
 
+    def test_images_are_newest_first_with_utc_timestamp(self):
+        service = RegistryService(compartment_id="c", region="r", namespace="ns", region_key="lhr")
+        rows = [
+            SimpleNamespace(id="old", version="processor-20260922T093000Z-old", digest="old", lifecycle_state="AVAILABLE"),
+            SimpleNamespace(id="new", version="processor-20260923T093000Z-new", digest="new", lifecycle_state="AVAILABLE"),
+        ]
+        client = SimpleNamespace(list_container_images=lambda **_: None)
+        with patch.object(service, "_client", return_value=client), patch(
+            "oci.pagination.list_call_get_all_results", return_value=SimpleNamespace(data=rows),
+        ):
+            images = service.list_images("repo")
+        self.assertEqual([image["id"] for image in images], ["new", "old"])
+        self.assertEqual(images[0]["release_timestamp"], "2026-09-23 09:30:00 UTC")
+
+    def test_delete_rejects_a_non_release_tag(self):
+        service = RegistryService(compartment_id="c", region="r")
+        with patch.object(service, "list_images", return_value=[{"id": "other", "version": "scratch"}]):
+            with self.assertRaises(ValueError):
+                service.delete_image(repository_name="repo", image_id="other")
+
 
 if __name__ == "__main__":
     unittest.main()

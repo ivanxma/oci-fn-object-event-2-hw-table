@@ -35,7 +35,7 @@ def index():
     vault_secrets, vaults, vault_keys = [], [], []
     selected_vault_id = request.args.get("vault_id", "").strip() or current_app.config["VAULT_ID"]
     selected_key_id = current_app.config["VAULT_KEY_ID"] if selected_vault_id == current_app.config["VAULT_ID"] else ""
-    mappings, streams, deployments, container_images = [], [], [], []
+    mappings, streams, deployments, container_images, ui_images = [], [], [], [], []
     managed_state = request.args.get("managed_state", "ALL").upper()
     active_tab = request.args.get("tab", "deployment").lower()
     replacement = {
@@ -46,7 +46,7 @@ def index():
     }
     if managed_state not in {"ALL", "ACTIVE"}:
         managed_state = "ALL"
-    if active_tab not in {"deployment", "instances", "database-secret"}:
+    if active_tab not in {"deployment", "instances", "images", "database-secret"}:
         active_tab = "deployment"
     try:
         mappings = MappingService(mysql_for_request()).list_mappings()
@@ -61,6 +61,7 @@ def index():
     if current_app.config.get("OCI_REGISTRY_REPOSITORY"):
         try:
             container_images = _registry_service().list_images(current_app.config["OCI_REGISTRY_REPOSITORY"])
+            ui_images = _registry_service().list_images(current_app.config["OCI_REGISTRY_REPOSITORY"], tag_prefix="ui-")
         except RegistryError as error:
             flash(f"OCI Container Registry image choices are unavailable: {error}", "warning")
     vault_service = VaultSecretService(compartment_id=current_app.config["OCI_COMPARTMENT_ID"], region=current_app.config["OCI_REGION"])
@@ -82,6 +83,7 @@ def index():
         streams=streams, deployments=deployments, vault_secrets=vault_secrets, vaults=vaults, vault_keys=vault_keys,
         selected_vault_id=selected_vault_id, selected_key_id=selected_key_id,
         settings=_orchestration_service().settings, replacement=replacement, container_images=container_images,
+        ui_images=ui_images, default_container_image=(container_images[0]["image_url"] if container_images else ""),
         registry_repository=current_app.config.get("OCI_REGISTRY_REPOSITORY", ""),
         orchestration_enabled=current_app.config["OCI_CONTAINER_ORCHESTRATION_ENABLED"],
     )
@@ -122,6 +124,18 @@ def deploy():
     except (ValueError, OrchestrationError, VaultSecretError) as error:
         flash(str(error), "error")
     return redirect(url_for("orchestration.index"))
+
+
+@orchestration_bp.post("/images/<image_id>/delete")
+@login_required
+def delete_image(image_id: str):
+    try:
+        repository = current_app.config.get("OCI_REGISTRY_REPOSITORY", "")
+        _registry_service().delete_image(repository_name=repository, image_id=image_id)
+        flash("OCI Container Registry image deletion requested.", "success")
+    except (ValueError, RegistryError) as error:
+        flash(str(error), "error")
+    return redirect(url_for("orchestration.index", tab="images"))
 
 
 @orchestration_bp.post("/database-secret")

@@ -144,6 +144,7 @@ class ProfileCreationPolicyTest(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Disable profile creation", page.data)
         self.assertEqual(disabled.status_code, 302)
+        self.assertTrue(disabled.headers["Location"].endswith("/flow/"))
         self.assertFalse(self.app.extensions["profile_store"].profile_creation_enabled())
         with patch("myapp.modules.common.MySQLService.health_check", return_value=None):
             enabled = self.client.post("/profiles/creation-policy", data={"enabled": "true"})

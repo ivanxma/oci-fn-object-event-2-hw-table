@@ -72,7 +72,7 @@ def creation_policy():
             "Profile creation at the login screen is enabled." if enabled else "Profile creation at the login screen is disabled.",
             "success",
         )
-        return redirect(url_for("imports.home"))
+        return redirect(url_for("flow.index"))
     return render_dashboard(
         "profile_creation_policy.html",
         active_page="profiles",
